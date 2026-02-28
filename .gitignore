@@ -1,0 +1,47 @@
+# Binaries
+bin/
+*.exe
+
+# Go build artifacts
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dependency directories
+vendor/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Vault plugin registration
+*.sha256
+
+# Local development
+.env
+.env.local
+dev-config.json
+
+# Temporary files
+*.tmp
+*.temp
+*.log

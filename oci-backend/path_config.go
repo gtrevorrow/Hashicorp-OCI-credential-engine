@@ -3,6 +3,7 @@ package ocibackend
 import (
 	"context"
 	"path"
+	"strings"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -22,46 +23,20 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Tenancy OCID",
 					},
 				},
-				"user_ocid": {
+				"domain_ocid": {
 					Type:        framework.TypeString,
-					Description: "OCID of the OCI user",
+					Description: "OCID of the OCI Identity Domain",
 					Required:    true,
 					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "User OCID",
+						Name: "Identity Domain OCID",
 					},
 				},
-				"fingerprint": {
+				"identity_provider_id": {
 					Type:        framework.TypeString,
-					Description: "Fingerprint of the API key",
+					Description: "ID of the external Identity Provider configured in OCI IAM",
 					Required:    true,
 					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "API Key Fingerprint",
-					},
-				},
-				"private_key": {
-					Type:        framework.TypeString,
-					Description: "Private key content for API authentication (PEM format)",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name:      "Private Key",
-						Sensitive: true,
-					},
-				},
-				"private_key_path": {
-					Type:        framework.TypeString,
-					Description: "Path to the private key file (alternative to private_key)",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Private Key Path",
-					},
-				},
-				"passphrase": {
-					Type:        framework.TypeString,
-					Description: "Passphrase for the private key (if encrypted)",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name:      "Private Key Passphrase",
-						Sensitive: true,
+						Name: "Identity Provider ID",
 					},
 				},
 				"region": {
@@ -69,7 +44,39 @@ func (b *backend) pathConfig() []*framework.Path {
 					Description: "OCI region identifier (e.g., us-ashburn-1)",
 					Required:    true,
 					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Region",
+						Name: "OCI Region",
+					},
+				},
+				"jwks_url": {
+					Type:        framework.TypeString,
+					Description: "JWKS endpoint URL for validating incoming subject tokens",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "JWKS URL",
+					},
+				},
+				"allowed_issuers": {
+					Type:        framework.TypeCommaStringSlice,
+					Description: "List of allowed issuers for incoming subject tokens",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Allowed Issuers",
+					},
+				},
+				"default_ttl": {
+					Type:        framework.TypeDurationSecond,
+					Description: "Default TTL for OCI session tokens (seconds)",
+					Default:     3600,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Default TTL",
+					},
+				},
+				"max_ttl": {
+					Type:        framework.TypeDurationSecond,
+					Description: "Maximum TTL for OCI session tokens (seconds)",
+					Default:     86400,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Maximum TTL",
 					},
 				},
 			},
@@ -77,19 +84,19 @@ func (b *backend) pathConfig() []*framework.Path {
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ReadOperation: &framework.PathOperation{
 					Callback: b.pathConfigRead,
-					Summary:  "Read the OCI backend configuration",
+					Summary:  "Read the OCI federated identity configuration",
 				},
 				logical.CreateOperation: &framework.PathOperation{
 					Callback: b.pathConfigWrite,
-					Summary:  "Configure the OCI backend",
+					Summary:  "Configure the OCI federated identity backend",
 				},
 				logical.UpdateOperation: &framework.PathOperation{
 					Callback: b.pathConfigWrite,
-					Summary:  "Update the OCI backend configuration",
+					Summary:  "Update the OCI federated identity configuration",
 				},
 				logical.DeleteOperation: &framework.PathOperation{
 					Callback: b.pathConfigDelete,
-					Summary:  "Delete the OCI backend configuration",
+					Summary:  "Delete the OCI federated identity configuration",
 				},
 			},
 
@@ -113,12 +120,14 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 
 	return &logical.Response{
 		Data: map[string]interface{}{
-			"tenancy_ocid":     config.TenancyOCID,
-			"user_ocid":        config.UserOCID,
-			"fingerprint":      config.Fingerprint,
-			"region":           config.Region,
-			"private_key_path": config.PrivateKeyPath,
-			// Note: private_key and passphrase are not returned for security
+			"tenancy_ocid":         config.TenancyOCID,
+			"domain_ocid":          config.DomainOCID,
+			"identity_provider_id": config.IdentityProviderID,
+			"region":               config.Region,
+			"jwks_url":             config.JWKSURL,
+			"allowed_issuers":      config.AllowedIssuers,
+			"default_ttl":          config.DefaultTTL,
+			"max_ttl":              config.MaxTTL,
 		},
 	}, nil
 }
@@ -130,14 +139,14 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		return logical.ErrorResponse("missing 'tenancy_ocid'"), nil
 	}
 
-	userOCID := data.Get("user_ocid").(string)
-	if userOCID == "" {
-		return logical.ErrorResponse("missing 'user_ocid'"), nil
+	domainOCID := data.Get("domain_ocid").(string)
+	if domainOCID == "" {
+		return logical.ErrorResponse("missing 'domain_ocid'"), nil
 	}
 
-	fingerprint := data.Get("fingerprint").(string)
-	if fingerprint == "" {
-		return logical.ErrorResponse("missing 'fingerprint'"), nil
+	identityProviderID := data.Get("identity_provider_id").(string)
+	if identityProviderID == "" {
+		return logical.ErrorResponse("missing 'identity_provider_id'"), nil
 	}
 
 	region := data.Get("region").(string)
@@ -145,25 +154,24 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		return logical.ErrorResponse("missing 'region'"), nil
 	}
 
-	privateKey := data.Get("private_key").(string)
-	privateKeyPath := data.Get("private_key_path").(string)
-
-	if privateKey == "" && privateKeyPath == "" {
-		return logical.ErrorResponse("either 'private_key' or 'private_key_path' must be provided"), nil
+	config := &federatedConfig{
+		TenancyOCID:        tenancyOCID,
+		DomainOCID:         domainOCID,
+		IdentityProviderID: identityProviderID,
+		Region:             region,
+		JWKSURL:            data.Get("jwks_url").(string),
+		AllowedIssuers:     data.Get("allowed_issuers").([]string),
+		DefaultTTL:         data.Get("default_ttl").(int),
+		MaxTTL:             data.Get("max_ttl").(int),
 	}
 
-	config := &backendConfig{
-		TenancyOCID:    tenancyOCID,
-		UserOCID:       userOCID,
-		Fingerprint:    fingerprint,
-		PrivateKey:     privateKey,
-		PrivateKeyPath: privateKeyPath,
-		Region:         region,
-		Passphrase:     data.Get("passphrase").(string),
+	// Validate basic OCI OCID formats
+	if !strings.HasPrefix(tenancyOCID, "ocid1.tenancy.") {
+		return logical.ErrorResponse("invalid tenancy_ocid format"), nil
 	}
-
-	// TODO: Validate OCI credentials by attempting a connection
-	// This would involve creating an OCI provider and making a test API call
+	if !strings.HasPrefix(domainOCID, "ocid1.identitydomain.") {
+		return logical.ErrorResponse("invalid domain_ocid format"), nil
+	}
 
 	if err := b.saveConfig(ctx, req.Storage, config); err != nil {
 		return nil, err
@@ -190,24 +198,30 @@ func (b *backend) pathConfigExistenceCheck(ctx context.Context, req *logical.Req
 }
 
 const pathConfigHelpSyn = `
-Configure the OCI secrets engine with API credentials.
+Configure the OCI federated identity backend.
 `
 
 const pathConfigHelpDesc = `
-The OCI secrets engine requires API credentials to authenticate with Oracle Cloud Infrastructure.
+The OCI secrets engine exchanges 3rd party OIDC/OAuth JWT tokens for OCI session tokens.
 
-You must provide:
+You must configure:
   - tenancy_ocid: The OCID of your OCI tenancy
-  - user_ocid: The OCID of the user for authentication
-  - fingerprint: The fingerprint of the API key
+  - domain_ocid: The OCID of your OCI Identity Domain
+  - identity_provider_id: The ID of the external IdP configured in OCI IAM
   - region: The OCI region (e.g., us-ashburn-1)
-  - private_key OR private_key_path: The API private key
+
+Optional:
+  - jwks_url: JWKS endpoint for validating subject tokens
+  - allowed_issuers: List of allowed token issuers
+  - default_ttl: Default session token TTL (default: 3600s)
+  - max_ttl: Maximum session token TTL (default: 86400s)
 
 Example:
   $ vault write oci/config \\
       tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \\
-      user_ocid="ocid1.user.oc1..xxxxx" \\
-      fingerprint="aa:bb:cc:dd:ee:ff" \\
+      domain_ocid="ocid1.identitydomain.oc1..xxxxx" \\
+      identity_provider_id="ocid1.idp.oc1..xxxxx" \\
       region="us-ashburn-1" \\
-      private_key=@/path/to/oci_api_key.pem
+      jwks_url="https://auth.example.com/.well-known/jwks.json" \\
+      allowed_issuers="https://auth.example.com"
 `

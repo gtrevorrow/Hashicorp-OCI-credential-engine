@@ -4,27 +4,25 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
-	"github.com/hashicorp/vault/sdk/helper/base62"
 )
 
 const (
 	backendHelp = `
-The OCI secrets engine dynamically generates OCI session tokens.
+The OCI secrets engine dynamically generates OCI session tokens
+by exchanging 3rd party OIDC/OAuth JWT subject tokens.
 
 After mounting this secrets engine, configure it using the "config" endpoint
-to provide OCI credentials (tenancy OCID, user OCID, API key fingerprint, 
-private key, and region). Then, use the "creds" endpoint to generate 
-temporary session tokens.
+to provide OCI federated identity configuration. Then, use the "exchange" 
+endpoint to submit a JWT subject token and receive an OCI session token.
 `
 )
 
-// Factory returns a new backend as logical.Backend
+// backend implements the Vault secrets engine backend
 type backend struct {
 	*framework.Backend
 	lock   sync.RWMutex
@@ -45,10 +43,11 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 		},
 		Paths: framework.PathAppend(
 			b.pathConfig(),
-			b.pathCreds(),
+			b.pathExchange(),
+			b.pathRoles(),
 		),
 		Secrets: []*framework.Secret{
-			b.ociToken(),
+			b.ociTokenSecret(),
 		},
 		BackendType: logical.TypeLogical,
 	}
@@ -69,28 +68,39 @@ func TLSProvider() (*tls.Config, error) {
 	return nil, nil
 }
 
-// genUsername generates a unique username for the OCI token
-func genUsername(displayName string) (string, error) {
-	randomStr, err := base62.Random(8)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("vault-%s-%s", displayName, randomStr), nil
-}
+// federatedConfig holds OCI federated identity configuration
+type federatedConfig struct {
+	// OCI tenancy and identity domain
+	TenancyOCID string `json:"tenancy_ocid" mapstructure:"tenancy_ocid"`
 
-// backendConfig contains the actual OCI configuration
-type backendConfig struct {
-	TenancyOCID    string `json:"tenancy_ocid" mapstructure:"tenancy_ocid"`
-	UserOCID       string `json:"user_ocid" mapstructure:"user_ocid"`
-	Fingerprint    string `json:"fingerprint" mapstructure:"fingerprint"`
-	PrivateKey     string `json:"private_key" mapstructure:"private_key"`
-	PrivateKeyPath string `json:"private_key_path" mapstructure:"private_key_path"`
-	Region         string `json:"region" mapstructure:"region"`
-	Passphrase     string `json:"passphrase,omitempty" mapstructure:"passphrase"`
+	// OCI Identity Domain OCID (for federated identity)
+	DomainOCID string `json:"domain_ocid" mapstructure:"domain_ocid"`
+
+	// Identity Provider ID for the 3rd party IdP configured in OCI
+	IdentityProviderID string `json:"identity_provider_id" mapstructure:"identity_provider_id"`
+
+	// OCI Region
+	Region string `json:"region" mapstructure:"region"`
+
+	// Optional: Client credentials for OCI IAM (if not using instance/auth principal)
+	ClientID     string `json:"client_id,omitempty" mapstructure:"client_id"`
+	ClientSecret string `json:"client_secret,omitempty" mapstructure:"client_secret"`
+
+	// JWKS endpoint for validating incoming subject tokens
+	JWKSURL string `json:"jwks_url,omitempty" mapstructure:"jwks_url"`
+
+	// Allowed issuers for subject tokens
+	AllowedIssuers []string `json:"allowed_issuers,omitempty" mapstructure:"allowed_issuers"`
+
+	// Default TTL for issued OCI session tokens
+	DefaultTTL int `json:"default_ttl" mapstructure:"default_ttl"`
+
+	// Maximum TTL for issued OCI session tokens
+	MaxTTL int `json:"max_ttl" mapstructure:"max_ttl"`
 }
 
 // getConfig retrieves the backend configuration from storage
-func (b *backend) getConfig(ctx context.Context, s logical.Storage) (*backendConfig, error) {
+func (b *backend) getConfig(ctx context.Context, s logical.Storage) (*federatedConfig, error) {
 	entry, err := s.Get(ctx, "config")
 	if err != nil {
 		return nil, err
@@ -99,7 +109,7 @@ func (b *backend) getConfig(ctx context.Context, s logical.Storage) (*backendCon
 		return nil, nil
 	}
 
-	var config backendConfig
+	var config federatedConfig
 	if err := entry.DecodeJSON(&config); err != nil {
 		return nil, err
 	}
@@ -108,7 +118,7 @@ func (b *backend) getConfig(ctx context.Context, s logical.Storage) (*backendCon
 }
 
 // saveConfig stores the backend configuration
-func (b *backend) saveConfig(ctx context.Context, s logical.Storage, config *backendConfig) error {
+func (b *backend) saveConfig(ctx context.Context, s logical.Storage, config *federatedConfig) error {
 	entry, err := logical.StorageEntryJSON("config", config)
 	if err != nil {
 		return err

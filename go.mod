@@ -3,6 +3,7 @@ module github.com/gordon/Hashicorp-OCI-credential-engine
 go 1.21
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.2.0
 	github.com/hashicorp/go-hclog v1.5.0
 	github.com/hashicorp/vault/sdk v0.10.2
 )
@@ -27,7 +28,6 @@ require (
 	github.com/hashicorp/go-kms-wrapping/v2 v2.0.8 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-plugin v1.5.2 // indirect
-	github.com/hashicorp/go-secure-stdlib/base62 v0.1.2 // indirect
 	github.com/hashicorp/go-secure-stdlib/mlock v0.1.2 // indirect
 	github.com/hashicorp/go-secure-stdlib/parseutil v0.1.7 // indirect
 	github.com/hashicorp/go-secure-stdlib/plugincontainer v0.2.2 // indirect

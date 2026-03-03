@@ -36,6 +36,7 @@ This plugin enables **federated identity** workflows by allowing users to exchan
 ## Features
 
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
+- **Vault Enterprise WIF Support**: Automatically fetch identity tokens via Vault's Workload Identity Federation plugin when running on Vault Enterprise (no `subject_token` required)
 - **Federated Identity**: Leverage OCI IAM Identity Domains with external IdPs
 - **Token Validation**: Validate incoming JWTs using JWKS endpoints
 - **Role-based Access**: Define roles with TTL constraints and claim validation
@@ -152,6 +153,8 @@ vault write oci/exchange \
     ttl=3600
 ```
 
+*Note: If running on Vault Enterprise, `subject_token` is optional. The plugin will automatically fetch the Vault native Workload Identity Federation (WIF) plugin identity token if the `subject_token` is omitted.*
+
 **Response:**
 ```json
 {
@@ -233,6 +236,7 @@ configProvider := common.NewRawConfigurationProvider(
   "ttl": 3600
 }
 ```
+*(Note: `subject_token` is optional on Vault Enterprise when utilizing WIF plugin identity tokens)*
 
 ### Roles Path
 

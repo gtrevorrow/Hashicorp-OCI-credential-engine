@@ -47,22 +47,7 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "OCI Region",
 					},
 				},
-				"jwks_url": {
-					Type:        framework.TypeString,
-					Description: "JWKS endpoint URL for validating incoming subject tokens",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "JWKS URL",
-					},
-				},
-				"allowed_issuers": {
-					Type:        framework.TypeCommaStringSlice,
-					Description: "List of allowed issuers for incoming subject tokens",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Allowed Issuers",
-					},
-				},
+
 				"default_ttl": {
 					Type:        framework.TypeDurationSecond,
 					Description: "Default TTL for OCI session tokens (seconds)",
@@ -124,10 +109,9 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 			"domain_ocid":          config.DomainOCID,
 			"identity_provider_id": config.IdentityProviderID,
 			"region":               config.Region,
-			"jwks_url":             config.JWKSURL,
-			"allowed_issuers":      config.AllowedIssuers,
-			"default_ttl":          config.DefaultTTL,
-			"max_ttl":              config.MaxTTL,
+
+			"default_ttl": config.DefaultTTL,
+			"max_ttl":     config.MaxTTL,
 		},
 	}, nil
 }
@@ -159,10 +143,9 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		DomainOCID:         domainOCID,
 		IdentityProviderID: identityProviderID,
 		Region:             region,
-		JWKSURL:            data.Get("jwks_url").(string),
-		AllowedIssuers:     data.Get("allowed_issuers").([]string),
-		DefaultTTL:         data.Get("default_ttl").(int),
-		MaxTTL:             data.Get("max_ttl").(int),
+
+		DefaultTTL: data.Get("default_ttl").(int),
+		MaxTTL:     data.Get("max_ttl").(int),
 	}
 
 	// Validate basic OCI OCID formats
@@ -211,17 +194,13 @@ You must configure:
   - region: The OCI region (e.g., us-ashburn-1)
 
 Optional:
-  - jwks_url: JWKS endpoint for validating subject tokens
-  - allowed_issuers: List of allowed token issuers
   - default_ttl: Default session token TTL (default: 3600s)
   - max_ttl: Maximum session token TTL (default: 86400s)
 
 Example:
-  $ vault write oci/config \\
-      tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \\
-      domain_ocid="ocid1.identitydomain.oc1..xxxxx" \\
-      identity_provider_id="ocid1.idp.oc1..xxxxx" \\
-      region="us-ashburn-1" \\
-      jwks_url="https://auth.example.com/.well-known/jwks.json" \\
-      allowed_issuers="https://auth.example.com"
+  $ vault write oci/config \
+      tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \
+      domain_ocid="ocid1.identitydomain.oc1..xxxxx" \
+      identity_provider_id="ocid1.idp.oc1..xxxxx" \
+      region="us-ashburn-1"
 `

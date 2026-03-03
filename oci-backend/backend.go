@@ -36,7 +36,7 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 	}
 	b.Backend = &framework.Backend{
 		Help: backendHelp,
-		PathsSpecial: &logical.Paths{
+		PathsSpecial: &logical.Paths{ //seal wrap data stored in the config path will be encrypted with the master key ( Enterprise Vault only)
 			SealWrapStorage: []string{
 				"config",
 			},
@@ -85,12 +85,6 @@ type federatedConfig struct {
 	// Optional: Client credentials for OCI IAM (if not using instance/auth principal)
 	ClientID     string `json:"client_id,omitempty" mapstructure:"client_id"`
 	ClientSecret string `json:"client_secret,omitempty" mapstructure:"client_secret"`
-
-	// JWKS endpoint for validating incoming subject tokens
-	JWKSURL string `json:"jwks_url,omitempty" mapstructure:"jwks_url"`
-
-	// Allowed issuers for subject tokens
-	AllowedIssuers []string `json:"allowed_issuers,omitempty" mapstructure:"allowed_issuers"`
 
 	// Default TTL for issued OCI session tokens
 	DefaultTTL int `json:"default_ttl" mapstructure:"default_ttl"`

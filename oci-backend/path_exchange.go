@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/helper/pluginutil"
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
@@ -18,8 +20,8 @@ func (b *backend) pathExchange() []*framework.Path {
 			Fields: map[string]*framework.FieldSchema{
 				"subject_token": {
 					Type:        framework.TypeString,
-					Description: "The 3rd party OIDC/OAuth JWT subject token to exchange",
-					Required:    true,
+					Description: "The 3rd party OIDC/OAuth JWT subject token to exchange (Optional in Enterprise)",
+					Required:    false,
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name:      "Subject Token",
 						Sensitive: true,
@@ -70,16 +72,6 @@ func (b *backend) pathExchange() []*framework.Path {
 
 // pathExchangeWrite handles the token exchange
 func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	subjectToken := data.Get("subject_token").(string)
-	if subjectToken == "" {
-		return logical.ErrorResponse("missing 'subject_token'"), nil
-	}
-
-	subjectTokenType := data.Get("subject_token_type").(string)
-	if subjectTokenType == "" {
-		subjectTokenType = "urn:ietf:params:oauth:token-type:jwt"
-	}
-
 	// Get backend configuration
 	config, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
@@ -89,8 +81,45 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		return logical.ErrorResponse("backend not configured"), nil
 	}
 
+	subjectToken := ""
+	if raw, ok := data.GetOk("subject_token"); ok {
+		subjectToken = raw.(string)
+	}
+
+	subjectTokenType := "urn:ietf:params:oauth:token-type:jwt"
+	if raw, ok := data.GetOk("subject_token_type"); ok && raw.(string) != "" {
+		subjectTokenType = raw.(string)
+	}
+
+	isEnterprise := false
+	vaultVersion, err := b.System().VaultVersion(ctx)
+	if err == nil && strings.Contains(vaultVersion, "+ent") {
+		isEnterprise = true
+	}
+
+	if subjectToken == "" {
+		if isEnterprise {
+			resp, identityErr := b.System().GenerateIdentityToken(ctx, &pluginutil.IdentityTokenRequest{
+				Audience: "oci-secrets-engine",
+			})
+			if identityErr != nil {
+				return logical.ErrorResponse("failed to generate plugin identity token: %v", identityErr), nil
+			}
+			if resp != nil {
+				subjectToken = string(resp.Token)
+			}
+		}
+
+		if subjectToken == "" {
+			return logical.ErrorResponse("missing 'subject_token'"), nil
+		}
+	}
+
 	// Get role if specified
-	roleName := data.Get("role").(string)
+	roleName := ""
+	if raw, ok := data.GetOk("role"); ok {
+		roleName = raw.(string)
+	}
 	var role *roleEntry
 	if roleName != "" {
 		role, err = b.getRole(ctx, req.Storage, roleName)
@@ -121,26 +150,20 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		ttl = maxTTL
 	}
 
-	// Validate the subject token
-	validatedClaims, err := b.validateSubjectToken(subjectToken, config)
-	if err != nil {
-		return logical.ErrorResponse("failed to validate subject token: %v", err), nil
-	}
-
 	// Perform the token exchange
-	exchangeResult, err := b.exchangeTokenForOCI(ctx, subjectToken, subjectTokenType, config, validatedClaims)
+	exchangeResult, err := b.exchangeTokenForOCI(ctx, subjectToken, subjectTokenType, config)
 	if err != nil {
 		return logical.ErrorResponse("token exchange failed: %v", err), nil
 	}
 
 	// Prepare the response with OCI session token
 	respData := map[string]interface{}{
-		"access_token":  exchangeResult.AccessToken,
-		"token_type":    exchangeResult.TokenType,
-		"expires_in":    int(ttl.Seconds()),
-		"expires_at":    time.Now().Add(ttl).Format(time.RFC3339),
-		"region":        config.Region,
-		"tenancy_ocid":  config.TenancyOCID,
+		"access_token": exchangeResult.AccessToken,
+		"token_type":   exchangeResult.TokenType,
+		"expires_in":   int(ttl.Seconds()),
+		"expires_at":   time.Now().Add(ttl).Format(time.RFC3339),
+		"region":       config.Region,
+		"tenancy_ocid": config.TenancyOCID,
 	}
 
 	// If OCI returns a session token specifically
@@ -149,9 +172,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 
 	resp := b.Secret("oci_token").Response(respData, map[string]interface{}{
-		"role":            roleName,
-		"subject_issuer":  validatedClaims.Issuer,
-		"subject_subject": validatedClaims.Subject,
+		"role": roleName,
 	})
 
 	resp.Secret.TTL = ttl
@@ -197,15 +218,6 @@ func (b *backend) tokenRevoke(ctx context.Context, req *logical.Request, data *f
 	return nil, nil
 }
 
-// tokenValidationResult holds validated JWT claims
-type tokenValidationResult struct {
-	Issuer  string
-	Subject string
-	Email   string
-	Groups  []string
-	Raw     map[string]interface{}
-}
-
 // tokenExchangeResult holds the result of token exchange
 type tokenExchangeResult struct {
 	AccessToken  string
@@ -214,27 +226,8 @@ type tokenExchangeResult struct {
 	ExpiresIn    int
 }
 
-// validateSubjectToken validates the incoming JWT subject token
-func (b *backend) validateSubjectToken(token string, config *federatedConfig) (*tokenValidationResult, error) {
-	// TODO: Implement JWT validation
-	// This should:
-	// 1. Parse the JWT without verification first to get the header
-	// 2. Fetch the JWKS from config.JWKSURL if provided
-	// 3. Verify the signature using the appropriate key
-	// 4. Validate claims (iss, aud, exp, nbf)
-	// 5. Check issuer against config.AllowedIssuers
-
-	return &tokenValidationResult{
-		Issuer:  "https://example.com",
-		Subject: "user@example.com",
-		Email:   "user@example.com",
-		Groups:  []string{},
-		Raw:     map[string]interface{}{},
-	}, nil
-}
-
-// exchangeTokenForOCI exchanges the validated subject token for an OCI token
-func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, subjectTokenType string, config *federatedConfig, claims *tokenValidationResult) (*tokenExchangeResult, error) {
+// exchangeTokenForOCI exchanges the subject token for an OCI token
+func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, subjectTokenType string, config *federatedConfig) (*tokenExchangeResult, error) {
 	// TODO: Implement actual OCI token exchange
 	// This should call the OCI Security Token Service or Identity API
 	// to exchange the 3rd party JWT for an OCI session token

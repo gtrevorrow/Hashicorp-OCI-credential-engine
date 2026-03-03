@@ -9,6 +9,8 @@ import (
 	oci "github.com/gordon/Hashicorp-OCI-credential-engine/oci-backend"
 )
 
+var Version = "v0.0.0-dev"
+
 func main() {
 	logger := hclog.New(&hclog.LoggerOptions{
 		Name:   "oci-secrets",
@@ -16,10 +18,10 @@ func main() {
 		Output: os.Stderr,
 	})
 
-	logger.Info("Starting OCI secrets engine plugin")
+	logger.Info("Starting OCI secrets engine plugin", "version", Version)
 
 	err := plugin.ServeMultiplex(&plugin.ServeOpts{
-		BackendFactoryFunc: oci.Factory,
+		BackendFactoryFunc: oci.Factory(Version),
 		TLSProviderFunc:    oci.TLSProvider,
 		Logger:             logger,
 	})

@@ -1,9 +1,11 @@
-github.com/hashicorp/Hashicorp-OCI-credential-engine
 
 .DEFAULT_GOAL := build
 
 BINARY_NAME := vault-plugin-secrets-oci
 BUILD_DIR := bin
+
+VERSION ?= $(shell git describe --tags --always --dirty || echo "v0.0.0-dev")
+LDFLAGS := -X main.Version=$(VERSION)
 
 .PHONY: all build clean fmt vet test
 
@@ -11,7 +13,7 @@ all: fmt vet build
 
 build:
 	@mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) .
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) .
 
 clean:
 	@rm -rf $(BUILD_DIR)
@@ -28,10 +30,10 @@ test:
 # Build for multiple platforms
 build-all:
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 .
-	GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 .
-	GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 .
-	GOOS=windows GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe .
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 .
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 .
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 .
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe .
 
 # Enable the plugin in a local Vault dev server
 enable:

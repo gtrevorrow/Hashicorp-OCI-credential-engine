@@ -29,38 +29,41 @@ type backend struct {
 	logger hclog.Logger
 }
 
-// Factory configures and returns a new backend
-func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
-	b := backend{
-		logger: conf.Logger,
-	}
-	b.Backend = &framework.Backend{
-		Help: backendHelp,
-		PathsSpecial: &logical.Paths{ //seal wrap data stored in the config path will be encrypted with the master key ( Enterprise Vault only)
-			SealWrapStorage: []string{
-				"config",
+// Factory returns a configured logical.Factory
+func Factory(version string) logical.Factory {
+	return func(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
+		b := backend{
+			logger: conf.Logger,
+		}
+		b.Backend = &framework.Backend{
+			Help: backendHelp,
+			PathsSpecial: &logical.Paths{ //seal wrap data stored in the config path will be encrypted with the master key ( Enterprise Vault only)
+				SealWrapStorage: []string{
+					"config",
+				},
 			},
-		},
-		Paths: framework.PathAppend(
-			b.pathConfig(),
-			b.pathExchange(),
-			b.pathRoles(),
-		),
-		Secrets: []*framework.Secret{
-			b.ociTokenSecret(),
-		},
-		BackendType: logical.TypeLogical,
-	}
+			Paths: framework.PathAppend(
+				b.pathConfig(),
+				b.pathExchange(),
+				b.pathRoles(),
+			),
+			Secrets: []*framework.Secret{
+				b.ociTokenSecret(),
+			},
+			BackendType:    logical.TypeLogical,
+			RunningVersion: version,
+		}
 
-	if conf == nil {
-		return nil, errors.New("configuration passed into backend is nil")
-	}
+		if conf == nil {
+			return nil, errors.New("configuration passed into backend is nil")
+		}
 
-	if err := b.Setup(ctx, conf); err != nil {
-		return nil, err
-	}
+		if err := b.Setup(ctx, conf); err != nil {
+			return nil, err
+		}
 
-	return &b, nil
+		return &b, nil
+	}
 }
 
 // TLSProvider provides TLS configuration for the plugin

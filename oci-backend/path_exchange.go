@@ -53,6 +53,10 @@ func (b *backend) pathExchange() []*framework.Path {
 				},
 			},
 
+			ExistenceCheck: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+				return false, nil // Always false, exchange paths overwrite/create
+			},
+
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.CreateOperation: &framework.PathOperation{
 					Callback: b.pathExchangeWrite,

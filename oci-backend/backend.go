@@ -32,6 +32,10 @@ type backend struct {
 // Factory returns a configured logical.Factory
 func Factory(version string) logical.Factory {
 	return func(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
+		if conf == nil {
+			return nil, errors.New("configuration passed into backend is nil")
+		}
+
 		b := backend{
 			logger: conf.Logger,
 		}
@@ -52,10 +56,6 @@ func Factory(version string) logical.Factory {
 			},
 			BackendType:    logical.TypeLogical,
 			RunningVersion: version,
-		}
-
-		if conf == nil {
-			return nil, errors.New("configuration passed into backend is nil")
 		}
 
 		if err := b.Setup(ctx, conf); err != nil {

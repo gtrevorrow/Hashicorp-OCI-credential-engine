@@ -73,8 +73,14 @@ func (b *backend) pathRoles() []*framework.Path {
 		},
 		{
 			Pattern: path.Join("roles"),
-			Callbacks: map[logical.Operation]framework.OperationFunc{
-				logical.ListOperation: b.pathRoleList,
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.ListOperation: &framework.PathOperation{
+					Callback: b.pathRoleList,
+					Summary:  "List all roles",
+				},
+			},
+			ExistenceCheck: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+				return false, nil // Allow list
 			},
 			HelpSynopsis:    pathRoleListHelpSyn,
 			HelpDescription: pathRoleListHelpDesc,

@@ -5,7 +5,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/sdk/plugin"
-	
+
 	oci "github.com/gordon/Hashicorp-OCI-credential-engine/oci-backend"
 )
 
@@ -18,7 +18,7 @@ func main() {
 
 	logger.Info("Starting OCI secrets engine plugin")
 
-	err := plugin.Serve(&plugin.ServeOpts{
+	err := plugin.ServeMultiplex(&plugin.ServeOpts{
 		BackendFactoryFunc: oci.Factory,
 		TLSProviderFunc:    oci.TLSProvider,
 		Logger:             logger,

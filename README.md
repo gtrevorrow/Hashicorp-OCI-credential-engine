@@ -9,28 +9,30 @@ This plugin enables **federated identity** workflows by allowing users to exchan
 ### Architecture
 
 ```
-┌─────────────────┐          ┌──────────────────┐          ┌─────────────────┐
-│   External IdP  │          │   Vault Plugin   │          │   OCI IAM       │
-│  (Auth0, Okta,  │          │                  │          │                 │
-│   Azure AD,     │          │                  │          │                 │
-│   etc.)         │          │                  │          │                 │
-└────────┬────────┘          └────────┬─────────┘          └────────┬────────┘
-         │                            │                             │
-         │ 1. Issue JWT               │                             │
-         │◄─────────────────          │                             │
-         │                            │                             │
-         │ 2. Submit JWT for exchange │                             │
-         ├────────────────────────────►                             │
-         │                            │                             │
-         │                            │ 3. Validate & Exchange      │
-         │                            ├─────────────────────────────►
-         │                            │                             │
-         │                            │ 4. Return OCI Session Token │
-         │                            │◄────────────────────────────┤
-         │                            │                             │
-         │ 5. Return OCI credentials  │                             │
-         │◄───────────────────────────┤                             │
-         │                            │                             │
+┌─────────────────┐          ┌─────────────────┐          ┌──────────────────┐          ┌─────────────────┐
+│ Client/Workload │          │   External IdP  │          │   Vault Plugin   │          │   OCI IAM       │
+│  (App, CI/CD,   │          │  (Auth0, Okta,  │          │                  │          │                 │
+│   Developer)    │          │   Azure AD)     │          │                  │          │                 │
+└────────┬────────┘          └────────┬────────┘          └────────┬─────────┘          └────────┬────────┘
+         │                            │                            │                             │
+         │ 1. Request Identity        │                            │                             │
+         ├───────────────────────────►│                            │                             │
+         │                            │                            │                             │
+         │ 2. Issue Subject JWT       │                            │                             │
+         │◄───────────────────────────┤                            │                             │
+         │                            │                            │                             │
+         │ 3. Submit JWT for exchange │                            │                             │
+         ├────────────────────────────────────────────────────────►│                             │
+         │                            │                            │                             │
+         │                            │                            │ 4. Validate & Exchange      │
+         │                            │                            ├─────────────────────────────►
+         │                            │                            │                             │
+         │                            │                            │ 5. Return UPST Session      │
+         │                            │                            │◄────────────────────────────┤
+         │                            │                            │                             │
+         │ 6. Return OCI credentials  │                            │                             │
+         │◄────────────────────────────────────────────────────────┤                             │
+         │                            │                            │                             │
 ```
 
 ### Terminology

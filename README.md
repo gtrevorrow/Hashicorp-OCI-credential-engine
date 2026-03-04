@@ -38,9 +38,8 @@ This plugin enables **federated identity** workflows by allowing users to exchan
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
 - **Vault Enterprise WIF Support**: Automatically fetch identity tokens via Vault's Workload Identity Federation plugin when running on Vault Enterprise (no `subject_token` required)
 - **Federated Identity**: Leverage OCI IAM Identity Domains with external IdPs
-- **Token Validation**: Validate incoming JWTs using JWKS endpoints
-- **Role-based Access**: Define roles with TTL constraints and claim validation
-- **Automatic Lease Management**: OCI tokens are managed as Vault secrets with automatic revocation
+- **Role-based TTL Policies**: Define roles with default and maximum TTL constraints
+- **Lease Management**: OCI tokens are issued as Vault secrets with TTL-based lease handling
 - **Multi-tenant Support**: Support for multiple OCI Identity Domains and regions
 
 ## Prerequisites
@@ -97,28 +96,26 @@ Before using the plugin, configure it with your OCI Identity Domain details:
 ```bash
 vault write oci/config \
     tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \
-    domain_ocid="ocid1.identitydomain.oc1..xxxxx" \
-    identity_provider_id="ocid1.idp.oc1..xxxxx" \
+    domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
+    client_id="ocid1.oauth2client.oc1..xxxxx" \
+    client_secret="<oauth-client-secret>" \
     region="us-ashburn-1" \
-    jwks_url="https://auth.example.com/.well-known/jwks.json" \
-    allowed_issuers="https://auth.example.com" \
     default_ttl=3600 \
     max_ttl=28800
 ```
 
 **Parameters:**
 - `tenancy_ocid`: The OCID of your OCI tenancy
-- `domain_ocid`: The OCID of your OCI Identity Domain (for federated identity)
-- `identity_provider_id`: The ID of the external IdP configured in OCI IAM
+- `domain_url`: OCI Identity Domain URL (for example: `https://idcs-xxxxx.identity.oraclecloud.com`)
+- `client_id`: OAuth Confidential Application client ID in the OCI Identity Domain
+- `client_secret`: OAuth Confidential Application client secret in the OCI Identity Domain
 - `region`: The OCI region (e.g., `us-ashburn-1`, `eu-frankfurt-1`)
-- `jwks_url`: JWKS endpoint for validating incoming subject tokens
-- `allowed_issuers`: List of allowed token issuers (optional validation)
 - `default_ttl`: Default TTL for OCI session tokens in seconds (default: 3600)
 - `max_ttl`: Maximum TTL for OCI session tokens in seconds (default: 86400)
 
 ### Roles
 
-Create roles to define token constraints and access controls:
+Create roles to define token TTL constraints:
 
 ```bash
 # Create a development role
@@ -138,8 +135,8 @@ vault write oci/roles/prod \
 ```
 
 **Role Parameters:**
-- `allowed_groups`: Validate the token contains specific group claims
-- `allowed_subjects`: Restrict to specific subject claims (email, user ID)
+- `allowed_groups`: Stored role metadata for future claim filtering
+- `allowed_subjects`: Stored role metadata for future subject filtering
 
 ## Usage
 
@@ -253,20 +250,16 @@ configProvider := common.NewRawConfigurationProvider(
 
 1. **User authenticates** with external IdP and receives JWT
 2. **User submits JWT** to Vault plugin's `/exchange` endpoint
-3. **Plugin validates JWT** using JWKS from configured endpoint
-4. **Plugin validates claims** (issuer, audience, groups, subject)
-5. **Plugin calls OCI IAM** token exchange API
-6. **OCI validates** the JWT against the federated IdP
-7. **OCI returns** a session token
-8. **Plugin returns** credentials to user with Vault lease
+3. **Plugin calls OCI IAM** token exchange API
+4. **OCI validates** the JWT against the federated IdP
+5. **OCI returns** a session token
+6. **Plugin returns** credentials to user with Vault lease
 
 ### Security Considerations
 
-- **Token Validation**: Incoming JWTs are validated using JWKS before exchange
-- **Issuer Whitelist**: Only configured issuers are accepted
-- **Claim Validation**: Roles can enforce group membership requirements
+- **Token Validation**: Subject token validation is performed by OCI IAM during token exchange
 - **Short-lived Tokens**: OCI session tokens have configurable TTL (default 1 hour)
-- **Automatic Revocation**: Vault lease expiration triggers token cleanup
+- **Lease Management**: Vault lease lifecycle is applied to issued secrets
 - **Audit Logging**: All token exchanges are logged to Vault audit log
 
 ## Development

@@ -33,6 +33,13 @@ This plugin enables **federated identity** workflows by allowing users to exchan
          │                            │                             │
 ```
 
+### Terminology
+When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC 8693) and OCI Identity nomenclature:
+
+- **Subject Token**: The initial JWT (JSON Web Token) provided by an external Identity Provider (e.g., Auth0, Azure AD, Okta, Vault Enterprise WIF). This is the token that proves the user's or workload's identity.
+- **Token Exchange**: The process of trading the *Subject Token* for an OCI-specific token. The plugin acts as the intermediary, securely presenting the Subject Token to OCI over the `urn:ietf:params:oauth:grant-type:token-exchange` grant type.
+- **UPST (User Principal Session Token)**: The resulting session token issued by Oracle Cloud Infrastructure. Once the exchange succeeds, OCI returns a UPST. This token is what the end-user or workload actually uses to authenticate API calls against OCI services.
+
 ## Features
 
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
@@ -259,7 +266,7 @@ configProvider := common.NewRawConfigurationProvider(
 
 - **Token Validation**: Subject token validation is performed by OCI IAM during token exchange
 - **Short-lived Tokens**: OCI session tokens have configurable TTL (default 1 hour)
-- **Lease Management**: Vault lease lifecycle is applied to issued secrets
+- **Lease Management**: Vault lease lifecycle is applied to issued secrets, but OCI session tokens (UPST) cannot be actively revoked server-side before expiration. Vault simply drops the lease locally.
 - **Audit Logging**: All token exchanges are logged to Vault audit log
 
 ## Development

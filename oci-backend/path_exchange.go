@@ -3,7 +3,6 @@ package ocibackend
 import (
 	"context"
 	"path"
-	"strings"
 	"time"
 
 	"github.com/hashicorp/vault/sdk/framework"
@@ -94,27 +93,21 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		subjectTokenType = raw.(string)
 	}
 
-	isEnterprise := false
-	vaultVersion, err := b.System().VaultVersion(ctx)
-	if err == nil && strings.Contains(vaultVersion, "+ent") {
-		isEnterprise = true
-	}
-
+	// Fallback to Vault Identity generation if no subject token provided
 	if subjectToken == "" {
-		if isEnterprise {
-			resp, identityErr := b.System().GenerateIdentityToken(ctx, &pluginutil.IdentityTokenRequest{
-				Audience: "oci-secrets-engine",
-			})
-			if identityErr != nil {
-				return logical.ErrorResponse("failed to generate plugin identity token: %v", identityErr), nil
-			}
-			if resp != nil {
-				subjectToken = string(resp.Token)
-			}
+		resp, identityErr := b.System().GenerateIdentityToken(ctx, &pluginutil.IdentityTokenRequest{
+			Audience: "urn:mace:oci:idcs", // Standard OCI identity domain audience
+		})
+
+		if identityErr != nil {
+			return logical.ErrorResponse("failed to generate plugin identity token: %v", identityErr), nil
+		}
+		if resp != nil {
+			subjectToken = string(resp.Token)
 		}
 
 		if subjectToken == "" {
-			return logical.ErrorResponse("missing 'subject_token'"), nil
+			return logical.ErrorResponse("missing 'subject_token' and unable to self-mint identity token"), nil
 		}
 	}
 

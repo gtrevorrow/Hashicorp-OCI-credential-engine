@@ -11,22 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockSystemView is used to inject an Enterprise Vault version for WIF testing
+// mockSystemView is used to inject custom mock data for WIF testing
 type mockSystemView struct {
 	logical.StaticSystemView
-	isEnterprise bool
 	mockIdentity string
 }
 
-func (m *mockSystemView) VaultVersion(ctx context.Context) (string, error) {
-	if m.isEnterprise {
-		return "1.16.0+ent", nil
-	}
-	return "1.16.0", nil
-}
-
 func (m *mockSystemView) GenerateIdentityToken(ctx context.Context, req *pluginutil.IdentityTokenRequest) (*pluginutil.IdentityTokenResponse, error) {
-	if m.isEnterprise && m.mockIdentity != "" {
+	if m.mockIdentity != "" {
 		return &pluginutil.IdentityTokenResponse{
 			Token: pluginutil.IdentityToken(m.mockIdentity),
 		}, nil
@@ -38,7 +30,6 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 	// Standard Setup
 	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
 		System: &mockSystemView{
-			isEnterprise: false,
 			mockIdentity: "",
 			StaticSystemView: logical.StaticSystemView{
 				DefaultLeaseTTLVal: time.Hour,
@@ -94,7 +85,7 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 	_, err = backend.HandleRequest(context.Background(), reqRole)
 	require.NoError(t, err)
 
-	t.Run("Missing Subject Token (Non-Enterprise)", func(t *testing.T) {
+	t.Run("Missing Subject Token Unconfigured Identity", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
 			Path:      "exchange",
@@ -107,7 +98,7 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 		resp, err := backend.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "missing 'subject_token'")
+		require.Contains(t, resp.Error().Error(), "failed to generate plugin identity token")
 	})
 
 	t.Run("Missing Role", func(t *testing.T) {
@@ -128,11 +119,9 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 	})
 }
 
-// Separate test function specifically for mocking Enterprise WIF
 func TestPathExchange_WIFEnterprise(t *testing.T) {
 	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
 		System: &mockSystemView{
-			isEnterprise: true,
 			mockIdentity: "mocked-wif-identity-token",
 			StaticSystemView: logical.StaticSystemView{
 				DefaultLeaseTTLVal: time.Hour,

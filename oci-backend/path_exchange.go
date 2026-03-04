@@ -2,7 +2,6 @@ package ocibackend
 
 import (
 	"context"
-	"fmt"
 	"path"
 	"strings"
 	"time"
@@ -220,32 +219,6 @@ func (b *backend) tokenRevoke(ctx context.Context, req *logical.Request, data *f
 	// TODO: Implement token revocation via OCI API
 	// This would call the OCI Identity service to invalidate the session token
 	return nil, nil
-}
-
-// tokenExchangeResult holds the result of token exchange
-type tokenExchangeResult struct {
-	AccessToken  string
-	SessionToken string
-	TokenType    string
-	ExpiresIn    int
-}
-
-// exchangeTokenForOCI exchanges the subject token for an OCI token
-func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, subjectTokenType string, config *federatedConfig) (*tokenExchangeResult, error) {
-	// TODO: Implement actual OCI token exchange
-	// This should call the OCI Security Token Service or Identity API
-	// to exchange the 3rd party JWT for an OCI session token
-
-	// OCI API call would look something like:
-	// POST /20200430/domains/{domainId}/token
-	// with the subject token and configuration
-
-	return &tokenExchangeResult{
-		AccessToken:  "PLACEHOLDER_OCI_ACCESS_TOKEN",
-		SessionToken: "PLACEHOLDER_OCI_SESSION_TOKEN",
-		TokenType:    "Bearer",
-		ExpiresIn:    3600,
-	}, fmt.Errorf("OCI token exchange not yet implemented - this is a placeholder")
 }
 
 const pathExchangeHelpSyn = `

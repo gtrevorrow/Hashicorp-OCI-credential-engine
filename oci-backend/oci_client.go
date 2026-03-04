@@ -2,37 +2,47 @@ package ocibackend
 
 import (
 	"context"
-	"errors"
+	"fmt"
+
+	"github.com/oracle/oci-go-sdk/v65/common/auth"
 )
 
-// OCI Token Exchange API types
-
-type ociTokenRequest struct {
-	GrantType          string `json:"grant_type"`
-	SubjectToken       string `json:"subject_token"`
-	SubjectTokenType   string `json:"subject_token_type"`
-	RequestedTokenType string `json:"requested_token_type,omitempty"`
-	Scope              string `json:"scope,omitempty"`
+// tokenExchangeResult holds the result of token exchange
+type tokenExchangeResult struct {
+	AccessToken  string
+	SessionToken string
+	TokenType    string
+	ExpiresIn    int
 }
 
-type ociTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
-	Scope       string `json:"scope,omitempty"`
-}
+// exchangeTokenForOCI exchanges the subject token for an OCI UPST token
+func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, subjectTokenType string, config *federatedConfig) (*tokenExchangeResult, error) {
+	builder := auth.TokenExchangeBuilder{
+		DomainUrl:          config.DomainUrl,
+		ClientId:           config.ClientID,
+		ClientSecret:       config.ClientSecret,
+		Region:             config.Region,
+		RequestedTokenType: "urn:oci:token-type:oci-upst",
+		SubjectTokenType:   subjectTokenType,
+	}
 
-// exchangeTokenWithOCI calls the OCI Identity Domain token endpoint
-func (b *backend) exchangeTokenWithOCI(ctx context.Context, req *ociTokenRequest, config *federatedConfig) (*ociTokenResponse, error) {
-	// TODO: Implement actual OCI API call
-	// Endpoint: POST /oauth2/v1/token
-	// Base URL: https://{domain}.identity.{region}.oci.oraclecloud.com
-	// or: https://idcs-{domain}.identity.oraclecloud.com
+	provider, err := auth.TokenExchangeConfigurationProviderFromToken(subjectToken, builder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token exchange provider: %w", err)
+	}
 
-	// The request body should be form-encoded or JSON depending on OCI's requirements
-	// grant_type=urn:ietf:params:oauth:grant-type:token-exchange
-	// subject_token={jwt}
-	// subject_token_type=urn:ietf:params:oauth:token-type:jwt
+	// For User Principal Session Tokens (UPST), the SDK stores the raw token string
+	// inside the SecurityToken/KeyID. We retrieve it to return directly as our session_token.
+	sessionToken, err := provider.KeyID()
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract underlying UPST from provider: %w", err)
+	}
 
-	return nil, errors.New("OCI token exchange API not yet implemented")
+	return &tokenExchangeResult{
+		// OCI UPST is typically treated as the access or session token directly.
+		AccessToken:  sessionToken,
+		SessionToken: sessionToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    config.DefaultTTL, // Handled implicitly by Vault unless OCI gives an exact TTL internally.
+	}, nil
 }

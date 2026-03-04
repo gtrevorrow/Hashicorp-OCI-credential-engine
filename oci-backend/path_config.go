@@ -23,20 +23,29 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Tenancy OCID",
 					},
 				},
-				"domain_ocid": {
+				"domain_url": {
 					Type:        framework.TypeString,
-					Description: "OCID of the OCI Identity Domain",
+					Description: "URL of the OCI Identity Domain (e.g. https://idcs-xxxx.identity.oraclecloud.com)",
 					Required:    true,
 					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Identity Domain OCID",
+						Name: "Identity Domain URL",
 					},
 				},
-				"identity_provider_id": {
+				"client_id": {
 					Type:        framework.TypeString,
-					Description: "ID of the external Identity Provider configured in OCI IAM",
+					Description: "Client ID of the OAuth Confidential Application",
 					Required:    true,
 					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Identity Provider ID",
+						Name: "Client ID",
+					},
+				},
+				"client_secret": {
+					Type:        framework.TypeString,
+					Description: "Client Secret of the OAuth Confidential Application",
+					Required:    true,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name:      "Client Secret",
+						Sensitive: true,
 					},
 				},
 				"region": {
@@ -105,10 +114,11 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 
 	return &logical.Response{
 		Data: map[string]interface{}{
-			"tenancy_ocid":         config.TenancyOCID,
-			"domain_ocid":          config.DomainOCID,
-			"identity_provider_id": config.IdentityProviderID,
-			"region":               config.Region,
+			"tenancy_ocid": config.TenancyOCID,
+			"domain_url":   config.DomainUrl,
+			"client_id":    config.ClientID,
+			"region":       config.Region,
+			// Client Secret is intentionally omitted from read
 
 			"default_ttl": config.DefaultTTL,
 			"max_ttl":     config.MaxTTL,
@@ -123,14 +133,19 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		return logical.ErrorResponse("missing 'tenancy_ocid'"), nil
 	}
 
-	domainOCID := data.Get("domain_ocid").(string)
-	if domainOCID == "" {
-		return logical.ErrorResponse("missing 'domain_ocid'"), nil
+	domainUrl := data.Get("domain_url").(string)
+	if domainUrl == "" {
+		return logical.ErrorResponse("missing 'domain_url'"), nil
 	}
 
-	identityProviderID := data.Get("identity_provider_id").(string)
-	if identityProviderID == "" {
-		return logical.ErrorResponse("missing 'identity_provider_id'"), nil
+	clientID := data.Get("client_id").(string)
+	if clientID == "" {
+		return logical.ErrorResponse("missing 'client_id'"), nil
+	}
+
+	clientSecret := data.Get("client_secret").(string)
+	if clientSecret == "" {
+		return logical.ErrorResponse("missing 'client_secret'"), nil
 	}
 
 	region := data.Get("region").(string)
@@ -139,10 +154,11 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 
 	config := &federatedConfig{
-		TenancyOCID:        tenancyOCID,
-		DomainOCID:         domainOCID,
-		IdentityProviderID: identityProviderID,
-		Region:             region,
+		TenancyOCID:  tenancyOCID,
+		DomainUrl:    domainUrl,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Region:       region,
 
 		DefaultTTL: data.Get("default_ttl").(int),
 		MaxTTL:     data.Get("max_ttl").(int),
@@ -152,8 +168,8 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	if !strings.HasPrefix(tenancyOCID, "ocid1.tenancy.") {
 		return logical.ErrorResponse("invalid tenancy_ocid format"), nil
 	}
-	if !strings.HasPrefix(domainOCID, "ocid1.identitydomain.") {
-		return logical.ErrorResponse("invalid domain_ocid format"), nil
+	if !strings.HasPrefix(domainUrl, "https://") {
+		return logical.ErrorResponse("invalid domain_url format, must start with https://"), nil
 	}
 
 	if err := b.saveConfig(ctx, req.Storage, config); err != nil {
@@ -189,8 +205,9 @@ The OCI secrets engine exchanges 3rd party OIDC/OAuth JWT tokens for OCI session
 
 You must configure:
   - tenancy_ocid: The OCID of your OCI tenancy
-  - domain_ocid: The OCID of your OCI Identity Domain
-  - identity_provider_id: The ID of the external IdP configured in OCI IAM
+  - domain_url: The URL of your OCI Identity Domain
+  - client_id: The Client ID of the OAuth Confidential Application
+  - client_secret: The Client Secret of the OAuth Confidential Application
   - region: The OCI region (e.g., us-ashburn-1)
 
 Optional:
@@ -200,7 +217,8 @@ Optional:
 Example:
   $ vault write oci/config \
       tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \
-      domain_ocid="ocid1.identitydomain.oc1..xxxxx" \
-      identity_provider_id="ocid1.idp.oc1..xxxxx" \
+      domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
+      client_id="my-client-id" \
+      client_secret="my-client-secret" \
       region="us-ashburn-1"
 `

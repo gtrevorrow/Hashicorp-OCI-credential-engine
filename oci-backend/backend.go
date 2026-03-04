@@ -76,18 +76,15 @@ type federatedConfig struct {
 	// OCI tenancy and identity domain
 	TenancyOCID string `json:"tenancy_ocid" mapstructure:"tenancy_ocid"`
 
-	// OCI Identity Domain OCID (for federated identity)
-	DomainOCID string `json:"domain_ocid" mapstructure:"domain_ocid"`
-
-	// Identity Provider ID for the 3rd party IdP configured in OCI
-	IdentityProviderID string `json:"identity_provider_id" mapstructure:"identity_provider_id"`
+	// OCI Identity Domain URL (e.g., https://idcs-xxxx.identity.oraclecloud.com)
+	DomainUrl string `json:"domain_url" mapstructure:"domain_url"`
 
 	// OCI Region
 	Region string `json:"region" mapstructure:"region"`
 
-	// Optional: Client credentials for OCI IAM (if not using instance/auth principal)
-	ClientID     string `json:"client_id,omitempty" mapstructure:"client_id"`
-	ClientSecret string `json:"client_secret,omitempty" mapstructure:"client_secret"`
+	// Client credentials for the OAuth Confidential Application inside the Identity Domain
+	ClientID     string `json:"client_id" mapstructure:"client_id"`
+	ClientSecret string `json:"client_secret" mapstructure:"client_secret"`
 
 	// Default TTL for issued OCI session tokens
 	DefaultTTL int `json:"default_ttl" mapstructure:"default_ttl"`

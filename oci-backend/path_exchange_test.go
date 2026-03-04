@@ -73,10 +73,11 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":         "ocid1.tenancy.oc1..test",
-			"domain_ocid":          "ocid1.identitydomain.oc1..test",
-			"identity_provider_id": "ocid1.idp.oc1..test",
-			"region":               "us-ashburn-1",
+			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+			"region":        "us-ashburn-1",
 		},
 	}
 	_, err = backend.HandleRequest(context.Background(), reqConfig)
@@ -149,10 +150,11 @@ func TestPathExchange_WIFEnterprise(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":         "ocid1.tenancy.oc1..test",
-			"domain_ocid":          "ocid1.identitydomain.oc1..test",
-			"identity_provider_id": "ocid1.idp.oc1..test",
-			"region":               "us-ashburn-1",
+			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+			"region":        "us-ashburn-1",
 		},
 	}
 	_, _ = backend.HandleRequest(context.Background(), reqConfig)
@@ -187,6 +189,6 @@ func TestPathExchange_WIFEnterprise(t *testing.T) {
 
 		errStr := resp.Error().Error()
 		assert.NotContains(t, errStr, "missing 'subject_token'", "Enterprise WIF bypass failed; it demanded a subject_token")
-		assert.Contains(t, errStr, "token exchange failed: OCI token exchange not yet implemented", "It successfully bypassed subject_token and attempted the API call")
+		assert.Contains(t, errStr, "unable to exchange JWT for security token", "It successfully bypassed subject_token and attempted the API call utilizing the SDK")
 	})
 }

@@ -18,11 +18,12 @@ func TestPathConfig_Updates(t *testing.T) {
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"tenancy_ocid":         "ocid1.tenancy.oc1..test",
-				"domain_ocid":          "ocid1.identitydomain.oc1..test",
-				"identity_provider_id": "ocid1.idp.oc1..test",
-				"region":               "us-ashburn-1",
-				"jwks_url":             "https://example.com/jwks",
+				"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+				"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+				"client_id":     "test-client-id",
+				"client_secret": "test-client-secret",
+				"region":        "us-ashburn-1",
+				"jwks_url":      "https://example.com/jwks",
 			},
 		}
 
@@ -56,11 +57,12 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":         "ocid1.tenancy.oc1..test",
-			"domain_ocid":          "ocid1.identitydomain.oc1..test",
-			"identity_provider_id": "ocid1.idp.oc1..test",
-			"region":               "us-ashburn-1",
-			"jwks_url":             "https://example.com/jwks",
+			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+			"region":        "us-ashburn-1",
+			"jwks_url":      "https://example.com/jwks",
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqCreate)
@@ -78,6 +80,9 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		require.NotNil(t, resp)
 
 		assert.Equal(t, "ocid1.tenancy.oc1..test", resp.Data["tenancy_ocid"])
+		assert.Equal(t, "https://idcs-test.identity.oraclecloud.com", resp.Data["domain_url"])
+		assert.Equal(t, "test-client-id", resp.Data["client_id"])
+		assert.Nil(t, resp.Data["client_secret"])
 		assert.Equal(t, "us-ashburn-1", resp.Data["region"])
 	})
 

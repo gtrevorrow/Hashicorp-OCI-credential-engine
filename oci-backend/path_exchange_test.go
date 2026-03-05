@@ -181,3 +181,68 @@ func TestPathExchange_WIFEnterprise(t *testing.T) {
 		assert.Contains(t, errStr, "unable to exchange JWT for security token", "It successfully bypassed subject_token and attempted the API call utilizing the SDK")
 	})
 }
+
+func TestPathExchange_RequestedTokenTypeValidation(t *testing.T) {
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+	storage := &logical.InmemStorage{}
+
+	// Pre-populate minimal config.
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+			"region":        "us-ashburn-1",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	t.Run("Unsupported Requested Token Type", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.CreateOperation,
+			Path:      "exchange",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"subject_token":        "token123",
+				"requested_token_type": "urn:oci:token-type:not-valid",
+			},
+		}
+
+		resp, err := backend.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "unsupported requested_token_type")
+	})
+
+	t.Run("RPST Missing Resource Type", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.CreateOperation,
+			Path:      "exchange",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"subject_token":        "token123",
+				"requested_token_type": ociRequestedTokenTypeRPST,
+			},
+		}
+
+		resp, err := backend.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "missing 'res_type'")
+	})
+}

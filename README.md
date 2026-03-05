@@ -45,6 +45,7 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 ## Features
 
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
+- **UPST and RPST Support**: Request either `urn:oci:token-type:oci-upst` or `urn:oci:token-type:oci-rpst`
 - **Returned OCI Key Pair**: Exchange responses include PEM-encoded `private_key` and `public_key` for request-signing workflows
 - **Vault Enterprise WIF Support**: Automatically fetch identity tokens via Vault's Workload Identity Federation plugin when running on Vault Enterprise (no `subject_token` required)
 - **Federated Identity**: Leverage OCI IAM Identity Domains with external IdPs
@@ -156,11 +157,14 @@ vault write oci/roles/prod \
 vault write oci/exchange \
     subject_token="eyJhbGciOiJSUzI1NiIs..." \
     subject_token_type="urn:ietf:params:oauth:token-type:jwt" \
+    requested_token_type="urn:oci:token-type:oci-upst" \
     role="developer" \
     ttl=3600
 ```
 
 *Note: If running on Vault Enterprise, `subject_token` is optional. The plugin will automatically fetch the Vault native Workload Identity Federation (WIF) plugin identity token if the `subject_token` is omitted.*
+
+*Reference: Oracle JWT-to-UPST flow and request parameters are documented in [Token Exchange Grant Type: Exchanging a JSON Web Token for a UPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm#jwt_token_exchange__get-oci-upst).*
 
 **Response:**
 ```json
@@ -170,6 +174,7 @@ vault write oci/exchange \
     "session_token": "Atbv...",
         "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE...",
         "public_key": "-----BEGIN PUBLIC KEY-----\\nMIIB...",
+    "requested_token_type": "urn:oci:token-type:oci-upst",
     "token_type": "Bearer",
     "expires_in": 3600,
     "expires_at": "2024-01-15T10:30:00Z",
@@ -181,6 +186,8 @@ vault write oci/exchange \
   "renewable": true
 }
 ```
+
+If `public_key` is provided in the request, the plugin will not return `private_key` or `public_key` in the response.
 
 ### Using with OCI CLI
 
@@ -203,7 +210,22 @@ chmod 600 ~/.oci/key.pem
 oci iam user list
 ```
 
-The `private_key` and `public_key` fields are PEM-encoded and can be used by tools or SDK wrappers that require explicit key material for OCI request signing. Treat `private_key` as sensitive secret material.
+The `private_key` and `public_key` fields are PEM-encoded and can be used by tools or SDK wrappers that require explicit key material for OCI request signing, which aligns with OCI's UPST public-key workflow. Treat `private_key` as sensitive secret material.
+
+### Exchange a JWT for OCI RPST
+
+Use RPST when you need resource-principal style token exchange behavior supported by OCI Identity Domains.
+
+```bash
+vault write oci/exchange \
+    subject_token="eyJhbGciOiJSUzI1NiIs..." \
+    subject_token_type="urn:ietf:params:oauth:token-type:jwt" \
+    requested_token_type="urn:oci:token-type:oci-rpst" \
+    res_type="resource_principal" \
+    role="developer"
+```
+
+For RPST requests, `res_type` is required and the response will include `rpst_token`.
 
 ### Using with OCI SDK (Go)
 
@@ -249,11 +271,18 @@ configProvider := common.NewRawConfigurationProvider(
 {
   "subject_token": "eyJhbGciOiJSUzI1NiIs...",
   "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+    "requested_token_type": "urn:oci:token-type:oci-upst",
+    "res_type": "resource_principal",
+    "public_key": "-----BEGIN PUBLIC KEY-----...",
   "role": "developer",
   "ttl": 3600
 }
 ```
 *(Note: `subject_token` is optional on Vault Enterprise when utilizing WIF plugin identity tokens)*
+
+`requested_token_type` defaults to `urn:oci:token-type:oci-upst`. Supported values:
+- `urn:oci:token-type:oci-upst`
+- `urn:oci:token-type:oci-rpst` (requires `res_type`)
 
 ### Roles Path
 
@@ -272,14 +301,14 @@ configProvider := common.NewRawConfigurationProvider(
 2. **User submits JWT** to Vault plugin's `/exchange` endpoint
 3. **Plugin calls OCI IAM** token exchange API
 4. **OCI validates** the JWT against the federated IdP
-5. **OCI returns** a session token
+5. **OCI returns** the requested token type (UPST or RPST)
 6. **Plugin returns** credentials to user with Vault lease
 
 ### Security Considerations
 
 - **Token Validation**: Subject token validation is performed by OCI IAM during token exchange
-- **Short-lived Tokens**: OCI session tokens have configurable TTL (default 1 hour)
-- **Lease Management**: Vault lease lifecycle is applied to issued secrets, but OCI session tokens (UPST) cannot be actively revoked server-side before expiration. Vault simply drops the lease locally.
+- **Short-lived Tokens**: OCI exchanged tokens have configurable TTL (default 1 hour)
+- **Lease Management**: Vault lease lifecycle is applied to issued secrets, but OCI exchanged tokens cannot be actively revoked server-side before expiration. Vault simply drops the lease locally.
 - **Audit Logging**: All token exchanges are logged to Vault audit log
 
 ## Development
@@ -343,6 +372,7 @@ vault secrets enable -path=oci oci
 - [HashiCorp Vault Plugin Documentation](https://developer.hashicorp.com/vault/docs/plugins)
 - [OCI Identity Domains](https://docs.oracle.com/en-us/iaas/Content/Identity/home.htm)
 - [OCI IAM Federated Identity](https://docs.oracle.com/en-us/iaas/Content/Identity/federation/overview.htm)
+- [OCI JWT to UPST Token Exchange](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm#jwt_token_exchange__get-oci-upst)
 - [OAuth 2.0 Token Exchange RFC](https://tools.ietf.org/html/rfc8693)
 - [Vault Secrets Engine Tutorial](https://developer.hashicorp.com/vault/tutorials/custom-secrets-engine)
 

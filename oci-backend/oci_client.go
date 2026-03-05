@@ -10,25 +10,48 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/common/auth"
 )
 
+const (
+	ociRequestedTokenTypeUPST = "urn:oci:token-type:oci-upst"
+	ociRequestedTokenTypeRPST = "urn:oci:token-type:oci-rpst"
+)
+
 // tokenExchangeResult holds the result of token exchange
 type tokenExchangeResult struct {
-	AccessToken  string
-	SessionToken string
-	TokenType    string
-	ExpiresIn    int
-	PrivateKey   string
-	PublicKey    string
+	AccessToken        string
+	SessionToken       string
+	RPSTToken          string
+	TokenType          string
+	RequestedTokenType string
+	ExpiresIn          int
+	PrivateKey         string
+	PublicKey          string
 }
 
-// exchangeTokenForOCI exchanges the subject token for an OCI UPST token
-func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, subjectTokenType string, config *federatedConfig) (*tokenExchangeResult, error) {
+func isSupportedRequestedTokenType(requestedTokenType string) bool {
+	return requestedTokenType == ociRequestedTokenTypeUPST || requestedTokenType == ociRequestedTokenTypeRPST
+}
+
+func shouldReturnGeneratedKeyPair(publicKey string) bool {
+	return publicKey == ""
+}
+
+// exchangeTokenForOCI exchanges the subject token for an OCI token (UPST or RPST).
+func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, subjectTokenType, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+	_ = ctx // placeholder for future context-aware SDK calls
+
+	if requestedTokenType == "" {
+		requestedTokenType = ociRequestedTokenTypeUPST
+	}
+
 	builder := auth.TokenExchangeBuilder{
 		DomainUrl:          config.DomainUrl,
 		ClientId:           config.ClientID,
 		ClientSecret:       config.ClientSecret,
 		Region:             config.Region,
-		RequestedTokenType: "urn:oci:token-type:oci-upst",
+		RequestedTokenType: requestedTokenType,
 		SubjectTokenType:   subjectTokenType,
+		ResType:            resType,
+		PublicKey:          publicKey,
 	}
 
 	provider, err := auth.TokenExchangeConfigurationProviderFromToken(subjectToken, builder)
@@ -36,37 +59,49 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, subject
 		return nil, fmt.Errorf("failed to create token exchange provider: %w", err)
 	}
 
-	// For User Principal Session Tokens (UPST), the SDK stores the raw token string
-	// inside the SecurityToken/KeyID. We retrieve it to return directly as our session_token.
-	sessionToken, err := provider.KeyID()
+	// The SDK exposes exchanged token value via KeyID/SecurityToken.
+	exchangedToken, err := provider.KeyID()
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract underlying UPST from provider: %w", err)
+		return nil, fmt.Errorf("failed to extract token from provider: %w", err)
 	}
 
-	privateKey, err := provider.PrivateRSAKey()
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract private key from provider: %w", err)
-	}
+	privateKeyPEM := ""
+	publicKeyPEM := ""
+	if shouldReturnGeneratedKeyPair(publicKey) {
+		privateKey, err := provider.PrivateRSAKey()
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract private key from provider: %w", err)
+		}
 
-	privateKeyPEM, err := marshalPrivateKeyToPEM(privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal private key: %w", err)
-	}
+		privateKeyPEM, err = marshalPrivateKeyToPEM(privateKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal private key: %w", err)
+		}
 
-	publicKeyPEM, err := marshalPublicKeyToPEM(privateKey.Public())
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal public key: %w", err)
+		publicKeyPEM, err = marshalPublicKeyToPEM(privateKey.Public())
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal public key: %w", err)
+		}
 	}
 
 	return &tokenExchangeResult{
-		// OCI UPST is typically treated as the access or session token directly.
-		AccessToken:  sessionToken,
-		SessionToken: sessionToken,
-		TokenType:    "Bearer",
-		ExpiresIn:    config.DefaultTTL, // Handled implicitly by Vault unless OCI gives an exact TTL internally.
-		PrivateKey:   privateKeyPEM,
-		PublicKey:    publicKeyPEM,
+		// OCI token from exchange can be UPST or RPST depending on requested token type.
+		AccessToken:        exchangedToken,
+		SessionToken:       tokenByType(requestedTokenType, ociRequestedTokenTypeUPST, exchangedToken),
+		RPSTToken:          tokenByType(requestedTokenType, ociRequestedTokenTypeRPST, exchangedToken),
+		TokenType:          "Bearer",
+		RequestedTokenType: requestedTokenType,
+		ExpiresIn:          config.DefaultTTL, // Handled implicitly by Vault unless OCI gives an exact TTL internally.
+		PrivateKey:         privateKeyPEM,
+		PublicKey:          publicKeyPEM,
 	}, nil
+}
+
+func tokenByType(requestedTokenType, wantedType, token string) string {
+	if requestedTokenType == wantedType {
+		return token
+	}
+	return ""
 }
 
 // marshalPrivateKeyToPEM converts an RSA private key into PKCS#8 PEM format.

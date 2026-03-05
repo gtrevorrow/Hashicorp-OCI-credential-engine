@@ -38,3 +38,14 @@ func TestKeyPairPEMMarshalling(t *testing.T) {
 	require.NoError(t, err)
 	require.IsType(t, &rsa.PublicKey{}, parsedPublicKey)
 }
+
+func TestIsSupportedRequestedTokenType(t *testing.T) {
+	require.True(t, isSupportedRequestedTokenType(ociRequestedTokenTypeUPST))
+	require.True(t, isSupportedRequestedTokenType(ociRequestedTokenTypeRPST))
+	require.False(t, isSupportedRequestedTokenType("urn:oci:token-type:unknown"))
+}
+
+func TestShouldReturnGeneratedKeyPair(t *testing.T) {
+	require.True(t, shouldReturnGeneratedKeyPair(""))
+	require.False(t, shouldReturnGeneratedKeyPair("-----BEGIN PUBLIC KEY-----..."))
+}

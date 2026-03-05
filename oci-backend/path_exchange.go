@@ -166,6 +166,12 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if exchangeResult.SessionToken != "" {
 		respData["session_token"] = exchangeResult.SessionToken
 	}
+	if exchangeResult.PrivateKey != "" {
+		respData["private_key"] = exchangeResult.PrivateKey
+	}
+	if exchangeResult.PublicKey != "" {
+		respData["public_key"] = exchangeResult.PublicKey
+	}
 
 	resp := b.Secret("oci_token").Response(respData, map[string]interface{}{
 		"role": roleName,
@@ -189,6 +195,14 @@ func (b *backend) ociTokenSecret() *framework.Secret {
 			"session_token": {
 				Type:        framework.TypeString,
 				Description: "OCI session token (for CLI/SDK)",
+			},
+			"private_key": {
+				Type:        framework.TypeString,
+				Description: "PEM-encoded private key associated with the OCI session token",
+			},
+			"public_key": {
+				Type:        framework.TypeString,
+				Description: "PEM-encoded public key associated with the OCI session token",
 			},
 			"token_type": {
 				Type:        framework.TypeString,
@@ -238,6 +252,8 @@ Example:
 The response includes:
   - access_token: The OCI access token
   - session_token: The OCI session token (for CLI/SDK use)
+	- private_key: PEM-encoded private key for OCI request signing
+	- public_key: PEM-encoded public key for OCI request signing
   - token_type: Bearer
   - expires_in: Token lifetime in seconds
   - region: The configured OCI region

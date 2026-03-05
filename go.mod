@@ -110,4 +110,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/oracle/oci-go-sdk/v65 => /home/gordon/Downloads/go-sdk-v65.108.1-p-333/src/github.com/oracle/oci-go-sdk
+replace github.com/oracle/oci-go-sdk/v65 => /Users/gordon/Documents/src/github.com/oracle/oci-go-sdk

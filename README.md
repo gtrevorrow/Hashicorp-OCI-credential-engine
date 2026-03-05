@@ -45,6 +45,7 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 ## Features
 
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
+- **Returned OCI Key Pair**: Exchange responses include PEM-encoded `private_key` and `public_key` for request-signing workflows
 - **Vault Enterprise WIF Support**: Automatically fetch identity tokens via Vault's Workload Identity Federation plugin when running on Vault Enterprise (no `subject_token` required)
 - **Federated Identity**: Leverage OCI IAM Identity Domains with external IdPs
 - **Role-based TTL Policies**: Define roles with default and maximum TTL constraints
@@ -167,6 +168,8 @@ vault write oci/exchange \
   "data": {
     "access_token": "eyJ...",
     "session_token": "Atbv...",
+        "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE...",
+        "public_key": "-----BEGIN PUBLIC KEY-----\\nMIIB...",
     "token_type": "Bearer",
     "expires_in": 3600,
     "expires_at": "2024-01-15T10:30:00Z",
@@ -190,9 +193,17 @@ export OCI_CLI_AUTH=security_token
 export OCI_CLI_SECURITY_TOKEN=$(echo $CREDS | jq -r '.data.session_token')
 export OCI_CLI_REGION=$(echo $CREDS | jq -r '.data.region')
 
+# Persist key material returned by the plugin
+mkdir -p ~/.oci
+echo "$CREDS" | jq -r '.data.private_key' > ~/.oci/key.pem
+echo "$CREDS" | jq -r '.data.public_key' > ~/.oci/key_public.pem
+chmod 600 ~/.oci/key.pem
+
 # Use OCI CLI
 oci iam user list
 ```
+
+The `private_key` and `public_key` fields are PEM-encoded and can be used by tools or SDK wrappers that require explicit key material for OCI request signing. Treat `private_key` as sensitive secret material.
 
 ### Using with OCI SDK (Go)
 

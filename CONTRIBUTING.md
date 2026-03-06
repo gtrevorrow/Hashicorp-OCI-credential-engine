@@ -57,6 +57,17 @@ make build
 make build-all
 ```
 
+### Overriding Dependencies Locally (Go Workspaces)
+
+If you are developing this plugin in tandem with local changes to its dependencies (e.g., the `oci-go-sdk`), do **not** modify `go.mod` with local `replace` directives. Those are workstation-specific and will break the build for others if committed.
+
+Instead, use [Go Workspaces](https://go.dev/doc/tutorial/workspaces):
+```bash
+go work init . /path/to/your/local/oci-go-sdk
+```
+
+This generates a `go.work` file that tells the Go compiler to use your local SDK. We already include `go.work` in our `.gitignore` to prevent it from being pushed.
+
 ### Testing Locally with Vault
 To iteratively test the plugin locally:
 

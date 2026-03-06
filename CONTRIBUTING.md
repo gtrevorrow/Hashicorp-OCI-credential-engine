@@ -65,22 +65,23 @@ To iteratively test the plugin locally:
 make build
 ```
 
-2. Start Vault in dev mode on a separate terminal:
+2. Start Vault in dev mode using the helper script:
 ```bash
-vault server -dev -dev-root-token-id=root -dev-plugin-dir=./bin
+./scripts/dev_vault.sh start
 ```
 
-3. Enable and test the plugin:
+3. Set up your environment, register, and enable the plugin:
 ```bash
 export VAULT_ADDR='http://127.0.0.1:8200'
 export VAULT_TOKEN='root'
 
-# Register the plugin (our Makefile provides a helper for this):
-make register
-# (Copy and paste the output of make register to run it)
+# Automatically calculates SHA256 and registers the plugin
+./scripts/register_plugin.sh
 
 vault secrets enable -path=oci vault-plugin-secrets-oci
 ```
+
+*(Note: When you are finished developing, you can stop the server with `./scripts/dev_vault.sh stop`)*
 
 ## IDE Setup
 

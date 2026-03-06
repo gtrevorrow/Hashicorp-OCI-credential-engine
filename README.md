@@ -88,6 +88,9 @@ sha256sum bin/vault-plugin-secrets-oci
 
 2. Register the plugin in Vault's catalog:
 ```bash
+# If using a local dev server, ensure VAULT_ADDR is set to http
+export VAULT_ADDR='http://127.0.0.1:8200'
+
 vault write sys/plugins/catalog/secrets/oci \
     sha_256="<SHA256_CHECKSUM>" \
     command="vault-plugin-secrets-oci"
@@ -337,22 +340,7 @@ make test
 
 ### Local Development with Vault
 
-1. Start Vault in dev mode:
-```bash
-vault server -dev -dev-root-token-id=root -dev-plugin-dir=./bin
-```
-
-2. Configure and test the plugin:
-```bash
-export VAULT_ADDR='http://127.0.0.1:8200'
-export VAULT_TOKEN='root'
-
-vault write sys/plugins/catalog/secrets/oci \
-    sha_256="$(sha256sum bin/vault-plugin-secrets-oci | cut -d' ' -f1)" \
-    command="vault-plugin-secrets-oci"
-
-vault secrets enable -path=oci oci
-```
+Please refer to the [Contributing Guide](CONTRIBUTING.md#testing-locally-with-vault) for detailed instructions on how to start a local Vault dev server, test the plugin, and use the provided helper scripts.
 
 ## TODO / Future Enhancements
 

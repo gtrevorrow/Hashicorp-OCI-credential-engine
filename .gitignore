@@ -45,3 +45,6 @@ dev-config.json
 *.tmp
 *.temp
 *.log
+
+# Local Go test cache
+.gocache/

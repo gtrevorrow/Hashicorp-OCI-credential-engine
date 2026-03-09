@@ -401,3 +401,72 @@ func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
 	require.True(t, resp.IsError())
 	require.Contains(t, resp.Error().Error(), "missing 'subject_token' and plugin identity fallback is disabled")
 }
+
+func TestPathExchange_CustomRoleClaimKey(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":              "ocid1.tenancy.oc1..test",
+			"domain_url":                "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                 "test-client-id",
+			"client_secret":             "test-client-secret",
+			"region":                    "us-ashburn-1",
+			"enforce_role_claim_match":  true,
+			"role_claim_key":            "oci_target",
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	reqRole := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "roles/svc-dev-automation",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"description": "service-user role",
+		},
+	}
+	_, err = b.HandleRequest(context.Background(), reqRole)
+	require.NoError(t, err)
+
+	t.Run("Custom Claim Match", func(t *testing.T) {
+		subjectToken := makeTestJWT(t, map[string]interface{}{"oci_target": "svc-dev-automation"})
+		req := &logical.Request{
+			Operation: logical.CreateOperation,
+			Path:      "exchange",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"subject_token": subjectToken,
+				"role":          "svc-dev-automation",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.NotContains(t, resp.Error().Error(), "role claim mismatch")
+		require.Contains(t, resp.Error().Error(), "token exchange failed")
+	})
+
+	t.Run("Custom Claim Mismatch", func(t *testing.T) {
+		subjectToken := makeTestJWT(t, map[string]interface{}{"oci_target": "svc-prod-automation"})
+		req := &logical.Request{
+			Operation: logical.CreateOperation,
+			Path:      "exchange",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"subject_token": subjectToken,
+				"role":          "svc-dev-automation",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "role claim mismatch")
+	})
+}

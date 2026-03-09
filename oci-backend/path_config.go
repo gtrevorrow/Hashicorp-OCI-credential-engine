@@ -196,6 +196,14 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	allowPluginIdentityFallback := data.Get("allow_plugin_identity_fallback").(bool)
 	config.AllowPluginIdentityFallback = &allowPluginIdentityFallback
 
+	if !config.EnforceRoleClaimMatch {
+		if rawRoleClaimKey, ok := req.Data["role_claim_key"]; ok {
+			if roleClaimKey, keyIsString := rawRoleClaimKey.(string); keyIsString && roleClaimKey != "" {
+				return logical.ErrorResponse("role_claim_key requires enforce_role_claim_match=true"), nil
+			}
+		}
+	}
+
 	// Validate basic OCI OCID formats
 	if !strings.HasPrefix(tenancyOCID, "ocid1.tenancy.") {
 		return logical.ErrorResponse("invalid tenancy_ocid format"), nil

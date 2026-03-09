@@ -146,3 +146,50 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 	assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
 	assert.Equal(t, false, resp.Data["allow_plugin_identity_fallback"])
 }
+
+func TestPathConfig_RoleClaimKeyRequiresEnforcement(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	t.Run("Rejects role_claim_key without enforcement", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+				"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+				"client_id":     "test-client-id",
+				"client_secret": "test-client-secret",
+				"region":        "us-ashburn-1",
+				"role_claim_key": "vault_role",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "role_claim_key requires enforce_role_claim_match=true")
+	})
+
+	t.Run("Accepts role_claim_key with enforcement", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"tenancy_ocid":              "ocid1.tenancy.oc1..test",
+				"domain_url":                "https://idcs-test.identity.oraclecloud.com",
+				"client_id":                 "test-client-id",
+				"client_secret":             "test-client-secret",
+				"region":                    "us-ashburn-1",
+				"enforce_role_claim_match":  true,
+				"role_claim_key":            "vault_role",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		assert.False(t, resp != nil && resp.IsError())
+	})
+}

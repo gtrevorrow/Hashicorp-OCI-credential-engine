@@ -347,6 +347,25 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		require.NotContains(t, resp.Error().Error(), "role claim mismatch")
 		require.Contains(t, resp.Error().Error(), "token exchange failed")
 	})
+
+	t.Run("Array Claim Match Proceeds Past Guardrail", func(t *testing.T) {
+		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": []string{"prod", "dev"}})
+		req := &logical.Request{
+			Operation: logical.CreateOperation,
+			Path:      "exchange",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"subject_token": subjectToken,
+				"role":          "dev",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.NotContains(t, resp.Error().Error(), "role claim mismatch")
+		require.Contains(t, resp.Error().Error(), "token exchange failed")
+	})
 }
 
 func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {

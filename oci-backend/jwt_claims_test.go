@@ -9,23 +9,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExtractStringJWTClaim(t *testing.T) {
-	t.Run("Success", func(t *testing.T) {
+func TestJWTClaimContainsRole(t *testing.T) {
+	t.Run("String Claim Success", func(t *testing.T) {
 		token := makeTestJWT(t, map[string]interface{}{"vault_role": "dev"})
-		value, err := extractStringJWTClaim(token, "vault_role")
+		matched, value, err := jwtClaimContainsRole(token, "vault_role", "dev")
 		require.NoError(t, err)
+		require.True(t, matched)
 		require.Equal(t, "dev", value)
+	})
+
+	t.Run("String Array Claim Success", func(t *testing.T) {
+		token := makeTestJWT(t, map[string]interface{}{"vault_role": []string{"prod", "dev"}})
+		matched, value, err := jwtClaimContainsRole(token, "vault_role", "dev")
+		require.NoError(t, err)
+		require.True(t, matched)
+		require.Equal(t, "prod,dev", value)
+	})
+
+	t.Run("String Array Claim Mismatch", func(t *testing.T) {
+		token := makeTestJWT(t, map[string]interface{}{"vault_role": []string{"prod", "stage"}})
+		matched, value, err := jwtClaimContainsRole(token, "vault_role", "dev")
+		require.NoError(t, err)
+		require.False(t, matched)
+		require.Equal(t, "prod,stage", value)
+	})
+
+	t.Run("Invalid Array Element", func(t *testing.T) {
+		token := makeTestJWT(t, map[string]interface{}{"vault_role": []interface{}{"dev", 2}})
+		_, _, err := jwtClaimContainsRole(token, "vault_role", "dev")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "array must contain only non-empty strings")
 	})
 
 	t.Run("Missing Claim", func(t *testing.T) {
 		token := makeTestJWT(t, map[string]interface{}{"other": "dev"})
-		_, err := extractStringJWTClaim(token, "vault_role")
+		_, _, err := jwtClaimContainsRole(token, "vault_role", "dev")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "missing claim")
 	})
 
 	t.Run("Invalid Format", func(t *testing.T) {
-		_, err := extractStringJWTClaim("not-a-jwt", "vault_role")
+		_, _, err := jwtClaimContainsRole("not-a-jwt", "vault_role", "dev")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid JWT format")
 	})

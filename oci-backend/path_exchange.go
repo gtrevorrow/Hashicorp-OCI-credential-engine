@@ -189,12 +189,12 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 
 		claimKey := configRoleClaimKey(config)
-		claimValue, claimErr := extractStringJWTClaim(subjectToken, claimKey)
+		roleMatched, claimValue, claimErr := jwtClaimContainsRole(subjectToken, claimKey, roleName)
 		if claimErr != nil {
 			return logical.ErrorResponse("unable to enforce role claim match: %v", claimErr), nil
 		}
 
-		if claimValue != roleName {
+		if !roleMatched {
 			return logical.ErrorResponse("role claim mismatch: claim '%s' value '%s' does not match requested role '%s'", claimKey, claimValue, roleName), nil
 		}
 	}

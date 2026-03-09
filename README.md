@@ -115,7 +115,9 @@ vault write oci/config \
     client_secret="<oauth-client-secret>" \
     region="us-ashburn-1" \
     default_ttl=3600 \
-    max_ttl=28800
+    max_ttl=28800 \
+    enforce_role_claim_match=false \
+    role_claim_key="vault_role"
 ```
 
 **Parameters:**
@@ -126,6 +128,8 @@ vault write oci/config \
 - `region`: The OCI region (e.g., `us-ashburn-1`, `eu-frankfurt-1`)
 - `default_ttl`: Default TTL for OCI session tokens in seconds (default: 3600)
 - `max_ttl`: Maximum TTL for OCI session tokens in seconds (default: 86400)
+- `enforce_role_claim_match`: When true, requires a caller-provided `subject_token` claim to match the requested plugin role (default: `false`)
+- `role_claim_key`: JWT claim key used for role matching when enforcement is enabled (default: `vault_role`)
 
 ### Roles
 
@@ -191,6 +195,81 @@ vault write oci/exchange \
 ```
 
 If `public_key` is provided in the request, the plugin will not return `private_key` or `public_key` in the response.
+
+### Vault-Issued Subject Token Flow (Role to OCI Principal Mapping)
+
+Use this flow when OCI trust rules should map Vault-issued token claims (for example `vault_role` or `oci_target`) to OCI Domain Service Users.
+
+1. Configure plugin role-claim guardrail (optional but recommended):
+
+```bash
+vault write oci/config \
+    tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \
+    domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
+    client_id="ocid1.oauth2client.oc1..xxxxx" \
+    client_secret="<oauth-client-secret>" \
+    region="us-ashburn-1" \
+    default_ttl=3600 \
+    max_ttl=28800 \
+    enforce_role_claim_match=true \
+    role_claim_key="vault_role"
+```
+
+2. In Vault Identity/OIDC, define a token role that emits a mapping claim (example: `vault_role=developer`) and allow workloads to mint from it.
+
+Example Vault setup:
+
+```bash
+# Set issuer used in OIDC discovery/JWKS
+vault write identity/oidc/config \
+    issuer="https://vault.example.com/v1/identity/oidc"
+
+# Create signing key
+vault write identity/oidc/key/oci-subject-key \
+    algorithm="RS256" \
+    rotation_period="24h" \
+    verification_ttl="72h" \
+    allowed_client_ids="oci-token-exchange"
+
+# Create token role that emits claim used by OCI trust rules
+vault write identity/oidc/role/oci-developer \
+    key="oci-subject-key" \
+    client_id="oci-token-exchange" \
+    ttl="10m" \
+    template='{"vault_role":"developer"}'
+```
+
+Grant workload policy access to mint this token:
+
+```hcl
+path "identity/oidc/token/oci-developer" {
+  capabilities = ["read"]
+}
+
+path "oci/exchange" {
+  capabilities = ["update"]
+}
+```
+
+3. Workload mints a Vault identity token:
+
+```bash
+SUBJECT_TOKEN="$(vault read -field=token identity/oidc/token/oci-developer)"
+```
+
+4. Workload exchanges that token through this plugin:
+
+```bash
+vault write oci/exchange \
+    subject_token="$SUBJECT_TOKEN" \
+    subject_token_type="urn:ietf:params:oauth:token-type:jwt" \
+    requested_token_type="urn:oci:token-type:oci-upst" \
+    role="developer"
+```
+
+5. OCI Identity Domain token exchange trust evaluates issuer/audience/claims and maps to the target OCI Domain Service User. OCI IAM policies on that service user determine final permissions.
+
+See [DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md](DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md) for full architecture and implementation details.
 
 ### Using with OCI CLI
 

@@ -86,6 +86,7 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		assert.Equal(t, "us-ashburn-1", resp.Data["region"])
 		assert.Equal(t, false, resp.Data["enforce_role_claim_match"])
 		assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
+		assert.Equal(t, true, resp.Data["allow_plugin_identity_fallback"])
 	})
 
 	t.Run("Delete Config", func(t *testing.T) {
@@ -126,6 +127,7 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 			"region":                    "us-ashburn-1",
 			"enforce_role_claim_match":  true,
 			"role_claim_key":            "vault_role",
+			"allow_plugin_identity_fallback": false,
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqCreate)
@@ -142,4 +144,5 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 
 	assert.Equal(t, true, resp.Data["enforce_role_claim_match"])
 	assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
+	assert.Equal(t, false, resp.Data["allow_plugin_identity_fallback"])
 }

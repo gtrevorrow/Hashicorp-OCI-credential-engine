@@ -97,6 +97,10 @@ type federatedConfig struct {
 
 	// Claim key used when EnforceRoleClaimMatch is enabled.
 	RoleClaimKey string `json:"role_claim_key" mapstructure:"role_claim_key"`
+
+	// Allow plugin identity token fallback when subject_token is omitted.
+	// Pointer is used to preserve default behavior for legacy configs with missing field.
+	AllowPluginIdentityFallback *bool `json:"allow_plugin_identity_fallback,omitempty" mapstructure:"allow_plugin_identity_fallback"`
 }
 
 // getConfig retrieves the backend configuration from storage

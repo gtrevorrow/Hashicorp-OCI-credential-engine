@@ -295,6 +295,22 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "missing 'role'")
 	})
 
+	t.Run("Missing Subject Token When Enforced", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.CreateOperation,
+			Path:      "exchange",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"role": "dev",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "missing 'subject_token' while enforce_role_claim_match is enabled")
+	})
+
 	t.Run("Claim Mismatch", func(t *testing.T) {
 		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "prod"})
 		req := &logical.Request{
@@ -331,4 +347,38 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		require.NotContains(t, resp.Error().Error(), "role claim mismatch")
 		require.Contains(t, resp.Error().Error(), "token exchange failed")
 	})
+}
+
+func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":                   "ocid1.tenancy.oc1..test",
+			"domain_url":                     "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                      "test-client-id",
+			"client_secret":                  "test-client-secret",
+			"region":                         "us-ashburn-1",
+			"allow_plugin_identity_fallback": false,
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"role": "dev",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.Contains(t, resp.Error().Error(), "missing 'subject_token' and plugin identity fallback is disabled")
 }

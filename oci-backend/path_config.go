@@ -89,6 +89,14 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Role Claim Key",
 					},
 				},
+				"allow_plugin_identity_fallback": {
+					Type:        framework.TypeBool,
+					Description: "When true, allow plugin identity token fallback if subject_token is omitted",
+					Default:     true,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Allow Plugin Identity Fallback",
+					},
+				},
 			},
 
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -140,6 +148,7 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 			"max_ttl":     config.MaxTTL,
 			"enforce_role_claim_match": config.EnforceRoleClaimMatch,
 			"role_claim_key":          configRoleClaimKey(config),
+			"allow_plugin_identity_fallback": configAllowPluginIdentityFallback(config),
 		},
 	}, nil
 }
@@ -184,6 +193,8 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		EnforceRoleClaimMatch: data.Get("enforce_role_claim_match").(bool),
 		RoleClaimKey:          data.Get("role_claim_key").(string),
 	}
+	allowPluginIdentityFallback := data.Get("allow_plugin_identity_fallback").(bool)
+	config.AllowPluginIdentityFallback = &allowPluginIdentityFallback
 
 	// Validate basic OCI OCID formats
 	if !strings.HasPrefix(tenancyOCID, "ocid1.tenancy.") {
@@ -228,6 +239,14 @@ func configRoleClaimKey(config *federatedConfig) string {
 	return "vault_role"
 }
 
+func configAllowPluginIdentityFallback(config *federatedConfig) bool {
+	// Preserve backward compatibility for older stored configs that lack this field.
+	if config == nil || config.AllowPluginIdentityFallback == nil {
+		return true
+	}
+	return *config.AllowPluginIdentityFallback
+}
+
 const pathConfigHelpDesc = `
 The OCI secrets engine exchanges 3rd party OIDC/OAuth JWT tokens for OCI session tokens.
 
@@ -243,6 +262,7 @@ Optional:
   - max_ttl: Maximum session token TTL (default: 86400s)
   - enforce_role_claim_match: Require subject_token claim to match request role (default: false)
   - role_claim_key: Claim key used for role matching (default: vault_role)
+  - allow_plugin_identity_fallback: Allow self-minted plugin identity token when subject_token is omitted (default: true)
 
 Example:
   $ vault write oci/config \

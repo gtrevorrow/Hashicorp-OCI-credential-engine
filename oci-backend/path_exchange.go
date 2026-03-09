@@ -144,6 +144,13 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 
 	// Fallback to Vault Identity generation if no subject token provided
 	if subjectToken == "" {
+		if config.EnforceRoleClaimMatch {
+			return logical.ErrorResponse("missing 'subject_token' while enforce_role_claim_match is enabled"), nil
+		}
+		if !configAllowPluginIdentityFallback(config) {
+			return logical.ErrorResponse("missing 'subject_token' and plugin identity fallback is disabled"), nil
+		}
+
 		resp, identityErr := b.System().GenerateIdentityToken(ctx, &pluginutil.IdentityTokenRequest{
 			Audience: "urn:mace:oci:idcs", // Standard OCI identity domain audience
 		})

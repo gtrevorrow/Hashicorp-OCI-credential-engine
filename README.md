@@ -344,16 +344,20 @@ Please refer to the [Contributing Guide](CONTRIBUTING.md#testing-locally-with-va
 
 ## TODO / Future Enhancements
 
-- [ ] Complete OCI IAM token exchange API integration
-- [ ] Add support for mTLS authentication with OCI
-- [ ] Implement caching of JWKS with rotation
-- [ ] Add support for token refresh (renewal)
-- [ ] Implement custom claims mapping (IdP → OCI)
-- [ ] Add support for multiple IdPs per backend
+### Current Scope (OCI Identity Domain is the JWT validation authority)
+
+- [x] Complete OCI IAM token exchange API integration
+- [ ] Optimize re-issuance flow for obtaining new UPST/RPST tokens before expiry
 - [ ] Add metrics and telemetry (token exchange rate, latency)
-- [ ] Implement token introspection endpoint
-- [ ] Add support for OCI Cloud Shell integration
 - [ ] Build integration tests with OCI sandbox
+
+### Optional Future Mode (Plugin-issued subject tokens, WIF-style)
+
+- [ ] Add optional mode where the plugin issues subject tokens trusted by OCI Identity Domains
+- [ ] Publish JWKS for OCI trust configuration and key rotation
+- [ ] Add support for multiple issuers/IdPs per backend in plugin-issued token mode
+- [ ] Implement claims mapping/policy translation for plugin-issued tokens
+- [ ] Evaluate OCI Cloud Shell integration for plugin-issued token workflows
 
 ## References
 

@@ -91,6 +91,12 @@ type federatedConfig struct {
 
 	// Maximum TTL for issued OCI session tokens
 	MaxTTL int `json:"max_ttl" mapstructure:"max_ttl"`
+
+	// Enforce that a claim in caller-provided subject_token matches request role.
+	EnforceRoleClaimMatch bool `json:"enforce_role_claim_match" mapstructure:"enforce_role_claim_match"`
+
+	// Claim key used when EnforceRoleClaimMatch is enabled.
+	RoleClaimKey string `json:"role_claim_key" mapstructure:"role_claim_key"`
 }
 
 // getConfig retrieves the backend configuration from storage

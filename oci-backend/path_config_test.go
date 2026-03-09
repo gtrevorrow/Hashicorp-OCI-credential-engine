@@ -84,6 +84,8 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		assert.Equal(t, "test-client-id", resp.Data["client_id"])
 		assert.Nil(t, resp.Data["client_secret"])
 		assert.Equal(t, "us-ashburn-1", resp.Data["region"])
+		assert.Equal(t, false, resp.Data["enforce_role_claim_match"])
+		assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
 	})
 
 	t.Run("Delete Config", func(t *testing.T) {
@@ -107,4 +109,37 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		require.NoError(t, errRead)
 		assert.Nil(t, respRead) // Read should return nil response if config is empty
 	})
+}
+
+func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqCreate := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":              "ocid1.tenancy.oc1..test",
+			"domain_url":                "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                 "test-client-id",
+			"client_secret":             "test-client-secret",
+			"region":                    "us-ashburn-1",
+			"enforce_role_claim_match":  true,
+			"role_claim_key":            "vault_role",
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqCreate)
+	require.NoError(t, err)
+
+	reqRead := &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	}
+	resp, err := b.HandleRequest(context.Background(), reqRead)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	assert.Equal(t, true, resp.Data["enforce_role_claim_match"])
+	assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
 }

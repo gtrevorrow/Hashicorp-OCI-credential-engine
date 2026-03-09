@@ -108,8 +108,10 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 
 	subjectToken := ""
+	subjectTokenProvided := false
 	if raw, ok := data.GetOk("subject_token"); ok {
 		subjectToken = raw.(string)
+		subjectTokenProvided = subjectToken != ""
 	}
 
 	subjectTokenType := "urn:ietf:params:oauth:token-type:jwt"
@@ -171,6 +173,22 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 		if role == nil {
 			return logical.ErrorResponse("role '%s' not found", roleName), nil
+		}
+	}
+
+	if config.EnforceRoleClaimMatch && subjectTokenProvided {
+		if roleName == "" {
+			return logical.ErrorResponse("missing 'role' while enforce_role_claim_match is enabled"), nil
+		}
+
+		claimKey := configRoleClaimKey(config)
+		claimValue, claimErr := extractStringJWTClaim(subjectToken, claimKey)
+		if claimErr != nil {
+			return logical.ErrorResponse("unable to enforce role claim match: %v", claimErr), nil
+		}
+
+		if claimValue != roleName {
+			return logical.ErrorResponse("role claim mismatch: claim '%s' value '%s' does not match requested role '%s'", claimKey, claimValue, roleName), nil
 		}
 	}
 

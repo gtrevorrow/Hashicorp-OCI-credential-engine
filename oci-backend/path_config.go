@@ -73,6 +73,22 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Maximum TTL",
 					},
 				},
+				"enforce_role_claim_match": {
+					Type:        framework.TypeBool,
+					Description: "When true, require caller-provided subject_token claim to match request role",
+					Default:     false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Enforce Role Claim Match",
+					},
+				},
+				"role_claim_key": {
+					Type:        framework.TypeString,
+					Description: "JWT claim key used for role matching when enforce_role_claim_match is true",
+					Default:     "vault_role",
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Role Claim Key",
+					},
+				},
 			},
 
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -122,6 +138,8 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 
 			"default_ttl": config.DefaultTTL,
 			"max_ttl":     config.MaxTTL,
+			"enforce_role_claim_match": config.EnforceRoleClaimMatch,
+			"role_claim_key":          configRoleClaimKey(config),
 		},
 	}, nil
 }
@@ -162,6 +180,9 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 
 		DefaultTTL: data.Get("default_ttl").(int),
 		MaxTTL:     data.Get("max_ttl").(int),
+
+		EnforceRoleClaimMatch: data.Get("enforce_role_claim_match").(bool),
+		RoleClaimKey:          data.Get("role_claim_key").(string),
 	}
 
 	// Validate basic OCI OCID formats
@@ -200,6 +221,13 @@ const pathConfigHelpSyn = `
 Configure the OCI federated identity backend.
 `
 
+func configRoleClaimKey(config *federatedConfig) string {
+	if config != nil && config.RoleClaimKey != "" {
+		return config.RoleClaimKey
+	}
+	return "vault_role"
+}
+
 const pathConfigHelpDesc = `
 The OCI secrets engine exchanges 3rd party OIDC/OAuth JWT tokens for OCI session tokens.
 
@@ -213,6 +241,8 @@ You must configure:
 Optional:
   - default_ttl: Default session token TTL (default: 3600s)
   - max_ttl: Maximum session token TTL (default: 86400s)
+  - enforce_role_claim_match: Require subject_token claim to match request role (default: false)
+  - role_claim_key: Claim key used for role matching (default: vault_role)
 
 Example:
   $ vault write oci/config \

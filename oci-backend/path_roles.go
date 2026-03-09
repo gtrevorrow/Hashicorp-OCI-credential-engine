@@ -153,6 +153,14 @@ func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, data 
 		return logical.ErrorResponse("missing role name"), nil
 	}
 
+	config, err := b.getConfig(ctx, req.Storage)
+	if err != nil {
+		return nil, err
+	}
+	if config != nil && config.StrictRoleNameMatch && !isStrictRoleNameValid(name) {
+		return logical.ErrorResponse("invalid role name '%s': strict_role_name_match requires pattern [A-Za-z0-9._:-]+", name), nil
+	}
+
 	role := &roleEntry{
 		Name:            name,
 		Description:     data.Get("description").(string),

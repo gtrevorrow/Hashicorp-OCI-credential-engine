@@ -172,6 +172,9 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if raw, ok := data.GetOk("role"); ok {
 		roleName = raw.(string)
 	}
+	if roleName != "" && config.StrictRoleNameMatch && !isStrictRoleNameValid(roleName) {
+		return logical.ErrorResponse("invalid role '%s': strict_role_name_match requires pattern [A-Za-z0-9._:-]+", roleName), nil
+	}
 	var role *roleEntry
 	if roleName != "" {
 		role, err = b.getRole(ctx, req.Storage, roleName)

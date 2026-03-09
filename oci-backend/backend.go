@@ -101,6 +101,9 @@ type federatedConfig struct {
 	// Allow plugin identity token fallback when subject_token is omitted.
 	// Pointer is used to preserve default behavior for legacy configs with missing field.
 	AllowPluginIdentityFallback *bool `json:"allow_plugin_identity_fallback,omitempty" mapstructure:"allow_plugin_identity_fallback"`
+
+	// Enforce strict role-name format for role creation and exchange requests.
+	StrictRoleNameMatch bool `json:"strict_role_name_match" mapstructure:"strict_role_name_match"`
 }
 
 // getConfig retrieves the backend configuration from storage

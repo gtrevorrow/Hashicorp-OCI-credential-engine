@@ -470,3 +470,41 @@ func TestPathExchange_CustomRoleClaimKey(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "role claim mismatch")
 	})
 }
+
+func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":             "ocid1.tenancy.oc1..test",
+			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                "test-client-id",
+			"client_secret":            "test-client-secret",
+			"region":                   "us-ashburn-1",
+			"strict_role_name_match":   true,
+			"enforce_role_claim_match": true,
+			"role_claim_key":           "vault_role",
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "dev@team"})
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token": subjectToken,
+			"role":          "dev@team",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.Contains(t, resp.Error().Error(), "invalid role")
+}

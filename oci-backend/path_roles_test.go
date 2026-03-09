@@ -127,3 +127,55 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 		assert.Nil(t, respRead) // Read should return nil response if role is missing
 	})
 }
+
+func TestPathRoles_StrictRoleNameMatch(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":            "ocid1.tenancy.oc1..test",
+			"domain_url":              "https://idcs-test.identity.oraclecloud.com",
+			"client_id":               "test-client-id",
+			"client_secret":           "test-client-secret",
+			"region":                  "us-ashburn-1",
+			"strict_role_name_match":  true,
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	t.Run("Reject Invalid Role Name", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "roles/dev@team",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"description": "invalid role name",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "invalid role name")
+	})
+
+	t.Run("Accept Valid Role Name", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "roles/dev-team_1",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"description": "valid role name",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		assert.False(t, resp != nil && resp.IsError())
+	})
+}

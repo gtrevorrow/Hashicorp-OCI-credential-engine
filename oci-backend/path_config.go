@@ -97,6 +97,14 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Allow Plugin Identity Fallback",
 					},
 				},
+				"strict_role_name_match": {
+					Type:        framework.TypeBool,
+					Description: "When true, require role names to match [A-Za-z0-9._:-]+",
+					Default:     false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Strict Role Name Match",
+					},
+				},
 			},
 
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -149,6 +157,7 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 			"enforce_role_claim_match": config.EnforceRoleClaimMatch,
 			"role_claim_key":          configRoleClaimKey(config),
 			"allow_plugin_identity_fallback": configAllowPluginIdentityFallback(config),
+			"strict_role_name_match":         config.StrictRoleNameMatch,
 		},
 	}, nil
 }
@@ -192,6 +201,7 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 
 		EnforceRoleClaimMatch: data.Get("enforce_role_claim_match").(bool),
 		RoleClaimKey:          data.Get("role_claim_key").(string),
+		StrictRoleNameMatch:   data.Get("strict_role_name_match").(bool),
 	}
 	allowPluginIdentityFallback := data.Get("allow_plugin_identity_fallback").(bool)
 	config.AllowPluginIdentityFallback = &allowPluginIdentityFallback
@@ -271,6 +281,7 @@ Optional:
   - enforce_role_claim_match: Require subject_token claim to match request role (default: false)
   - role_claim_key: Claim key used for role matching (default: vault_role)
   - allow_plugin_identity_fallback: Allow self-minted plugin identity token when subject_token is omitted (default: true)
+  - strict_role_name_match: Require role names to match [A-Za-z0-9._:-]+ (default: false)
 
 Example:
   $ vault write oci/config \

@@ -18,3 +18,10 @@
 - Confirm current branch is correct for the change.
 - Ensure commit message complies with Conventional Commits.
 - Verify any release-related action aligns with [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Sync With Remote
+
+- Before pushing changes, sync with remote:
+  - `git fetch --all --prune`
+  - `git pull --ff-only`
+- If local branch is behind, integrate remote changes before push (fast-forward/rebase/merge as appropriate).

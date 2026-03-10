@@ -7,7 +7,7 @@ BUILD_DIR := bin
 VERSION ?= $(shell git describe --tags --always --dirty || echo "v0.0.0-dev")
 LDFLAGS := -X main.Version=$(VERSION)
 
-.PHONY: all build clean fmt vet test
+.PHONY: all build clean fmt vet test test-unit test-integration
 
 all: fmt vet build
 
@@ -24,8 +24,13 @@ fmt:
 vet:
 	go vet ./...
 
-test:
+test: test-unit
+
+test-unit:
 	go test -v ./...
+
+test-integration:
+	go test -v -tags=integration ./oci-backend -run Integration
 
 # Build for multiple platforms
 build-all:

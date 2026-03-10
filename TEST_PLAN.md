@@ -13,7 +13,9 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | CFG-05 | Config read returns secrets masked | Write config, then read | client_secret not in response |
 | CFG-06 | Config update | Overwrite existing config | New values persisted |
 | CFG-07 | Config delete | Delete after creation | Config removed, subsequent read fails |
-| CFG-08 | role_claim_key without enforcement | Set role_claim_key but enforce_role_claim_match=false | Error or ignored (verify behavior) |
+| CFG-08 | role_claim_key without enforcement | Set role_claim_key while enforce_role_claim_match=false | Error: role_claim_key requires enforce_role_claim_match=true |
+| CFG-09 | strict_role_name_match enabled | Set strict_role_name_match=true | Success, strict role-name validation enabled |
+| CFG-10 | allow_plugin_identity_fallback disabled | Set allow_plugin_identity_fallback=false | Success, subject_token becomes required unless changed |
 
 ## 2. Roles Path Tests
 
@@ -25,8 +27,10 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | ROL-04 | List roles | Create 3 roles, list | All 3 names returned |
 | ROL-05 | Update role | Change TTL on existing role | New values persisted |
 | ROL-06 | Delete role | Delete existing role | Role removed |
-| ROL-07 | Role with TTL exceeding config max | role.max_ttl > config.max_ttl | Error or clamped to max |
-| ROL-08 | Role with invalid name | Empty name or special chars | Error |
+| ROL-07 | Role with TTL exceeding config max | role.max_ttl > config.max_ttl | Role creation succeeds; TTL clamped at exchange time |
+| ROL-08 | Role with invalid name (default mode) | Empty name | Error |
+| ROL-09 | Role with special chars (strict mode off) | name includes `@` or space | Success |
+| ROL-10 | Role with invalid chars (strict mode on) | strict_role_name_match=true, name includes `@` or space | Error |
 
 ## 3. Exchange Path - Basic Flows
 
@@ -35,9 +39,11 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-01 | Exchange for UPST (default) | subject_token, subject_token_type, role | UPST token returned |
 | EXC-02 | Exchange for RPST | + requested_token_type=oci-rpst, res_type | RPST token returned |
 | EXC-03 | Exchange with explicit UPST type | requested_token_type=oci-upst | UPST token returned |
-| EXC-04 | Exchange without subject_token (Vault Enterprise WIF) | role only, omit subject_token | Uses Vault WIF plugin identity token |
+| EXC-04 | Exchange without subject_token (fallback enabled) | role only, omit subject_token, enforce=false, allow_plugin_identity_fallback=true | Attempts plugin identity token fallback |
 | EXC-05 | Exchange with TTL override | ttl < role.default_ttl | Custom TTL applied |
 | EXC-06 | Exchange with public_key provided | public_key in request | No private_key in response |
+| EXC-07 | Exchange without subject_token (fallback disabled) | omit subject_token, allow_plugin_identity_fallback=false | Error: missing subject_token and fallback disabled |
+| EXC-08 | Exchange without subject_token (enforcement enabled) | omit subject_token, enforce_role_claim_match=true | Error: missing subject_token while enforcement enabled |
 
 ## 4. Exchange Path - Token Content Validation
 
@@ -57,7 +63,9 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | RCM-02 | Mismatched role claim | enforce=true, JWT claim="admin", request role="dev" | Error: role claim mismatch |
 | RCM-03 | Missing claim key | enforce=true, JWT doesn't have role_claim_key | Error: required claim missing |
 | RCM-04 | Enforcement disabled | enforce=false, mismatched claims | Success (no enforcement) |
-| RCM-05 | Strict role name match | strict_role_name_match=true | Exact role name match required |
+| RCM-05 | String array claim matching | enforce=true, claim value is array containing requested role | Success |
+| RCM-06 | Invalid claim array content | enforce=true, claim array contains non-string/empty values | Error |
+| RCM-07 | Strict role name match in exchange | strict_role_name_match=true, role contains invalid chars | Error |
 
 ## 6. Lease & TTL Management
 
@@ -98,12 +106,12 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 ### Error Handling (Should Have)
 - **CFG-03, CFG-04** - Config validation errors
 - **EXC-11, EXC-12, EXC-13, EXC-14** - Token validation errors
-- **RCM-03, RCM-04** - Claim matching edge cases
+- **RCM-03, RCM-04, RCM-06** - Claim matching edge cases
 
 ### Advanced Features (Nice to Have)
 - **E2E-02** - External IdP integration
 - **OCI-04** - Multi-region support
-- **EXC-04** - Vault Enterprise WIF fallback
+- **EXC-04** - Plugin identity fallback flow
 - **E2E-03** - Multi-tenant isolation
 
 ## Running Tests
@@ -135,8 +143,9 @@ vault read oci/roles/dev
 
 ### Automated Testing
 
-Future: Implement Go tests in `oci-backend/*_test.go` covering:
-- Unit tests for path handlers
+Current coverage includes unit tests in `oci-backend/*_test.go` for config, roles, claim enforcement, and exchange validation paths.
+
+Future additions:
 - Integration tests with mock OCI IAM
 - End-to-end tests with test OCI tenancy
 
@@ -144,5 +153,6 @@ Future: Implement Go tests in `oci-backend/*_test.go` covering:
 
 - OCI IAM tokens cannot be actively revoked server-side; Vault lease revocation only drops local tracking
 - `client_secret` is write-only and never returned on read
-- `enforce_role_claim_match` requires both the flag AND `role_claim_key` to be set
-- Vault Enterprise WIF fallback requires `allow_plugin_identity_fallback=true` (default)
+- `enforce_role_claim_match` can use default `role_claim_key` (`vault_role`) unless overridden
+- If `enforce_role_claim_match=true`, `subject_token` is required and fallback is not used
+- If `allow_plugin_identity_fallback=false`, `subject_token` is required

@@ -94,6 +94,34 @@ vault secrets enable -path=oci vault-plugin-secrets-oci
 
 *(Note: When you are finished developing, you can stop the server with `./scripts/dev_vault.sh stop`)*
 
+## Test Strategy
+
+We run tests in two layers:
+
+1. **Unit tests** (fast, default)
+```bash
+make test-unit
+```
+This runs all standard Go tests under `./...`.
+
+2. **Integration tests** (mock OCI token endpoint)
+```bash
+make test-integration
+```
+This runs the integration-tagged suite in `oci-backend` and validates plugin-to-OCI exchange behavior against a local mock HTTP server.
+
+### CI Behavior
+
+- PR checks run both:
+  - `make test-unit`
+  - `make test-integration`
+- CI configures a temporary local `go.work` replacement for `github.com/oracle/oci-go-sdk/v65`.
+
+### Notes
+
+- In restricted local sandbox environments, integration tests may be skipped if local TCP bind is not permitted.
+- `make test` currently aliases `make test-unit`.
+
 ## IDE Setup
 
 We recommend utilizing an IDE with Go support (like GoLand or VSCode with the Go extension) and ensuring your editor applies `gofmt` on save. You can manually run the formatter with `make fmt`.

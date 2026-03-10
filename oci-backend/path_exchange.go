@@ -323,8 +323,11 @@ const pathExchangeHelpDesc = `
 This endpoint accepts a JWT subject token from a configured external Identity Provider
 and exchanges it for an OCI session token via the OCI IAM token exchange API.
 
-Required parameters:
-  - subject_token: The JWT from your external IdP
+Subject token behavior:
+  - subject_token is required when:
+    - enforce_role_claim_match=true, or
+    - allow_plugin_identity_fallback=false
+  - subject_token is optional when plugin identity fallback is enabled
 
 Optional parameters:
   - subject_token_type: Token type (default: urn:ietf:params:oauth:token-type:jwt)

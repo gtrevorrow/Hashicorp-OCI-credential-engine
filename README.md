@@ -39,83 +39,15 @@ This plugin enables **federated identity** workflows by allowing users to exchan
 
 #### 1) Standard Exchange (Caller Provides `subject_token`)
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant C as "Client/Workload"
-    participant V as "Vault OCI Plugin"
-    participant S as "Vault Storage (config/roles)"
-    participant O as "OCI Identity Domain Token Endpoint"
-
-    C->>V: "vault write oci/exchange (subject_token, role, ttl, requested_token_type)"
-    V->>S: "Load /oci/config"
-    S-->>V: "Config (domain_url, client_id, secret, region, TTL settings)"
-    opt "role provided"
-      V->>S: "Load /oci/roles/:name"
-      S-->>V: "Role constraints (default_ttl, max_ttl, metadata)"
-    end
-    opt "enforce_role_claim_match=true"
-      V->>V: "Extract claim role_claim_key from JWT payload"
-      V->>V: "Verify claim matches requested role (string or string-array)"
-    end
-    V->>V: "Compute effective TTL (request -> role/config clamp)"
-    V->>O: "POST /oauth2/v1/token (token-exchange grant)"
-    Note over V,O: "Includes requested_token_type, subject_token, subject_token_type, public_key/res_type when applicable"
-    O-->>V: "OCI security token (UPST/RPST)"
-    V-->>C: "Vault secret response (access_token, session_token/rpst_token, lease data, optional keypair)"
-```
+![Standard Exchange Diagram](./assets/diagram-1.svg)
 
 #### 2) Exchange Without `subject_token` (Plugin Identity Fallback)
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant C as "Client/Workload"
-    participant V as "Vault OCI Plugin"
-    participant VS as "Vault System View"
-    participant O as "OCI Identity Domain Token Endpoint"
-
-    C->>V: "vault write oci/exchange (no subject_token)"
-    V->>V: "Evaluate fallback policy"
-    alt "enforce_role_claim_match=true"
-      V-->>C: "Error: missing subject_token while enforcement enabled"
-    else "allow_plugin_identity_fallback=false"
-      V-->>C: "Error: missing subject_token and fallback disabled"
-    else "fallback allowed"
-      V->>VS: "GenerateIdentityToken(audience=urn:mace:oci:idcs)"
-      VS-->>V: "Plugin identity token"
-      V->>O: "POST token-exchange using plugin identity token"
-      O-->>V: "OCI security token (UPST/RPST)"
-      V-->>C: "Vault secret response with lease data"
-    end
-```
+![Exchange Without subject_token (Plugin Identity Fallback)](./assets/diagram-2.svg)
 
 #### 3) Role-Claim Guardrail and Strict Role Name Validation
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant C as "Client/Workload"
-    participant V as "Vault OCI Plugin"
-
-    C->>V: "vault write oci/exchange (..., role, subject_token)"
-    opt "strict_role_name_match=true"
-      V->>V: "Validate role format [A-Za-z0-9._:-]+"
-      alt "invalid role format"
-        V-->>C: "Error: invalid role"
-      end
-    end
-    opt "enforce_role_claim_match=true"
-      V->>V: "Read claim role_claim_key from JWT payload"
-      alt "claim missing/invalid type"
-        V-->>C: "Error: unable to enforce role claim match"
-      else "claim does not contain requested role"
-        V-->>C: "Error: role claim mismatch"
-      else "claim matches requested role"
-        V->>V: "Continue exchange flow"
-      end
-    end
-```
+![Role-Claim Guardrail and Strict Role Name Validation](./assets/diagram-3.svg)
 
 ### Terminology
 When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC 8693) and OCI Identity nomenclature:

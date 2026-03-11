@@ -42,7 +42,7 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
 - **UPST and RPST Support**: Request either `urn:oci:token-type:oci-upst` or `urn:oci:token-type:oci-rpst`
 - **Returned OCI Key Pair**: Exchange responses include PEM-encoded `private_key` and `public_key` for request-signing workflows
-- **Vault Enterprise WIF Support**: Automatically fetch identity tokens via Vault's Workload Identity Federation plugin when running on Vault Enterprise (no `subject_token` required)
+- **Vault Enterprise WIF Support**: Automatically fetch identity tokens via Vault's Workload Identity Federation/plugin identity-token capabilities when running on Vault Enterprise (no `subject_token` required)
 - **Federated Identity**: Leverage OCI IAM Identity Domains with external IdPs
 - **Role-based TTL Policies**: Define roles with default and maximum TTL constraints
 - **Lease Management**: OCI tokens are issued as Vault secrets with TTL-based lease handling
@@ -164,7 +164,7 @@ vault write oci/exchange \
     ttl=3600
 ```
 
-*Note: If running on Vault Enterprise, `subject_token` is optional. The plugin will automatically fetch the Vault native Workload Identity Federation (WIF) plugin identity token if the `subject_token` is omitted.*
+*Note: Omitting `subject_token` requires Vault Enterprise WIF/plugin identity-token support. In OSS or environments where this capability is unavailable, provide `subject_token` explicitly.*
 
 *Reference: Oracle JWT-to-UPST flow and request parameters are documented in [Token Exchange Grant Type: Exchanging a JSON Web Token for a UPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm#jwt_token_exchange__get-oci-upst).*
 
@@ -265,6 +265,8 @@ vault write oci/exchange \
 5. OCI Identity Domain token exchange trust evaluates issuer/audience/claims and maps to the target OCI Domain Service User. OCI IAM policies on that service user determine final permissions.
 
 See [DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md](DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md) for full architecture and implementation details.
+
+*Important: The no-`subject_token` fallback path in this plugin depends on Vault Enterprise plugin identity-token/WIF support. If unavailable, clients must send `subject_token` on each exchange request.*
 
 ### Using with OCI CLI
 

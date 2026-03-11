@@ -98,7 +98,7 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 		resp, err := backend.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "failed to generate plugin identity token")
+		require.Contains(t, resp.Error().Error(), "failed to mint subject_token via callback")
 	})
 
 	t.Run("Missing Role", func(t *testing.T) {
@@ -255,13 +255,13 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":              "ocid1.tenancy.oc1..test",
-			"domain_url":                "https://idcs-test.identity.oraclecloud.com",
-			"client_id":                 "test-client-id",
-			"client_secret":             "test-client-secret",
-			"region":                    "us-ashburn-1",
-			"enforce_role_claim_match":  true,
-			"role_claim_key":            "vault_role",
+			"tenancy_ocid":             "ocid1.tenancy.oc1..test",
+			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                "test-client-id",
+			"client_secret":            "test-client-secret",
+			"region":                   "us-ashburn-1",
+			"enforce_role_claim_match": true,
+			"role_claim_key":           "vault_role",
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqConfig)
@@ -308,7 +308,7 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		resp, err := b.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "missing 'subject_token' while enforce_role_claim_match is enabled")
+		require.Contains(t, resp.Error().Error(), "failed to mint subject_token via callback")
 	})
 
 	t.Run("Claim Mismatch", func(t *testing.T) {
@@ -410,13 +410,13 @@ func TestPathExchange_CustomRoleClaimKey(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":              "ocid1.tenancy.oc1..test",
-			"domain_url":                "https://idcs-test.identity.oraclecloud.com",
-			"client_id":                 "test-client-id",
-			"client_secret":             "test-client-secret",
-			"region":                    "us-ashburn-1",
-			"enforce_role_claim_match":  true,
-			"role_claim_key":            "oci_target",
+			"tenancy_ocid":             "ocid1.tenancy.oc1..test",
+			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                "test-client-id",
+			"client_secret":            "test-client-secret",
+			"region":                   "us-ashburn-1",
+			"enforce_role_claim_match": true,
+			"role_claim_key":           "oci_target",
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqConfig)
@@ -549,7 +549,7 @@ func TestPathExchange_SubjectTokenCallbackFallback(t *testing.T) {
 	_, err = backend.HandleRequest(context.Background(), reqRole)
 	require.NoError(t, err)
 
-	backend.RegisterSubjectTokenCallback(func(ctx context.Context, req *logical.Request) (string, error) {
+	backend.RegisterSubjectTokenCallback(func(ctx context.Context, req *logical.Request, config *federatedConfig) (string, error) {
 		return "callback-subject-token", nil
 	})
 
@@ -598,7 +598,7 @@ func TestPathExchange_SubjectTokenCallbackError(t *testing.T) {
 	_, err = backend.HandleRequest(context.Background(), reqConfig)
 	require.NoError(t, err)
 
-	backend.RegisterSubjectTokenCallback(func(ctx context.Context, req *logical.Request) (string, error) {
+	backend.RegisterSubjectTokenCallback(func(ctx context.Context, req *logical.Request, config *federatedConfig) (string, error) {
 		return "", logical.ErrPermissionDenied
 	})
 
@@ -613,4 +613,68 @@ func TestPathExchange_SubjectTokenCallbackError(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.IsError())
 	require.Contains(t, resp.Error().Error(), "failed to mint subject_token via callback")
+}
+
+func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
+	testKey := generateTestRSAPrivateKeyPEM(t)
+
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+	storage := &logical.InmemStorage{}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":                        "ocid1.tenancy.oc1..test",
+			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                           "test-client-id",
+			"client_secret":                       "test-client-secret",
+			"region":                              "us-ashburn-1",
+			"subject_token_self_mint_enabled":     true,
+			"subject_token_self_mint_issuer":      "https://vault.example.com",
+			"subject_token_self_mint_private_key": testKey,
+			"enforce_role_claim_match":            true,
+			"role_claim_key":                      "vault_role",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	reqRole := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "roles/dev",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"description": "dev role",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqRole)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"role": "dev",
+		},
+	}
+
+	resp, err := backend.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.NotContains(t, resp.Error().Error(), "failed to mint subject_token via callback")
+	require.NotContains(t, resp.Error().Error(), "role claim mismatch")
+	require.Contains(t, resp.Error().Error(), "token exchange failed")
 }

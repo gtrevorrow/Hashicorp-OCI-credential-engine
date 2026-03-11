@@ -105,6 +105,47 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Strict Role Name Match",
 					},
 				},
+				"subject_token_self_mint_enabled": {
+					Type:        framework.TypeBool,
+					Description: "Enable built-in callback fallback to self-mint subject_token when plugin identity token is unavailable",
+					Default:     false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Subject Token Self Mint Enabled",
+					},
+				},
+				"subject_token_self_mint_issuer": {
+					Type:        framework.TypeString,
+					Description: "Issuer claim (iss) for built-in self-minted subject_token",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Subject Token Self Mint Issuer",
+					},
+				},
+				"subject_token_self_mint_audience": {
+					Type:        framework.TypeString,
+					Description: "Audience claim (aud) for built-in self-minted subject_token",
+					Default:     "urn:mace:oci:idcs",
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Subject Token Self Mint Audience",
+					},
+				},
+				"subject_token_self_mint_ttl_seconds": {
+					Type:        framework.TypeDurationSecond,
+					Description: "TTL in seconds for built-in self-minted subject_token",
+					Default:     600,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Subject Token Self Mint TTL",
+					},
+				},
+				"subject_token_self_mint_private_key": {
+					Type:        framework.TypeString,
+					Description: "PEM-encoded RSA private key for signing built-in self-minted subject_token",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name:      "Subject Token Self Mint Private Key",
+						Sensitive: true,
+					},
+				},
 			},
 
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -152,12 +193,16 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 			"region":       config.Region,
 			// Client Secret is intentionally omitted from read
 
-			"default_ttl": config.DefaultTTL,
-			"max_ttl":     config.MaxTTL,
-			"enforce_role_claim_match": config.EnforceRoleClaimMatch,
-			"role_claim_key":          configRoleClaimKey(config),
-			"allow_plugin_identity_fallback": configAllowPluginIdentityFallback(config),
-			"strict_role_name_match":         config.StrictRoleNameMatch,
+			"default_ttl":                         config.DefaultTTL,
+			"max_ttl":                             config.MaxTTL,
+			"enforce_role_claim_match":            config.EnforceRoleClaimMatch,
+			"role_claim_key":                      configRoleClaimKey(config),
+			"allow_plugin_identity_fallback":      configAllowPluginIdentityFallback(config),
+			"strict_role_name_match":              config.StrictRoleNameMatch,
+			"subject_token_self_mint_enabled":     config.SubjectTokenSelfMintEnabled,
+			"subject_token_self_mint_issuer":      config.SubjectTokenSelfMintIssuer,
+			"subject_token_self_mint_audience":    configSubjectTokenSelfMintAudience(config),
+			"subject_token_self_mint_ttl_seconds": configSubjectTokenSelfMintTTLSeconds(config),
 		},
 	}, nil
 }
@@ -199,9 +244,14 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		DefaultTTL: data.Get("default_ttl").(int),
 		MaxTTL:     data.Get("max_ttl").(int),
 
-		EnforceRoleClaimMatch: data.Get("enforce_role_claim_match").(bool),
-		RoleClaimKey:          data.Get("role_claim_key").(string),
-		StrictRoleNameMatch:   data.Get("strict_role_name_match").(bool),
+		EnforceRoleClaimMatch:          data.Get("enforce_role_claim_match").(bool),
+		RoleClaimKey:                   data.Get("role_claim_key").(string),
+		StrictRoleNameMatch:            data.Get("strict_role_name_match").(bool),
+		SubjectTokenSelfMintEnabled:    data.Get("subject_token_self_mint_enabled").(bool),
+		SubjectTokenSelfMintIssuer:     data.Get("subject_token_self_mint_issuer").(string),
+		SubjectTokenSelfMintAudience:   data.Get("subject_token_self_mint_audience").(string),
+		SubjectTokenSelfMintTTLSeconds: data.Get("subject_token_self_mint_ttl_seconds").(int),
+		SubjectTokenSelfMintPrivateKey: data.Get("subject_token_self_mint_private_key").(string),
 	}
 	allowPluginIdentityFallback := data.Get("allow_plugin_identity_fallback").(bool)
 	config.AllowPluginIdentityFallback = &allowPluginIdentityFallback
@@ -211,6 +261,14 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 			if roleClaimKey, keyIsString := rawRoleClaimKey.(string); keyIsString && roleClaimKey != "" {
 				return logical.ErrorResponse("role_claim_key requires enforce_role_claim_match=true"), nil
 			}
+		}
+	}
+	if config.SubjectTokenSelfMintEnabled {
+		if config.SubjectTokenSelfMintIssuer == "" {
+			return logical.ErrorResponse("subject_token_self_mint_issuer is required when subject_token_self_mint_enabled=true"), nil
+		}
+		if config.SubjectTokenSelfMintPrivateKey == "" {
+			return logical.ErrorResponse("subject_token_self_mint_private_key is required when subject_token_self_mint_enabled=true"), nil
 		}
 	}
 
@@ -265,6 +323,20 @@ func configAllowPluginIdentityFallback(config *federatedConfig) bool {
 	return *config.AllowPluginIdentityFallback
 }
 
+func configSubjectTokenSelfMintAudience(config *federatedConfig) string {
+	if config == nil || config.SubjectTokenSelfMintAudience == "" {
+		return "urn:mace:oci:idcs"
+	}
+	return config.SubjectTokenSelfMintAudience
+}
+
+func configSubjectTokenSelfMintTTLSeconds(config *federatedConfig) int {
+	if config == nil || config.SubjectTokenSelfMintTTLSeconds <= 0 {
+		return 600
+	}
+	return config.SubjectTokenSelfMintTTLSeconds
+}
+
 const pathConfigHelpDesc = `
 The OCI secrets engine exchanges 3rd party OIDC/OAuth JWT tokens for OCI session tokens.
 
@@ -282,6 +354,11 @@ Optional:
   - role_claim_key: Claim key used for role matching (default: vault_role)
   - allow_plugin_identity_fallback: Allow self-minted plugin identity token when subject_token is omitted (default: true)
   - strict_role_name_match: Require role names to match [A-Za-z0-9._:-]+ (default: false)
+  - subject_token_self_mint_enabled: Enable built-in callback self-mint fallback (default: false)
+  - subject_token_self_mint_issuer: Required when self-mint is enabled
+  - subject_token_self_mint_audience: Audience for self-minted token (default: urn:mace:oci:idcs)
+  - subject_token_self_mint_ttl_seconds: TTL for self-minted token (default: 600)
+  - subject_token_self_mint_private_key: PEM RSA private key required when self-mint is enabled
 
 Example:
   $ vault write oci/config \

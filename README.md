@@ -6,36 +6,17 @@ A HashiCorp Vault secrets engine plugin that exchanges 3rd party OIDC/OAuth JWT 
 
 This plugin enables **federated identity** workflows by allowing users to exchange JWT tokens from external Identity Providers (IdPs) for temporary OCI session tokens. This eliminates the need to store long-lived OCI API keys in Vault.
 
-### Architecture
-
-```
-┌─────────────────┐          ┌─────────────────┐          ┌──────────────────┐          ┌─────────────────┐
-│ Client/Workload │          │   External IdP  │          │   Vault Plugin   │          │   OCI IAM       │
-│  (App, CI/CD,   │          │  (Auth0, Okta,  │          │                  │          │                 │
-│   Developer)    │          │   Azure AD)     │          │                  │          │                 │
-└────────┬────────┘          └────────┬────────┘          └────────┬─────────┘          └────────┬────────┘
-         │                            │                            │                             │
-         │ 1. Request Identity        │                            │                             │
-         ├───────────────────────────►│                            │                             │
-         │                            │                            │                             │
-         │ 2. Issue Subject JWT       │                            │                             │
-         │◄───────────────────────────┤                            │                             │
-         │                            │                            │                             │
-         │ 3. Submit JWT for exchange │                            │                             │
-         ├────────────────────────────────────────────────────────►│                             │
-         │                            │                            │                             │
-         │                            │                            │ 4. Validate & Exchange      │
-         │                            │                            ├─────────────────────────────►
-         │                            │                            │                             │
-         │                            │                            │ 5. Return UPST Session      │
-         │                            │                            │◄────────────────────────────┤
-         │                            │                            │                             │
-         │ 6. Return OCI credentials  │                            │                             │
-         │◄────────────────────────────────────────────────────────┤                             │
-         │                            │                            │                             │
-```
-
 ### Sequence Diagrams (Current Implemented Flows)
+
+These diagrams describe the implemented request flows in the plugin.
+
+Actor definitions used in diagrams:
+
+- **Client/Workload**: The caller (app, CI job, script, or human) that invokes `vault write oci/exchange`.
+- **Vault OCI Plugin**: This secrets-engine plugin instance mounted in Vault.
+- **Vault Storage**: Plugin storage view used for reading config and role entries.
+- **Vault System View**: Vault runtime interface available to plugins; used here for plugin identity token minting (`GenerateIdentityToken`) when fallback is allowed.
+- **OCI Token Endpoint**: OCI Identity Domain OAuth token exchange endpoint (`/oauth2/v1/token`).
 
 #### 1) Standard Exchange (Caller Provides `subject_token`)
 

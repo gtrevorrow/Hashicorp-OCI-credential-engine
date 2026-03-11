@@ -17,7 +17,7 @@ func (b *backend) pathExchange() []*framework.Path {
 			Fields: map[string]*framework.FieldSchema{
 				"subject_token": {
 					Type:        framework.TypeString,
-					Description: "The 3rd party OIDC/OAuth JWT subject token to exchange (Optional in Enterprise)",
+					Description: "The 3rd party OIDC/OAuth JWT subject token to exchange (optional when callback fallback is enabled)",
 					Required:    false,
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name:      "Subject Token",

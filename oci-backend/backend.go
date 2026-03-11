@@ -69,6 +69,7 @@ func Factory(version string) logical.Factory {
 				b.pathConfig(),
 				b.pathExchange(),
 				b.pathRoles(),
+				b.pathJWKS(),
 			),
 			Secrets: []*framework.Secret{
 				b.ociTokenSecret(),

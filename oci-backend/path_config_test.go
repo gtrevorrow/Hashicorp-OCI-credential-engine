@@ -249,6 +249,62 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 	}
 	resp, err = b.HandleRequest(context.Background(), reqMissingKey)
 	require.NoError(t, err)
-	require.True(t, resp.IsError())
-	require.Contains(t, resp.Error().Error(), "subject_token_self_mint_private_key is required")
+	assert.False(t, resp != nil && resp.IsError(), "expected no error, got: %v", resp)
+
+	config, err := b.getConfig(context.Background(), storage)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+	require.NotEmpty(t, config.SubjectTokenSelfMintPrivateKey)
+	require.Contains(t, config.SubjectTokenSelfMintPrivateKey, "BEGIN RSA PRIVATE KEY")
+}
+
+func TestPathConfig_SelfMintGeneratedKeyIsReused(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqGenerate := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":                    "ocid1.tenancy.oc1..test",
+			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                       "test-client-id",
+			"client_secret":                   "test-client-secret",
+			"region":                          "us-ashburn-1",
+			"subject_token_self_mint_enabled": true,
+			"subject_token_self_mint_issuer":  "https://vault.example.com",
+		},
+	}
+	resp, err := b.HandleRequest(context.Background(), reqGenerate)
+	require.NoError(t, err)
+	assert.False(t, resp != nil && resp.IsError(), "expected no error, got: %v", resp)
+
+	firstConfig, err := b.getConfig(context.Background(), storage)
+	require.NoError(t, err)
+	require.NotNil(t, firstConfig)
+	firstKey := firstConfig.SubjectTokenSelfMintPrivateKey
+	require.NotEmpty(t, firstKey)
+
+	reqUpdateWithoutKey := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":                    "ocid1.tenancy.oc1..test",
+			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                       "test-client-id",
+			"client_secret":                   "test-client-secret",
+			"region":                          "us-ashburn-1",
+			"subject_token_self_mint_enabled": true,
+			"subject_token_self_mint_issuer":  "https://vault.example.com",
+		},
+	}
+	resp, err = b.HandleRequest(context.Background(), reqUpdateWithoutKey)
+	require.NoError(t, err)
+	assert.False(t, resp != nil && resp.IsError(), "expected no error, got: %v", resp)
+
+	updatedConfig, err := b.getConfig(context.Background(), storage)
+	require.NoError(t, err)
+	require.NotNil(t, updatedConfig)
+	assert.Equal(t, firstKey, updatedConfig.SubjectTokenSelfMintPrivateKey)
 }

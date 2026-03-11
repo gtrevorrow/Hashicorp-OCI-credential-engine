@@ -25,8 +25,27 @@ endpoint to submit a JWT subject token and receive an OCI session token.
 // backend implements the Vault secrets engine backend
 type backend struct {
 	*framework.Backend
-	lock   sync.RWMutex
-	logger hclog.Logger
+	lock                 sync.RWMutex
+	logger               hclog.Logger
+	subjectTokenCallback SubjectTokenCallback
+}
+
+// SubjectTokenCallback mints a JWT subject token for fallback flows when callers
+// do not provide subject_token and plugin identity token generation is unavailable.
+type SubjectTokenCallback func(ctx context.Context, req *logical.Request) (string, error)
+
+// RegisterSubjectTokenCallback registers a callback used to self-mint fallback
+// subject tokens. Intended for feature-gated enterprise/non-enterprise behavior.
+func (b *backend) RegisterSubjectTokenCallback(callback SubjectTokenCallback) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	b.subjectTokenCallback = callback
+}
+
+func (b *backend) getSubjectTokenCallback() SubjectTokenCallback {
+	b.lock.RLock()
+	defer b.lock.RUnlock()
+	return b.subjectTokenCallback
 }
 
 // Factory returns a configured logical.Factory

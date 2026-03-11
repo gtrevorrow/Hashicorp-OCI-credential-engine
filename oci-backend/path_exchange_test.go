@@ -508,3 +508,109 @@ func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
 	require.True(t, resp.IsError())
 	require.Contains(t, resp.Error().Error(), "invalid role")
 }
+
+func TestPathExchange_SubjectTokenCallbackFallback(t *testing.T) {
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+	storage := &logical.InmemStorage{}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+			"region":        "us-ashburn-1",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	reqRole := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "roles/dev",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"description": "dev role",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqRole)
+	require.NoError(t, err)
+
+	backend.RegisterSubjectTokenCallback(func(ctx context.Context, req *logical.Request) (string, error) {
+		return "callback-subject-token", nil
+	})
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"role": "dev",
+		},
+	}
+
+	resp, err := backend.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.NotContains(t, resp.Error().Error(), "failed to generate plugin identity token")
+	require.Contains(t, resp.Error().Error(), "token exchange failed")
+}
+
+func TestPathExchange_SubjectTokenCallbackError(t *testing.T) {
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+	storage := &logical.InmemStorage{}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+			"region":        "us-ashburn-1",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	backend.RegisterSubjectTokenCallback(func(ctx context.Context, req *logical.Request) (string, error) {
+		return "", logical.ErrPermissionDenied
+	})
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data:      map[string]interface{}{},
+	}
+
+	resp, err := backend.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.Contains(t, resp.Error().Error(), "failed to mint subject_token via callback")
+}

@@ -151,18 +151,29 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 			return logical.ErrorResponse("missing 'subject_token' and plugin identity fallback is disabled"), nil
 		}
 
+		var identityErr error
 		resp, identityErr := b.System().GenerateIdentityToken(ctx, &pluginutil.IdentityTokenRequest{
 			Audience: "urn:mace:oci:idcs", // Standard OCI identity domain audience
 		})
-
-		if identityErr != nil {
-			return logical.ErrorResponse("failed to generate plugin identity token: %v", identityErr), nil
-		}
 		if resp != nil {
 			subjectToken = string(resp.Token)
 		}
 
+		// If plugin identity minting is unavailable, try registered fallback callback.
 		if subjectToken == "" {
+			if callback := b.getSubjectTokenCallback(); callback != nil {
+				fallbackToken, callbackErr := callback(ctx, req)
+				if callbackErr != nil {
+					return logical.ErrorResponse("failed to mint subject_token via callback: %v", callbackErr), nil
+				}
+				subjectToken = fallbackToken
+			}
+		}
+
+		if subjectToken == "" {
+			if identityErr != nil {
+				return logical.ErrorResponse("failed to generate plugin identity token: %v", identityErr), nil
+			}
 			return logical.ErrorResponse("missing 'subject_token' and unable to self-mint identity token"), nil
 		}
 	}
@@ -328,6 +339,7 @@ Subject token behavior:
     - enforce_role_claim_match=true, or
     - allow_plugin_identity_fallback=false
   - subject_token is optional when plugin identity fallback is enabled
+    (plugin identity token first, then registered callback fallback if configured)
 
 Optional parameters:
   - subject_token_type: Token type (default: urn:ietf:params:oauth:token-type:jwt)

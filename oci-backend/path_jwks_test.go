@@ -11,6 +11,7 @@ import (
 func TestPathJWKSRead(t *testing.T) {
 	b, storage := getTestBackend(t)
 
+	// Covers JWK-01.
 	t.Run("Requires config", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.ReadOperation,
@@ -24,6 +25,7 @@ func TestPathJWKSRead(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "backend not configured")
 	})
 
+	// Covers JWK-02.
 	t.Run("Requires self mint enabled", func(t *testing.T) {
 		reqConfig := &logical.Request{
 			Operation: logical.UpdateOperation,
@@ -53,6 +55,7 @@ func TestPathJWKSRead(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "subject_token_self_mint_enabled is false")
 	})
 
+	// Covers JWK-03.
 	t.Run("Returns JWKS when enabled", func(t *testing.T) {
 		reqConfig := &logical.Request{
 			Operation: logical.UpdateOperation,

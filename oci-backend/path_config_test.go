@@ -12,6 +12,7 @@ import (
 func TestPathConfig_Updates(t *testing.T) {
 	b, storage := getTestBackend(t)
 
+	// Covers CFG-01.
 	t.Run("Create Config Success", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
@@ -32,6 +33,7 @@ func TestPathConfig_Updates(t *testing.T) {
 		assert.False(t, resp != nil && resp.IsError(), "expected no error, got: %v", resp)
 	})
 
+	// Covers CFG-03.
 	t.Run("Create Config Missing Variables", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
@@ -68,6 +70,7 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 	_, err := b.HandleRequest(context.Background(), reqCreate)
 	require.NoError(t, err)
 
+	// Covers CFG-05.
 	t.Run("Read Config", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.ReadOperation,
@@ -93,6 +96,7 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		assert.Equal(t, 600, resp.Data["subject_token_self_mint_ttl_seconds"])
 	})
 
+	// Covers CFG-07.
 	t.Run("Delete Config", func(t *testing.T) {
 		reqDelete := &logical.Request{
 			Operation: logical.DeleteOperation,
@@ -119,6 +123,7 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 	b, storage := getTestBackend(t)
 	testKey := generateTestRSAPrivateKeyPEM(t)
+	// Covers CFG-02 and exercises CFG-09/CFG-10 with non-default settings.
 
 	reqCreate := &logical.Request{
 		Operation: logical.UpdateOperation,
@@ -166,6 +171,7 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 func TestPathConfig_RoleClaimKeyRequiresEnforcement(t *testing.T) {
 	b, storage := getTestBackend(t)
 
+	// Covers CFG-08.
 	t.Run("Rejects role_claim_key without enforcement", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
@@ -188,6 +194,7 @@ func TestPathConfig_RoleClaimKeyRequiresEnforcement(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "role_claim_key requires enforce_role_claim_match=true")
 	})
 
+	// Covers CFG-02 for enforced role-claim config.
 	t.Run("Accepts role_claim_key with enforcement", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
@@ -214,6 +221,7 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 	b, storage := getTestBackend(t)
 	testKey := generateTestRSAPrivateKeyPEM(t)
 
+	// Covers the negative half of CFG-11: self-mint still requires an issuer.
 	reqMissingIssuer := &logical.Request{
 		Operation: logical.UpdateOperation,
 		Path:      "config",
@@ -233,6 +241,7 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 	require.True(t, resp.IsError())
 	require.Contains(t, resp.Error().Error(), "subject_token_self_mint_issuer is required")
 
+	// Covers CFG-11.
 	reqMissingKey := &logical.Request{
 		Operation: logical.UpdateOperation,
 		Path:      "config",
@@ -260,6 +269,7 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 
 func TestPathConfig_SelfMintGeneratedKeyIsReused(t *testing.T) {
 	b, storage := getTestBackend(t)
+	// Covers the persistence aspect of CFG-11 across config updates.
 
 	reqGenerate := &logical.Request{
 		Operation: logical.UpdateOperation,

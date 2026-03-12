@@ -10,6 +10,7 @@ import (
 )
 
 func TestJWTClaimContainsRole(t *testing.T) {
+	// Covers the local claim-parsing pieces of RCM-01, RCM-03, RCM-05, and RCM-06.
 	t.Run("String Claim Success", func(t *testing.T) {
 		token := makeTestJWT(t, map[string]interface{}{"vault_role": "dev"})
 		matched, value, err := jwtClaimContainsRole(token, "vault_role", "dev")
@@ -18,6 +19,7 @@ func TestJWTClaimContainsRole(t *testing.T) {
 		require.Equal(t, "dev", value)
 	})
 
+	// Covers RCM-05.
 	t.Run("String Array Claim Success", func(t *testing.T) {
 		token := makeTestJWT(t, map[string]interface{}{"vault_role": []string{"prod", "dev"}})
 		matched, value, err := jwtClaimContainsRole(token, "vault_role", "dev")
@@ -26,6 +28,7 @@ func TestJWTClaimContainsRole(t *testing.T) {
 		require.Equal(t, "prod,dev", value)
 	})
 
+	// Supports RCM-02 mismatch handling.
 	t.Run("String Array Claim Mismatch", func(t *testing.T) {
 		token := makeTestJWT(t, map[string]interface{}{"vault_role": []string{"prod", "stage"}})
 		matched, value, err := jwtClaimContainsRole(token, "vault_role", "dev")
@@ -34,6 +37,7 @@ func TestJWTClaimContainsRole(t *testing.T) {
 		require.Equal(t, "prod,stage", value)
 	})
 
+	// Covers RCM-06.
 	t.Run("Invalid Array Element", func(t *testing.T) {
 		token := makeTestJWT(t, map[string]interface{}{"vault_role": []interface{}{"dev", 2}})
 		_, _, err := jwtClaimContainsRole(token, "vault_role", "dev")
@@ -41,6 +45,7 @@ func TestJWTClaimContainsRole(t *testing.T) {
 		require.Contains(t, err.Error(), "array must contain only non-empty strings")
 	})
 
+	// Covers RCM-03.
 	t.Run("Missing Claim", func(t *testing.T) {
 		token := makeTestJWT(t, map[string]interface{}{"other": "dev"})
 		_, _, err := jwtClaimContainsRole(token, "vault_role", "dev")

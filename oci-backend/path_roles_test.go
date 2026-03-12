@@ -12,6 +12,7 @@ import (
 func TestPathRoles_CreateUpdate(t *testing.T) {
 	b, storage := getTestBackend(t)
 
+	// Covers ROL-01 and ROL-02.
 	t.Run("Create Role Success", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
@@ -38,6 +39,7 @@ func TestPathRoles_CreateUpdate(t *testing.T) {
 		assert.Contains(t, role.AllowedSubjects, "systemA")
 	})
 
+	// Covers ROL-08.
 	t.Run("Create Role Missing Name", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
@@ -72,6 +74,7 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 	_, err := b.HandleRequest(context.Background(), reqCreate)
 	require.NoError(t, err)
 
+	// Covers ROL-03.
 	t.Run("Read Role", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.ReadOperation,
@@ -89,6 +92,7 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 		assert.Equal(t, 86400, resp.Data["max_ttl"]) // Because of the default logic
 	})
 
+	// Covers ROL-04.
 	t.Run("List Roles", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.ListOperation,
@@ -105,6 +109,7 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 		assert.Contains(t, keys, "test-role")
 	})
 
+	// Covers ROL-06.
 	t.Run("Delete Role", func(t *testing.T) {
 		reqDelete := &logical.Request{
 			Operation: logical.DeleteOperation,
@@ -136,17 +141,18 @@ func TestPathRoles_StrictRoleNameMatch(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":            "ocid1.tenancy.oc1..test",
-			"domain_url":              "https://idcs-test.identity.oraclecloud.com",
-			"client_id":               "test-client-id",
-			"client_secret":           "test-client-secret",
-			"region":                  "us-ashburn-1",
-			"strict_role_name_match":  true,
+			"tenancy_ocid":           "ocid1.tenancy.oc1..test",
+			"domain_url":             "https://idcs-test.identity.oraclecloud.com",
+			"client_id":              "test-client-id",
+			"client_secret":          "test-client-secret",
+			"region":                 "us-ashburn-1",
+			"strict_role_name_match": true,
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqConfig)
 	require.NoError(t, err)
 
+	// Covers ROL-10.
 	t.Run("Reject Invalid Role Name", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
@@ -164,6 +170,7 @@ func TestPathRoles_StrictRoleNameMatch(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "invalid role name")
 	})
 
+	// Covers the valid branch of strict role-name handling adjacent to ROL-10.
 	t.Run("Accept Valid Role Name", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,

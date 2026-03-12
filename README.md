@@ -473,7 +473,8 @@ Please refer to the [Contributing Guide](CONTRIBUTING.md#testing-locally-with-va
 ### Optional Future Mode (Plugin-issued subject tokens, WIF-style)
 
 - [ ] Add optional mode where the plugin issues subject tokens trusted by OCI Identity Domains
-- [ ] Publish JWKS for OCI trust configuration and key rotation
+- [x] Publish JWKS endpoint for OCI trust configuration (single active RSA key)
+- [ ] Add JWKS key rotation/multi-key publication strategy
 - [ ] Add support for multiple issuers/IdPs per backend in plugin-issued token mode
 - [ ] Implement claims mapping/policy translation for plugin-issued tokens
 - [ ] Evaluate OCI Cloud Shell integration for plugin-issued token workflows

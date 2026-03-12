@@ -7,17 +7,20 @@ This document is written as implementation context for LLM-assisted development.
 
 ## Design Decision
 - Keep this plugin focused on token exchange.
-- Do not make this plugin an IdP/JWT issuer.
+- Keep plugin-issued JWT behavior as optional fallback mode, not the primary design.
 - Use Vault Identity Tokens (`identity/oidc/token/<role>`) as the subject token source when role/claim-based mapping is needed.
 - Let OCI Identity Domains remain the JWT validation authority (issuer trust, JWKS, claim evaluation).
 
 ## Current State (in this repo)
 - `oci/exchange` supports:
   - caller-supplied `subject_token`
-  - fallback to plugin-generated identity token when `subject_token` is omitted
+  - callback fallback when `subject_token` is omitted:
+    - tries Vault `GenerateIdentityToken` first
+    - optional plugin self-mint fallback (RSA-signed JWT) when configured
   - plugin `role` for local TTL/policy behavior only
-- Plugin `role` is not injected into JWT claims.
+- In self-mint fallback mode, plugin can inject configured role claim into fallback JWT when request includes `role`.
 - No local JWT signature validation is performed by this plugin.
+- `oci/jwks` endpoint exposes JWKS derived from self-mint signing key for OCI trust bootstrap.
 
 ## Target End-to-End Flow
 1. Workload authenticates to Vault (Kubernetes/JWT/AppRole/etc.).
@@ -78,10 +81,13 @@ Then attach OCI IAM policies to that Service User.
 - Optional guardrail: enforce that plugin request `role` is consistent with a claim value in the supplied JWT (string match only).
   - This is a consistency control, not signature validation.
   - If implemented, parse JWT payload only and compare claim to requested role.
+- Optional self-mint fallback controls:
+  - auto-generate RSA signing key if missing
+  - expose public key as JWKS for OCI trust
 
 ### Do Not Add
 - Local JWKS caching/validation in plugin.
-- Plugin-issued custom JWTs/JWKS hosting as default mode.
+- Plugin-issued JWTs/JWKS as mandatory default mode.
 
 ## Data/Control Mapping
 - Vault auth role/entity -> determines who can mint which OIDC token role.
@@ -110,10 +116,14 @@ Then attach OCI IAM policies to that Service User.
   - `enforce_role_claim_match` (bool)
   - `role_claim_key` (default `vault_role` or `oci_target`)
 - In `path_exchange.go`:
-  - if enabled and `subject_token` provided, compare claim vs request `role`.
+  - if enabled, compare claim vs request `role` using the effective subject token (caller-provided or fallback-generated).
   - fail with clear error on mismatch.
 
-3. Tests
+3. Callback and JWKS operational controls
+- Add and document `oci/jwks` endpoint for OCI trust setup.
+- Ensure self-mint key generation/rotation procedures are documented.
+
+4. Tests
 - Unit tests for guardrail logic:
   - match success
   - mismatch failure
@@ -121,7 +131,7 @@ Then attach OCI IAM policies to that Service User.
   - disabled toggle bypass
 - No local signature validation tests needed.
 
-4. Operational validation
+5. Operational validation
 - Run end-to-end test with OCI sandbox:
   - token minted from Vault OIDC role
   - successful mapping to expected OCI Service User

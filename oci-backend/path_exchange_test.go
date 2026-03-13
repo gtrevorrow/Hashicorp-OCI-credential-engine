@@ -17,10 +17,12 @@ import (
 // mockSystemView is used to inject custom mock data for WIF testing
 type mockSystemView struct {
 	logical.StaticSystemView
-	mockIdentity string
+	mockIdentity     string
+	lastAudienceSeen string
 }
 
 func (m *mockSystemView) GenerateIdentityToken(ctx context.Context, req *pluginutil.IdentityTokenRequest) (*pluginutil.IdentityTokenResponse, error) {
+	m.lastAudienceSeen = req.Audience
 	if m.mockIdentity != "" {
 		return &pluginutil.IdentityTokenResponse{
 			Token: pluginutil.IdentityToken(m.mockIdentity),
@@ -699,6 +701,170 @@ func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
 	require.NotContains(t, resp.Error().Error(), "failed to mint subject_token via callback")
 	require.NotContains(t, resp.Error().Error(), "role claim mismatch")
 	require.Contains(t, resp.Error().Error(), "token exchange failed")
+}
+
+func TestPathExchange_SubjectTokenAudienceOverrideRejectedForCallerProvidedToken(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+			"region":        "us-ashburn-1",
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token":          "token123",
+			"subject_token_audience": "urn:oci:test",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.Contains(t, resp.Error().Error(), "subject_token_audience is only supported when subject_token is omitted")
+}
+
+func TestPathExchange_SubjectTokenAudienceOverrideRejectedWhenNotAllowlisted(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":                    "ocid1.tenancy.oc1..test",
+			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                       "test-client-id",
+			"client_secret":                   "test-client-secret",
+			"region":                          "us-ashburn-1",
+			"subject_token_self_mint_enabled": true,
+			"subject_token_self_mint_issuer":  "https://vault.example.com",
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token_audience": "urn:oci:test",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.Contains(t, resp.Error().Error(), "subject_token_audience override is not enabled for this backend")
+}
+
+func TestPathExchange_DefaultCallbackSelfMintUsesAudienceOverride(t *testing.T) {
+	testKey := generateTestRSAPrivateKeyPEM(t)
+
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+	storage := &logical.InmemStorage{}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":                        "ocid1.tenancy.oc1..test",
+			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                           "test-client-id",
+			"client_secret":                       "test-client-secret",
+			"region":                              "us-ashburn-1",
+			"subject_token_self_mint_enabled":     true,
+			"subject_token_self_mint_issuer":      "https://vault.example.com",
+			"subject_token_self_mint_private_key": testKey,
+			"subject_token_allowed_audiences":     []string{"urn:oci:test"},
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	token, err := backend.defaultSubjectTokenCallback(context.Background(), &logical.Request{
+		Data: map[string]interface{}{
+			"subject_token_audience": "urn:oci:test",
+		},
+	}, mustGetConfig(t, backend, storage))
+	require.NoError(t, err)
+
+	claims := decodeJWTClaims(t, token)
+	require.Equal(t, "urn:oci:test", claims["aud"])
+}
+
+func TestPathExchange_DefaultCallbackGenerateIdentityTokenUsesAudienceOverride(t *testing.T) {
+	systemView := &mockSystemView{
+		mockIdentity: "mocked-wif-identity-token",
+		StaticSystemView: logical.StaticSystemView{
+			DefaultLeaseTTLVal: time.Hour,
+			MaxLeaseTTLVal:     24 * time.Hour,
+		},
+	}
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: systemView,
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+	storage := &logical.InmemStorage{}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":                     "ocid1.tenancy.oc1..test",
+			"domain_url":                       "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                        "test-client-id",
+			"client_secret":                    "test-client-secret",
+			"region":                           "us-ashburn-1",
+			"subject_token_self_mint_audience": "urn:mace:oci:idcs",
+			"subject_token_allowed_audiences":  []string{"urn:oci:test"},
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	_, err = backend.defaultSubjectTokenCallback(context.Background(), &logical.Request{
+		Data: map[string]interface{}{
+			"subject_token_audience": "urn:oci:test",
+		},
+	}, mustGetConfig(t, backend, storage))
+	require.NoError(t, err)
+	require.Equal(t, "urn:oci:test", systemView.lastAudienceSeen)
+}
+
+func mustGetConfig(t *testing.T, b *backend, storage logical.Storage) *federatedConfig {
+	t.Helper()
+	config, err := b.getConfig(context.Background(), storage)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+	return config
 }
 
 func TestDefaultCallbackSelfMintUsesTrustedVaultIdentityClaims(t *testing.T) {

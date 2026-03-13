@@ -2,6 +2,7 @@ package ocibackend
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"time"
 
@@ -38,6 +39,14 @@ func (b *backend) pathExchange() []*framework.Path {
 					Default:     ociRequestedTokenTypeUPST,
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name: "Requested Token Type",
+					},
+				},
+				"subject_token_audience": {
+					Type:        framework.TypeString,
+					Description: "Optional audience override for callback-resolved subject tokens; must be allowed by backend config",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Subject Token Audience",
 					},
 				},
 				"res_type": {
@@ -123,6 +132,11 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		requestedTokenType = raw.(string)
 	}
 
+	requestedSubjectTokenAudience := ""
+	if raw, ok := data.GetOk("subject_token_audience"); ok && raw.(string) != "" {
+		requestedSubjectTokenAudience = raw.(string)
+	}
+
 	if !isSupportedRequestedTokenType(requestedTokenType) {
 		return logical.ErrorResponse("unsupported requested_token_type '%s'; supported values are '%s' and '%s'", requestedTokenType, ociRequestedTokenTypeUPST, ociRequestedTokenTypeRPST), nil
 	}
@@ -146,6 +160,9 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		if !configAllowPluginIdentityFallback(config) {
 			return logical.ErrorResponse("missing 'subject_token' and plugin identity fallback is disabled"), nil
 		}
+		if _, audienceErr := resolveSubjectTokenAudience(data, config); audienceErr != nil {
+			return logical.ErrorResponse("%v", audienceErr), nil
+		}
 		callback := b.getSubjectTokenCallback()
 		if callback == nil {
 			return logical.ErrorResponse("missing 'subject_token' and unable to self-mint identity token"), nil
@@ -158,6 +175,8 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 			return logical.ErrorResponse("missing 'subject_token' and callback returned empty token"), nil
 		}
 		subjectToken = fallbackToken
+	} else if requestedSubjectTokenAudience != "" {
+		return logical.ErrorResponse("subject_token_audience is only supported when subject_token is omitted"), nil
 	}
 
 	// Get role if specified
@@ -256,6 +275,33 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	resp.Secret.MaxTTL = maxTTL
 
 	return resp, nil
+}
+
+type fieldDataGetter interface {
+	GetOk(string) (interface{}, bool)
+}
+
+func resolveSubjectTokenAudience(data fieldDataGetter, config *federatedConfig) (string, error) {
+	audience := configSubjectTokenSelfMintAudience(config)
+	if data == nil {
+		return audience, nil
+	}
+
+	raw, ok := data.GetOk("subject_token_audience")
+	if !ok || raw.(string) == "" {
+		return audience, nil
+	}
+	requestedAudience := raw.(string)
+	allowed := configSubjectTokenAllowedAudiences(config)
+	for _, allowedAudience := range allowed {
+		if requestedAudience == allowedAudience {
+			return requestedAudience, nil
+		}
+	}
+	if len(allowed) == 0 {
+		return "", fmt.Errorf("subject_token_audience override is not enabled for this backend")
+	}
+	return "", fmt.Errorf("subject_token_audience '%s' is not in subject_token_allowed_audiences", requestedAudience)
 }
 
 // ociTokenSecret returns the secret type for OCI tokens

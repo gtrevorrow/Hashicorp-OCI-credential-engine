@@ -127,11 +127,12 @@ type federatedConfig struct {
 	StrictRoleNameMatch bool `json:"strict_role_name_match" mapstructure:"strict_role_name_match"`
 
 	// Built-in callback fallback controls for self-minting subject_token.
-	SubjectTokenSelfMintEnabled    bool   `json:"subject_token_self_mint_enabled" mapstructure:"subject_token_self_mint_enabled"`
-	SubjectTokenSelfMintIssuer     string `json:"subject_token_self_mint_issuer" mapstructure:"subject_token_self_mint_issuer"`
-	SubjectTokenSelfMintAudience   string `json:"subject_token_self_mint_audience" mapstructure:"subject_token_self_mint_audience"`
-	SubjectTokenSelfMintTTLSeconds int    `json:"subject_token_self_mint_ttl_seconds" mapstructure:"subject_token_self_mint_ttl_seconds"`
-	SubjectTokenSelfMintPrivateKey string `json:"subject_token_self_mint_private_key" mapstructure:"subject_token_self_mint_private_key"`
+	SubjectTokenSelfMintEnabled    bool     `json:"subject_token_self_mint_enabled" mapstructure:"subject_token_self_mint_enabled"`
+	SubjectTokenSelfMintIssuer     string   `json:"subject_token_self_mint_issuer" mapstructure:"subject_token_self_mint_issuer"`
+	SubjectTokenSelfMintAudience   string   `json:"subject_token_self_mint_audience" mapstructure:"subject_token_self_mint_audience"`
+	SubjectTokenAllowedAudiences   []string `json:"subject_token_allowed_audiences" mapstructure:"subject_token_allowed_audiences"`
+	SubjectTokenSelfMintTTLSeconds int      `json:"subject_token_self_mint_ttl_seconds" mapstructure:"subject_token_self_mint_ttl_seconds"`
+	SubjectTokenSelfMintPrivateKey string   `json:"subject_token_self_mint_private_key" mapstructure:"subject_token_self_mint_private_key"`
 }
 
 // getConfig retrieves the backend configuration from storage

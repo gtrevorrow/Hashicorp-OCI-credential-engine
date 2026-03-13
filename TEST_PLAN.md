@@ -17,6 +17,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | CFG-09 | strict_role_name_match enabled | Set strict_role_name_match=true | Success, strict role-name validation enabled |
 | CFG-10 | allow_plugin_identity_fallback disabled | Set allow_plugin_identity_fallback=false | Success, subject_token becomes required unless changed |
 | CFG-11 | self-mint enabled without private key | Set subject_token_self_mint_enabled=true, issuer set, omit private key | Success, plugin auto-generates and stores RSA signing key |
+| CFG-12 | allowlisted fallback audiences configured | Set subject_token_allowed_audiences | Success, allowed fallback audiences persisted |
 
 ## 2. Roles Path Tests
 
@@ -46,6 +47,9 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-07 | Exchange without subject_token (fallback disabled) | omit subject_token, allow_plugin_identity_fallback=false | Error: missing subject_token and fallback disabled |
 | EXC-08 | Exchange without subject_token (enforcement enabled, no role) | omit subject_token, enforce_role_claim_match=true, no role | Error: missing role while enforcement enabled |
 | EXC-09 | Exchange without subject_token (enforcement enabled, role set) | omit subject_token, enforce_role_claim_match=true, role set | Uses fallback token; role-claim enforcement is skipped because no caller-provided JWT was supplied |
+| EXC-10 | Exchange without subject_token (allowlisted audience override) | omit subject_token, set subject_token_audience to allowed value | Fallback token uses requested audience |
+| EXC-11 | Exchange with disallowed audience override | omit subject_token, set subject_token_audience to unlisted value | Error: audience override not allowed |
+| EXC-12 | Exchange with subject_token_audience and caller-provided JWT | subject_token and subject_token_audience set | Error: audience override only applies to fallback tokens |
 
 ## 4. Exchange Path - Token Content Validation
 
@@ -53,11 +57,11 @@ These cases are primarily OCI-behavior or end-to-end validation scenarios unless
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
-| EXC-10 | Valid JWT exchange | Valid subject_token from external IdP | Valid UPST returned with lease |
-| EXC-11 | Expired JWT | subject_token expired | Error from OCI IAM / trust evaluation |
-| EXC-12 | Invalid JWT signature | Tampered subject_token | Error from OCI IAM / trust evaluation |
-| EXC-13 | Wrong audience in JWT | JWT aud doesn't match OCI client | Error from OCI IAM |
-| EXC-14 | Missing required claims | JWT missing claims required by OCI trust | Error from OCI IAM / trust evaluation |
+| EXC-20 | Valid JWT exchange | Valid subject_token from external IdP | Valid UPST returned with lease |
+| EXC-21 | Expired JWT | subject_token expired | Error from OCI IAM / trust evaluation |
+| EXC-22 | Invalid JWT signature | Tampered subject_token | Error from OCI IAM / trust evaluation |
+| EXC-23 | Wrong audience in JWT | JWT aud doesn't match OCI client | Error from OCI IAM |
+| EXC-24 | Missing required claims | JWT missing claims required by OCI trust | Error from OCI IAM / trust evaluation |
 
 ## 5. Role Claim Matching (Security)
 
@@ -120,8 +124,9 @@ Current automated coverage is limited to TTL selection and clamping during excha
 
 Currently covered by automated tests:
 - `CFG-01`, `CFG-02`, `CFG-03`, `CFG-05`, `CFG-07`, `CFG-08`, `CFG-09`, `CFG-10`, `CFG-11`
+- `CFG-12`
 - `ROL-01`, `ROL-02`, `ROL-03`, `ROL-04`, `ROL-06`, `ROL-08`, `ROL-10`
-- `EXC-04`, `EXC-07`, `EXC-08`, `EXC-09`
+- `EXC-04`, `EXC-07`, `EXC-08`, `EXC-09`, `EXC-10`, `EXC-11`, `EXC-12`
 - Requested token-type validation for unsupported values and RPST missing `res_type`
 - `RCM-01`, `RCM-02`, `RCM-03`, `RCM-05`, `RCM-06`, `RCM-07`
 - `TTL-01`, `TTL-02`
@@ -139,7 +144,7 @@ Not yet covered by automated tests:
 - `CFG-04`, `CFG-06`
 - `ROL-05`, `ROL-07`, `ROL-09`
 - `EXC-05`
-- `EXC-10`, `EXC-11`, `EXC-12`, `EXC-13`, `EXC-14`
+- `EXC-20`, `EXC-21`, `EXC-22`, `EXC-23`, `EXC-24`
 - `TTL-03`, `TTL-04`, `TTL-05`
 - `OCI-02`, `OCI-04`
 - `E2E-01`, `E2E-02`, `E2E-03`
@@ -155,7 +160,7 @@ Not yet covered by automated tests:
 
 ### Error Handling (Should Have)
 - **CFG-03, CFG-04** - Config validation errors
-- **EXC-11, EXC-12, EXC-13, EXC-14** - Token validation errors
+- **EXC-21, EXC-22, EXC-23, EXC-24** - Token validation errors
 - **RCM-03, RCM-04, RCM-06** - Claim matching edge cases
 
 ### Advanced Features (Nice to Have)
@@ -208,4 +213,5 @@ Future additions:
 - `client_secret` is write-only and never returned on read
 - `enforce_role_claim_match` can use default `role_claim_key` (`vault_role`) unless overridden
 - If `enforce_role_claim_match=true`, it applies to caller-provided `subject_token` values; callback-resolved fallback tokens are evaluated under the callback/self-mint trust model instead
+- `subject_token_audience` is accepted only when `subject_token` is omitted and the requested audience is present in `subject_token_allowed_audiences`
 - If `allow_plugin_identity_fallback=false`, `subject_token` is required

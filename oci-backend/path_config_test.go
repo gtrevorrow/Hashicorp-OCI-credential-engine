@@ -93,6 +93,7 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		assert.Equal(t, false, resp.Data["strict_role_name_match"])
 		assert.Equal(t, false, resp.Data["subject_token_self_mint_enabled"])
 		assert.Equal(t, "urn:mace:oci:idcs", resp.Data["subject_token_self_mint_audience"])
+		assert.Nil(t, resp.Data["subject_token_allowed_audiences"])
 		assert.Equal(t, 600, resp.Data["subject_token_self_mint_ttl_seconds"])
 	})
 
@@ -142,6 +143,7 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 			"subject_token_self_mint_enabled":     true,
 			"subject_token_self_mint_issuer":      "https://vault.example.com",
 			"subject_token_self_mint_audience":    "urn:mace:oci:idcs",
+			"subject_token_allowed_audiences":     []string{"urn:oci:test", "urn:oci:prod"},
 			"subject_token_self_mint_ttl_seconds": 900,
 			"subject_token_self_mint_private_key": testKey,
 		},
@@ -165,6 +167,7 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 	assert.Equal(t, true, resp.Data["subject_token_self_mint_enabled"])
 	assert.Equal(t, "https://vault.example.com", resp.Data["subject_token_self_mint_issuer"])
 	assert.Equal(t, "urn:mace:oci:idcs", resp.Data["subject_token_self_mint_audience"])
+	assert.Equal(t, []string{"urn:oci:test", "urn:oci:prod"}, resp.Data["subject_token_allowed_audiences"])
 	assert.Equal(t, 900, resp.Data["subject_token_self_mint_ttl_seconds"])
 }
 

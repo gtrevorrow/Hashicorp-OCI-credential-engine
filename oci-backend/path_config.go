@@ -134,6 +134,14 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Subject Token Self Mint Audience",
 					},
 				},
+				"subject_token_allowed_audiences": {
+					Type:        framework.TypeCommaStringSlice,
+					Description: "Optional allowlist of per-request fallback audiences; subject_token_audience must match one of these values when supplied",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Subject Token Allowed Audiences",
+					},
+				},
 				"subject_token_self_mint_ttl_seconds": {
 					Type:        framework.TypeDurationSecond,
 					Description: "TTL in seconds for built-in self-minted subject_token",
@@ -207,6 +215,7 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 			"subject_token_self_mint_enabled":     config.SubjectTokenSelfMintEnabled,
 			"subject_token_self_mint_issuer":      config.SubjectTokenSelfMintIssuer,
 			"subject_token_self_mint_audience":    configSubjectTokenSelfMintAudience(config),
+			"subject_token_allowed_audiences":     configSubjectTokenAllowedAudiences(config),
 			"subject_token_self_mint_ttl_seconds": configSubjectTokenSelfMintTTLSeconds(config),
 		},
 	}, nil
@@ -260,6 +269,7 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		SubjectTokenSelfMintEnabled:    data.Get("subject_token_self_mint_enabled").(bool),
 		SubjectTokenSelfMintIssuer:     data.Get("subject_token_self_mint_issuer").(string),
 		SubjectTokenSelfMintAudience:   data.Get("subject_token_self_mint_audience").(string),
+		SubjectTokenAllowedAudiences:   data.Get("subject_token_allowed_audiences").([]string),
 		SubjectTokenSelfMintTTLSeconds: data.Get("subject_token_self_mint_ttl_seconds").(int),
 		SubjectTokenSelfMintPrivateKey: data.Get("subject_token_self_mint_private_key").(string),
 	}
@@ -370,6 +380,29 @@ func configSubjectTokenSelfMintTTLSeconds(config *federatedConfig) int {
 	return config.SubjectTokenSelfMintTTLSeconds
 }
 
+func configSubjectTokenAllowedAudiences(config *federatedConfig) []string {
+	if config == nil || len(config.SubjectTokenAllowedAudiences) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(config.SubjectTokenAllowedAudiences))
+	seen := make(map[string]struct{}, len(config.SubjectTokenAllowedAudiences))
+	for _, audience := range config.SubjectTokenAllowedAudiences {
+		audience = strings.TrimSpace(audience)
+		if audience == "" {
+			continue
+		}
+		if _, ok := seen[audience]; ok {
+			continue
+		}
+		seen[audience] = struct{}{}
+		out = append(out, audience)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 const pathConfigHelpDesc = `
 The OCI secrets engine exchanges 3rd party OIDC/OAuth JWT tokens for OCI session tokens.
 
@@ -390,6 +423,7 @@ Optional:
   - subject_token_self_mint_enabled: Enable built-in callback self-mint fallback (default: false)
   - subject_token_self_mint_issuer: Required when self-mint is enabled
   - subject_token_self_mint_audience: Audience for self-minted token (default: urn:mace:oci:idcs)
+  - subject_token_allowed_audiences: Optional allowlist for per-request fallback audience override
   - subject_token_self_mint_ttl_seconds: TTL for self-minted token (default: 600)
   - subject_token_self_mint_private_key: Optional PEM RSA private key; auto-generated and stored if omitted when self-mint is enabled
 

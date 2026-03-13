@@ -40,6 +40,11 @@ Current self-mint claim set includes:
   - `vault_alias_custom_metadata`
   - `vault_group_names`
 
+Audience behavior:
+- self-mint and plugin identity fallback default to configured `subject_token_self_mint_audience`
+- callers may request an alternate fallback audience only through `subject_token_audience`
+- request-level audience override is accepted only when the value is present in `subject_token_allowed_audiences`
+
 ## Target End-to-End Flow
 1. Workload authenticates to Vault (Kubernetes/JWT/AppRole/etc.).
 2. Workload receives a Vault token tied to a Vault entity.

@@ -21,9 +21,18 @@ import (
 )
 
 func (b *backend) defaultSubjectTokenCallback(ctx context.Context, req *logical.Request, config *federatedConfig) (string, error) {
+	audience, err := resolveSubjectTokenAudience(nil, config)
+	if req != nil {
+		fieldData := &logicalRequestFieldData{Request: req}
+		audience, err = resolveSubjectTokenAudience(fieldData, config)
+	}
+	if err != nil {
+		return "", err
+	}
+
 	// Prefer Vault plugin identity token generation where available.
 	resp, err := b.System().GenerateIdentityToken(ctx, &pluginutil.IdentityTokenRequest{
-		Audience: configSubjectTokenSelfMintAudience(config),
+		Audience: audience,
 	})
 	if err == nil && resp != nil && string(resp.Token) != "" {
 		return string(resp.Token), nil
@@ -37,10 +46,10 @@ func (b *backend) defaultSubjectTokenCallback(ctx context.Context, req *logical.
 		return "", fmt.Errorf("plugin identity token unavailable and self-mint disabled")
 	}
 
-	return b.selfMintSubjectToken(req, config)
+	return b.selfMintSubjectToken(req, config, audience)
 }
 
-func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedConfig) (string, error) {
+func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedConfig, audience string) (string, error) {
 	privateKey, err := parseRSAPrivateKey(config.SubjectTokenSelfMintPrivateKey)
 	if err != nil {
 		return "", fmt.Errorf("invalid subject_token_self_mint_private_key: %w", err)
@@ -58,7 +67,7 @@ func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedCo
 	claims := map[string]interface{}{
 		"iss": config.SubjectTokenSelfMintIssuer,
 		"sub": buildSelfMintSubject(req),
-		"aud": configSubjectTokenSelfMintAudience(config),
+		"aud": audience,
 		"iat": now.Unix(),
 		"exp": expiresAt.Unix(),
 		"jti": randomJTI(),
@@ -70,6 +79,18 @@ func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedCo
 	}
 
 	return signJWT(header, claims, privateKey)
+}
+
+type logicalRequestFieldData struct {
+	*logical.Request
+}
+
+func (l *logicalRequestFieldData) GetOk(key string) (interface{}, bool) {
+	if l == nil || l.Request == nil || l.Request.Data == nil {
+		return nil, false
+	}
+	value, ok := l.Request.Data[key]
+	return value, ok
 }
 
 func buildSelfMintSubject(req *logical.Request) string {

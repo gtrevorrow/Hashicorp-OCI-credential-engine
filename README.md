@@ -122,7 +122,8 @@ vault write oci/config \
     role_claim_key="vault_role" \
     allow_plugin_identity_fallback=true \
     strict_role_name_match=false \
-    subject_token_self_mint_enabled=false
+    subject_token_self_mint_enabled=false \
+    subject_token_allowed_audiences="urn:oci:test,urn:oci:prod"
 ```
 
 **Parameters:**
@@ -140,6 +141,7 @@ vault write oci/config \
 - `subject_token_self_mint_enabled`: Enables built-in self-mint fallback in default callback when Vault identity-token generation is unavailable (default: `false`)
 - `subject_token_self_mint_issuer`: Required when self-mint is enabled
 - `subject_token_self_mint_audience`: Audience for self-minted token (default: `urn:mace:oci:idcs`)
+- `subject_token_allowed_audiences`: Optional allowlist for request-level fallback audience override via `subject_token_audience`
 - `subject_token_self_mint_ttl_seconds`: TTL for self-minted token in seconds (default: `600`)
 - `subject_token_self_mint_private_key`: Optional PEM RSA private key. If omitted while self-mint is enabled, the plugin generates one and stores it in Vault plugin storage
 
@@ -182,6 +184,8 @@ vault write oci/exchange \
 ```
 
 *Note: Omitting `subject_token` requires `allow_plugin_identity_fallback=true`. The default callback first attempts Vault identity-token generation; if unavailable, it can self-mint only when `subject_token_self_mint_enabled=true` and self-mint config is set.*
+
+If the caller omits `subject_token`, it may also provide `subject_token_audience` to request an alternate audience for the fallback token. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
 
 *Reference: Oracle JWT-to-UPST flow and request parameters are documented in [Token Exchange Grant Type: Exchanging a JSON Web Token for a UPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm#jwt_token_exchange__get-oci-upst).*
 
@@ -315,7 +319,7 @@ Vault-derived claims included when available:
 
 Design notes:
 - The request `role` is not copied into the self-minted JWT.
-- `aud` is currently controlled by plugin config (`subject_token_self_mint_audience`), not by request input.
+- `aud` defaults to plugin config (`subject_token_self_mint_audience`) and may be overridden per request only through allowlisted `subject_token_audience` values.
 - OCI trust rules should use the Vault-derived claims above rather than caller-supplied parameters.
 
 ### Using with OCI CLI
@@ -412,14 +416,15 @@ vault read oci/jwks
 {
   "subject_token": "eyJhbGciOiJSUzI1NiIs...",
   "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
-    "requested_token_type": "urn:oci:token-type:oci-upst",
+  "subject_token_audience": "urn:oci:test",
+  "requested_token_type": "urn:oci:token-type:oci-upst",
     "res_type": "resource_principal",
     "public_key": "-----BEGIN PUBLIC KEY-----...",
   "role": "developer",
   "ttl": 3600
 }
 ```
-*(Note: `subject_token` is optional when `allow_plugin_identity_fallback=true` and a callback can resolve a token.)*
+*(Note: `subject_token` is optional when `allow_plugin_identity_fallback=true` and a callback can resolve a token. `subject_token_audience` is only used for callback-resolved fallback tokens.)*
 
 `requested_token_type` defaults to `urn:oci:token-type:oci-upst`. Supported values:
 - `urn:oci:token-type:oci-upst`

@@ -41,6 +41,7 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 	backend := b.(*backend)
 	storage := &logical.InmemStorage{}
 
+	// Baseline sanity check for exchange path prerequisites; not tied to a named plan ID.
 	t.Run("Missing Config", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
@@ -85,6 +86,7 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 	_, err = backend.HandleRequest(context.Background(), reqRole)
 	require.NoError(t, err)
 
+	// Covers EXC-04 when fallback is enabled but neither Vault identity nor self-mint is available.
 	t.Run("Missing Subject Token Unconfigured Identity", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
@@ -98,9 +100,10 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 		resp, err := backend.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "failed to generate plugin identity token")
+		require.Contains(t, resp.Error().Error(), "failed to mint subject_token via callback")
 	})
 
+	// Baseline role lookup validation; not tied to a named plan ID.
 	t.Run("Missing Role", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
@@ -120,6 +123,7 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 }
 
 func TestPathExchange_WIFEnterprise(t *testing.T) {
+	// Covers the Vault identity-token branch of EXC-04.
 	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
 		System: &mockSystemView{
 			mockIdentity: "mocked-wif-identity-token",
@@ -183,6 +187,7 @@ func TestPathExchange_WIFEnterprise(t *testing.T) {
 }
 
 func TestPathExchange_RequestedTokenTypeValidation(t *testing.T) {
+	// Covers requested-token-type validation adjacent to EXC-02 and EXC-03.
 	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
 		System: &mockSystemView{
 			mockIdentity: "",
@@ -212,6 +217,7 @@ func TestPathExchange_RequestedTokenTypeValidation(t *testing.T) {
 	_, err = backend.HandleRequest(context.Background(), reqConfig)
 	require.NoError(t, err)
 
+	// Covers unsupported requested token type validation.
 	t.Run("Unsupported Requested Token Type", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
@@ -229,6 +235,7 @@ func TestPathExchange_RequestedTokenTypeValidation(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "unsupported requested_token_type")
 	})
 
+	// Covers the RPST-specific res_type requirement for EXC-02.
 	t.Run("RPST Missing Resource Type", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
@@ -248,6 +255,7 @@ func TestPathExchange_RequestedTokenTypeValidation(t *testing.T) {
 }
 
 func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
+	// Covers EXC-08, RCM-01, RCM-02, and RCM-05.
 	b, storage := getTestBackend(t)
 
 	reqConfig := &logical.Request{
@@ -255,13 +263,13 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":              "ocid1.tenancy.oc1..test",
-			"domain_url":                "https://idcs-test.identity.oraclecloud.com",
-			"client_id":                 "test-client-id",
-			"client_secret":             "test-client-secret",
-			"region":                    "us-ashburn-1",
-			"enforce_role_claim_match":  true,
-			"role_claim_key":            "vault_role",
+			"tenancy_ocid":             "ocid1.tenancy.oc1..test",
+			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                "test-client-id",
+			"client_secret":            "test-client-secret",
+			"region":                   "us-ashburn-1",
+			"enforce_role_claim_match": true,
+			"role_claim_key":           "vault_role",
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqConfig)
@@ -278,6 +286,7 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 	_, err = b.HandleRequest(context.Background(), reqRole)
 	require.NoError(t, err)
 
+	// Covers EXC-08.
 	t.Run("Missing Role When Enforced", func(t *testing.T) {
 		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "dev"})
 		req := &logical.Request{
@@ -295,6 +304,7 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "missing 'role'")
 	})
 
+	// Covers the failure mode of EXC-09 when fallback token resolution is unavailable.
 	t.Run("Missing Subject Token When Enforced", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
@@ -308,9 +318,10 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		resp, err := b.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "missing 'subject_token' while enforce_role_claim_match is enabled")
+		require.Contains(t, resp.Error().Error(), "failed to mint subject_token via callback")
 	})
 
+	// Covers RCM-02.
 	t.Run("Claim Mismatch", func(t *testing.T) {
 		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "prod"})
 		req := &logical.Request{
@@ -329,6 +340,7 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "role claim mismatch")
 	})
 
+	// Covers RCM-01.
 	t.Run("Claim Match Proceeds Past Guardrail", func(t *testing.T) {
 		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "dev"})
 		req := &logical.Request{
@@ -348,6 +360,7 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "token exchange failed")
 	})
 
+	// Covers RCM-05.
 	t.Run("Array Claim Match Proceeds Past Guardrail", func(t *testing.T) {
 		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": []string{"prod", "dev"}})
 		req := &logical.Request{
@@ -369,6 +382,7 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 }
 
 func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
+	// Covers EXC-07.
 	b, storage := getTestBackend(t)
 
 	reqConfig := &logical.Request{
@@ -403,6 +417,7 @@ func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
 }
 
 func TestPathExchange_CustomRoleClaimKey(t *testing.T) {
+	// Covers RCM-01 and RCM-02 with a non-default claim key.
 	b, storage := getTestBackend(t)
 
 	reqConfig := &logical.Request{
@@ -410,13 +425,13 @@ func TestPathExchange_CustomRoleClaimKey(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":              "ocid1.tenancy.oc1..test",
-			"domain_url":                "https://idcs-test.identity.oraclecloud.com",
-			"client_id":                 "test-client-id",
-			"client_secret":             "test-client-secret",
-			"region":                    "us-ashburn-1",
-			"enforce_role_claim_match":  true,
-			"role_claim_key":            "oci_target",
+			"tenancy_ocid":             "ocid1.tenancy.oc1..test",
+			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                "test-client-id",
+			"client_secret":            "test-client-secret",
+			"region":                   "us-ashburn-1",
+			"enforce_role_claim_match": true,
+			"role_claim_key":           "oci_target",
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqConfig)
@@ -472,6 +487,7 @@ func TestPathExchange_CustomRoleClaimKey(t *testing.T) {
 }
 
 func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
+	// Covers RCM-07.
 	b, storage := getTestBackend(t)
 
 	reqConfig := &logical.Request{
@@ -507,4 +523,177 @@ func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.IsError())
 	require.Contains(t, resp.Error().Error(), "invalid role")
+}
+
+func TestPathExchange_SubjectTokenCallbackFallback(t *testing.T) {
+	// Covers EXC-04 using a custom registered callback implementation.
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+	storage := &logical.InmemStorage{}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+			"region":        "us-ashburn-1",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	reqRole := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "roles/dev",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"description": "dev role",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqRole)
+	require.NoError(t, err)
+
+	backend.RegisterSubjectTokenCallback(func(ctx context.Context, req *logical.Request, config *federatedConfig) (string, error) {
+		return "callback-subject-token", nil
+	})
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"role": "dev",
+		},
+	}
+
+	resp, err := backend.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.NotContains(t, resp.Error().Error(), "failed to generate plugin identity token")
+	require.Contains(t, resp.Error().Error(), "token exchange failed")
+}
+
+func TestPathExchange_SubjectTokenCallbackError(t *testing.T) {
+	// Covers callback error handling adjacent to EXC-04 and EXC-09.
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+	storage := &logical.InmemStorage{}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+			"region":        "us-ashburn-1",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	backend.RegisterSubjectTokenCallback(func(ctx context.Context, req *logical.Request, config *federatedConfig) (string, error) {
+		return "", logical.ErrPermissionDenied
+	})
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data:      map[string]interface{}{},
+	}
+
+	resp, err := backend.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.Contains(t, resp.Error().Error(), "failed to mint subject_token via callback")
+}
+
+func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
+	testKey := generateTestRSAPrivateKeyPEM(t)
+	// Covers EXC-09 using the default callback self-mint path.
+
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+	storage := &logical.InmemStorage{}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"tenancy_ocid":                        "ocid1.tenancy.oc1..test",
+			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                           "test-client-id",
+			"client_secret":                       "test-client-secret",
+			"region":                              "us-ashburn-1",
+			"subject_token_self_mint_enabled":     true,
+			"subject_token_self_mint_issuer":      "https://vault.example.com",
+			"subject_token_self_mint_private_key": testKey,
+			"enforce_role_claim_match":            true,
+			"role_claim_key":                      "vault_role",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	reqRole := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "roles/dev",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"description": "dev role",
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqRole)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"role": "dev",
+		},
+	}
+
+	resp, err := backend.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.NotContains(t, resp.Error().Error(), "failed to mint subject_token via callback")
+	require.NotContains(t, resp.Error().Error(), "role claim mismatch")
+	require.Contains(t, resp.Error().Error(), "token exchange failed")
 }

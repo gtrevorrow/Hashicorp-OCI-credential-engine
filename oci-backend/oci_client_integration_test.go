@@ -23,6 +23,7 @@ const (
 )
 
 func TestIntegrationExchangeTokenForOCI_UPST(t *testing.T) {
+	// Covers OCI-01 and partially covers EXC-01/EXC-03 at the client integration layer.
 	mockToken := makeMockSecurityJWT(t)
 	var requestBody string
 
@@ -76,6 +77,7 @@ func TestIntegrationExchangeTokenForOCI_UPST(t *testing.T) {
 }
 
 func TestIntegrationExchangeTokenForOCI_RPSTWithPublicKey(t *testing.T) {
+	// Covers OCI-01 for RPST and partially covers EXC-02 and EXC-06.
 	mockToken := makeMockSecurityJWT(t)
 	var requestBody string
 
@@ -121,6 +123,7 @@ func TestIntegrationExchangeTokenForOCI_RPSTWithPublicKey(t *testing.T) {
 }
 
 func TestIntegrationExchangeTokenForOCI_AuthFailure(t *testing.T) {
+	// Covers OCI-03.
 	server := newIntegrationServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":"invalid_client"}`))

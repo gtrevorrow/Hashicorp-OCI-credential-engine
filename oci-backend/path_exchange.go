@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/vault/sdk/framework"
-	"github.com/hashicorp/vault/sdk/helper/pluginutil"
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
@@ -18,7 +17,7 @@ func (b *backend) pathExchange() []*framework.Path {
 			Fields: map[string]*framework.FieldSchema{
 				"subject_token": {
 					Type:        framework.TypeString,
-					Description: "The 3rd party OIDC/OAuth JWT subject token to exchange (Optional in Enterprise)",
+					Description: "The 3rd party OIDC/OAuth JWT subject token to exchange (optional when callback fallback is enabled)",
 					Required:    false,
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name:      "Subject Token",
@@ -108,10 +107,8 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 
 	subjectToken := ""
-	subjectTokenProvided := false
 	if raw, ok := data.GetOk("subject_token"); ok {
 		subjectToken = raw.(string)
-		subjectTokenProvided = subjectToken != ""
 	}
 
 	subjectTokenType := "urn:ietf:params:oauth:token-type:jwt"
@@ -142,29 +139,23 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		publicKey = raw.(string)
 	}
 
-	// Fallback to Vault Identity generation if no subject token provided
+	// Resolve missing subject token through registered callback flow.
 	if subjectToken == "" {
-		if config.EnforceRoleClaimMatch {
-			return logical.ErrorResponse("missing 'subject_token' while enforce_role_claim_match is enabled"), nil
-		}
 		if !configAllowPluginIdentityFallback(config) {
 			return logical.ErrorResponse("missing 'subject_token' and plugin identity fallback is disabled"), nil
 		}
-
-		resp, identityErr := b.System().GenerateIdentityToken(ctx, &pluginutil.IdentityTokenRequest{
-			Audience: "urn:mace:oci:idcs", // Standard OCI identity domain audience
-		})
-
-		if identityErr != nil {
-			return logical.ErrorResponse("failed to generate plugin identity token: %v", identityErr), nil
-		}
-		if resp != nil {
-			subjectToken = string(resp.Token)
-		}
-
-		if subjectToken == "" {
+		callback := b.getSubjectTokenCallback()
+		if callback == nil {
 			return logical.ErrorResponse("missing 'subject_token' and unable to self-mint identity token"), nil
 		}
+		fallbackToken, callbackErr := callback(ctx, req, config)
+		if callbackErr != nil {
+			return logical.ErrorResponse("failed to mint subject_token via callback: %v", callbackErr), nil
+		}
+		if fallbackToken == "" {
+			return logical.ErrorResponse("missing 'subject_token' and callback returned empty token"), nil
+		}
+		subjectToken = fallbackToken
 	}
 
 	// Get role if specified
@@ -186,7 +177,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 	}
 
-	if config.EnforceRoleClaimMatch && subjectTokenProvided {
+	if config.EnforceRoleClaimMatch {
 		if roleName == "" {
 			return logical.ErrorResponse("missing 'role' while enforce_role_claim_match is enabled"), nil
 		}
@@ -324,10 +315,8 @@ This endpoint accepts a JWT subject token from a configured external Identity Pr
 and exchanges it for an OCI session token via the OCI IAM token exchange API.
 
 Subject token behavior:
-  - subject_token is required when:
-    - enforce_role_claim_match=true, or
-    - allow_plugin_identity_fallback=false
-  - subject_token is optional when plugin identity fallback is enabled
+  - subject_token is required when allow_plugin_identity_fallback=false
+  - subject_token is optional when allow_plugin_identity_fallback=true and callback fallback is configured
 
 Optional parameters:
   - subject_token_type: Token type (default: urn:ietf:params:oauth:token-type:jwt)

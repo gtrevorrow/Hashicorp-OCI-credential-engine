@@ -16,6 +16,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | CFG-08 | role_claim_key without enforcement | Set role_claim_key while enforce_role_claim_match=false | Error: role_claim_key requires enforce_role_claim_match=true |
 | CFG-09 | strict_role_name_match enabled | Set strict_role_name_match=true | Success, strict role-name validation enabled |
 | CFG-10 | allow_plugin_identity_fallback disabled | Set allow_plugin_identity_fallback=false | Success, subject_token becomes required unless changed |
+| CFG-11 | self-mint enabled without private key | Set subject_token_self_mint_enabled=true, issuer set, omit private key | Success, plugin auto-generates and stores RSA signing key |
 
 ## 2. Roles Path Tests
 
@@ -39,21 +40,24 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-01 | Exchange for UPST (default) | subject_token, subject_token_type, role | UPST token returned |
 | EXC-02 | Exchange for RPST | + requested_token_type=oci-rpst, res_type | RPST token returned |
 | EXC-03 | Exchange with explicit UPST type | requested_token_type=oci-upst | UPST token returned |
-| EXC-04 | Exchange without subject_token (fallback enabled) | role only, omit subject_token, enforce=false, allow_plugin_identity_fallback=true | Attempts plugin identity token fallback |
+| EXC-04 | Exchange without subject_token (fallback enabled) | role only, omit subject_token, enforce=false, allow_plugin_identity_fallback=true | Uses callback fallback (Vault identity token first; self-mint if configured) |
 | EXC-05 | Exchange with TTL override | ttl < role.default_ttl | Custom TTL applied |
 | EXC-06 | Exchange with public_key provided | public_key in request | No private_key in response |
 | EXC-07 | Exchange without subject_token (fallback disabled) | omit subject_token, allow_plugin_identity_fallback=false | Error: missing subject_token and fallback disabled |
-| EXC-08 | Exchange without subject_token (enforcement enabled) | omit subject_token, enforce_role_claim_match=true | Error: missing subject_token while enforcement enabled |
+| EXC-08 | Exchange without subject_token (enforcement enabled, no role) | omit subject_token, enforce_role_claim_match=true, no role | Error: missing role while enforcement enabled |
+| EXC-09 | Exchange without subject_token (enforcement enabled, role set) | omit subject_token, enforce_role_claim_match=true, role set | Uses fallback token and enforces role claim match |
 
 ## 4. Exchange Path - Token Content Validation
+
+These cases are primarily OCI-behavior or end-to-end validation scenarios unless explicitly covered by local claim-parsing tests.
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | EXC-10 | Valid JWT exchange | Valid subject_token from external IdP | Valid UPST returned with lease |
-| EXC-11 | Expired JWT | subject_token expired | Error: token expired |
-| EXC-12 | Invalid JWT signature | Tampered subject_token | Error: invalid signature |
+| EXC-11 | Expired JWT | subject_token expired | Error from OCI IAM / trust evaluation |
+| EXC-12 | Invalid JWT signature | Tampered subject_token | Error from OCI IAM / trust evaluation |
 | EXC-13 | Wrong audience in JWT | JWT aud doesn't match OCI client | Error from OCI IAM |
-| EXC-14 | Missing required claims | JWT missing sub, iss, etc. | Error: missing claims |
+| EXC-14 | Missing required claims | JWT missing claims required by OCI trust | Error from OCI IAM / trust evaluation |
 
 ## 5. Role Claim Matching (Security)
 
@@ -69,15 +73,25 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 
 ## 6. Lease & TTL Management
 
+Current automated coverage is limited to TTL selection and clamping during exchange response creation. Lease renewal/revocation lifecycle tests are not yet implemented.
+
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | TTL-01 | Default TTL applied | No TTL specified | Uses role.default_ttl |
 | TTL-02 | Request TTL clamped to max | Request TTL > role.max_ttl | Clamped to max |
-| TTL-03 | Lease renewal | Renew valid lease | Extended lease |
-| TTL-04 | Lease revocation | Revoke lease | Token invalidated in Vault (local only) |
-| TTL-05 | Lease expiration | Wait for TTL | Lease expires, token no longer valid |
+| TTL-03 | Lease renewal | Renew valid lease | Deferred: handler behavior not yet covered by automated tests |
+| TTL-04 | Lease revocation | Revoke lease | Deferred: local lease cleanup behavior not yet covered by automated tests |
+| TTL-05 | Lease expiration | Wait for TTL | Deferred: time-based expiry behavior not yet covered by automated tests |
 
-## 7. OCI API Integration (Mock/Real)
+## 7. JWKS Path
+
+| ID | Test Case | Input | Expected Result |
+|---|---|---|---|
+| JWK-01 | Read JWKS without config | `vault read oci/jwks` | Error: backend not configured |
+| JWK-02 | Read JWKS when self-mint disabled | self-mint disabled | Error: subject_token_self_mint_enabled is false |
+| JWK-03 | Read JWKS when self-mint enabled | self-mint enabled (auto key or supplied key) | Returns RFC-compatible RSA JWKS with `kid`, `n`, `e` |
+
+## 8. OCI API Integration (Mock/Real)
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
@@ -86,13 +100,40 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | OCI-03 | Invalid OCI client credentials | Wrong client_secret | Error: authentication failed |
 | OCI-04 | Different OCI regions | region="eu-frankfurt-1" | Correct regional endpoint used |
 
-## 8. End-to-End Workflows
+## 9. End-to-End Workflows
 
 | ID | Test Case | Steps |
 |---|---|---|
 | E2E-01 | Full Vault-Issued Token Flow | 1. Configure Vault OIDC key<br>2. Create token role with vault_role claim<br>3. Mint identity token<br>4. Exchange via plugin<br>5. Verify OCI UPST received |
 | E2E-02 | External IdP to OCI | 1. Configure plugin with OCI domain<br>2. Get JWT from Auth0/Okta<br>3. Exchange via plugin<br>4. Use UPST with OCI CLI |
 | E2E-03 | Multi-tenant setup | 1. Enable multiple plugin mounts (oci-tenant1, oci-tenant2)<br>2. Different configs per mount<br>3. Tokens isolated per tenant |
+
+## Automated Coverage Snapshot
+
+Currently covered by automated tests:
+- `CFG-01`, `CFG-02`, `CFG-03`, `CFG-05`, `CFG-07`, `CFG-08`, `CFG-09`, `CFG-10`, `CFG-11`
+- `ROL-01`, `ROL-02`, `ROL-03`, `ROL-04`, `ROL-06`, `ROL-08`, `ROL-10`
+- `EXC-04`, `EXC-07`, `EXC-08`, `EXC-09`
+- Requested token-type validation for unsupported values and RPST missing `res_type`
+- `RCM-01`, `RCM-02`, `RCM-03`, `RCM-05`, `RCM-06`, `RCM-07`
+- `TTL-01`, `TTL-02`
+- `JWK-01`, `JWK-02`, `JWK-03`
+- `OCI-01`, `OCI-03`
+
+Covered partially or indirectly:
+- `EXC-01`, `EXC-02`, `EXC-03`, `EXC-06`
+  These are covered at the OCI client integration layer rather than as full `path_exchange` success-path tests.
+- `RCM-04`
+  Enforcement-disabled behavior is implicit in exchange tests that proceed without guardrail checks, but there is no named dedicated test case.
+
+Not yet covered by automated tests:
+- `CFG-04`, `CFG-06`
+- `ROL-05`, `ROL-07`, `ROL-09`
+- `EXC-05`
+- `EXC-10`, `EXC-11`, `EXC-12`, `EXC-13`, `EXC-14`
+- `TTL-03`, `TTL-04`, `TTL-05`
+- `OCI-02`, `OCI-04`
+- `E2E-01`, `E2E-02`, `E2E-03`
 
 ## Priority Matrix
 
@@ -111,7 +152,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 ### Advanced Features (Nice to Have)
 - **E2E-02** - External IdP integration
 - **OCI-04** - Multi-region support
-- **EXC-04** - Plugin identity fallback flow
+- **EXC-04** - Callback fallback flow
 - **E2E-03** - Multi-tenant isolation
 
 ## Running Tests
@@ -143,10 +184,13 @@ vault read oci/roles/dev
 
 ### Automated Testing
 
-Current coverage includes unit tests in `oci-backend/*_test.go` for config, roles, claim enforcement, and exchange validation paths.
+Current coverage includes:
+- Unit tests in `oci-backend/*_test.go` for config, roles, claim enforcement, callback fallback, self-mint, and JWKS behavior
+- Integration tests in [oci_client_integration_test.go](/Users/gordon/Documents/projects/Hashicorp-OCI-credential-engine/oci-backend/oci_client_integration_test.go) for mock OCI token exchange behavior
 
 Future additions:
-- Integration tests with mock OCI IAM
+- Broader `path_exchange` success-path integration tests
+- Lease lifecycle tests
 - End-to-end tests with test OCI tenancy
 
 ## Notes
@@ -154,5 +198,5 @@ Future additions:
 - OCI IAM tokens cannot be actively revoked server-side; Vault lease revocation only drops local tracking
 - `client_secret` is write-only and never returned on read
 - `enforce_role_claim_match` can use default `role_claim_key` (`vault_role`) unless overridden
-- If `enforce_role_claim_match=true`, `subject_token` is required and fallback is not used
+- If `enforce_role_claim_match=true`, fallback can still be used; `role` must be provided and must match configured claim key in the effective subject token
 - If `allow_plugin_identity_fallback=false`, `subject_token` is required

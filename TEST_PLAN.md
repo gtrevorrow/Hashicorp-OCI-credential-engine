@@ -45,7 +45,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-06 | Exchange with public_key provided | public_key in request | No private_key in response |
 | EXC-07 | Exchange without subject_token (fallback disabled) | omit subject_token, allow_plugin_identity_fallback=false | Error: missing subject_token and fallback disabled |
 | EXC-08 | Exchange without subject_token (enforcement enabled, no role) | omit subject_token, enforce_role_claim_match=true, no role | Error: missing role while enforcement enabled |
-| EXC-09 | Exchange without subject_token (enforcement enabled, role set) | omit subject_token, enforce_role_claim_match=true, role set | Uses fallback token and enforces role claim match |
+| EXC-09 | Exchange without subject_token (enforcement enabled, role set) | omit subject_token, enforce_role_claim_match=true, role set | Uses fallback token; role-claim enforcement is skipped because no caller-provided JWT was supplied |
 
 ## 4. Exchange Path - Token Content Validation
 
@@ -91,7 +91,15 @@ Current automated coverage is limited to TTL selection and clamping during excha
 | JWK-02 | Read JWKS when self-mint disabled | self-mint disabled | Error: subject_token_self_mint_enabled is false |
 | JWK-03 | Read JWKS when self-mint enabled | self-mint enabled (auto key or supplied key) | Returns RFC-compatible RSA JWKS with `kid`, `n`, `e` |
 
-## 8. OCI API Integration (Mock/Real)
+## 8. Self-Mint Claim Contract
+
+| ID | Test Case | Input | Expected Result |
+|---|---|---|---|
+| CLM-01 | Self-mint uses Vault-derived subject | self-mint fallback with `EntityID` present | `sub` is derived from Vault identity, not request `role` |
+| CLM-02 | Self-mint includes entity and alias claims | self-mint fallback with entity/alias metadata available | JWT contains stable Vault-derived identity claims |
+| CLM-03 | Self-mint excludes caller role selector | request includes `role` during self-mint fallback | JWT does not contain `vault_role` or request `role` claim |
+
+## 9. OCI API Integration (Mock/Real)
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
@@ -100,7 +108,7 @@ Current automated coverage is limited to TTL selection and clamping during excha
 | OCI-03 | Invalid OCI client credentials | Wrong client_secret | Error: authentication failed |
 | OCI-04 | Different OCI regions | region="eu-frankfurt-1" | Correct regional endpoint used |
 
-## 9. End-to-End Workflows
+## 10. End-to-End Workflows
 
 | ID | Test Case | Steps |
 |---|---|---|
@@ -117,6 +125,7 @@ Currently covered by automated tests:
 - Requested token-type validation for unsupported values and RPST missing `res_type`
 - `RCM-01`, `RCM-02`, `RCM-03`, `RCM-05`, `RCM-06`, `RCM-07`
 - `TTL-01`, `TTL-02`
+- `CLM-01`, `CLM-02`, `CLM-03`
 - `JWK-01`, `JWK-02`, `JWK-03`
 - `OCI-01`, `OCI-03`
 
@@ -198,5 +207,5 @@ Future additions:
 - OCI IAM tokens cannot be actively revoked server-side; Vault lease revocation only drops local tracking
 - `client_secret` is write-only and never returned on read
 - `enforce_role_claim_match` can use default `role_claim_key` (`vault_role`) unless overridden
-- If `enforce_role_claim_match=true`, fallback can still be used; `role` must be provided and must match configured claim key in the effective subject token
+- If `enforce_role_claim_match=true`, it applies to caller-provided `subject_token` values; callback-resolved fallback tokens are evaluated under the callback/self-mint trust model instead
 - If `allow_plugin_identity_fallback=false`, `subject_token` is required

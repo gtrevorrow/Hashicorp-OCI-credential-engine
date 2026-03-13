@@ -80,7 +80,7 @@ func (b *backend) pathConfig() []*framework.Path {
 				},
 				"enforce_role_claim_match": {
 					Type:        framework.TypeBool,
-					Description: "When true, require effective subject_token claim (provided or callback-resolved) to match request role",
+					Description: "When true, require caller-provided subject_token claim to match request role",
 					Default:     false,
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name: "Enforce Role Claim Match",
@@ -383,7 +383,7 @@ You must configure:
 Optional:
   - default_ttl: Default session token TTL (default: 3600s)
   - max_ttl: Maximum session token TTL (default: 86400s)
-  - enforce_role_claim_match: Require effective subject_token claim to match request role (default: false)
+  - enforce_role_claim_match: Require caller-provided subject_token claim to match request role (default: false)
   - role_claim_key: Claim key used for role matching (default: vault_role)
   - allow_plugin_identity_fallback: Allow callback fallback when subject_token is omitted (default: true)
   - strict_role_name_match: Require role names to match [A-Za-z0-9._:-]+ (default: false)

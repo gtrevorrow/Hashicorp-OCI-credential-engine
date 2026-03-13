@@ -18,9 +18,27 @@ This document is written as implementation context for LLM-assisted development.
     - tries Vault `GenerateIdentityToken` first
     - optional plugin self-mint fallback (RSA-signed JWT) when configured
   - plugin `role` for local TTL/policy behavior only
-- In self-mint fallback mode, plugin can inject configured role claim into fallback JWT when request includes `role`.
+- In self-mint fallback mode, plugin emits Vault-derived identity claims and does not copy request `role` into trusted JWT claims.
 - No local JWT signature validation is performed by this plugin.
 - `oci/jwks` endpoint exposes JWKS derived from self-mint signing key for OCI trust bootstrap.
+
+Current self-mint claim set includes:
+- standard JWT claims: `iss`, `sub`, `aud`, `iat`, `exp`, `jti`
+- Vault request/identity claims when available:
+  - `vault_entity_id`
+  - `vault_entity_name`
+  - `vault_namespace_id`
+  - `vault_entity_metadata`
+  - `vault_display_name`
+  - `vault_mount_accessor`
+  - `vault_mount_type`
+  - `vault_client_token_accessor`
+  - `vault_alias_name`
+  - `vault_alias_mount_accessor`
+  - `vault_alias_mount_type`
+  - `vault_alias_metadata`
+  - `vault_alias_custom_metadata`
+  - `vault_group_names`
 
 ## Target End-to-End Flow
 1. Workload authenticates to Vault (Kubernetes/JWT/AppRole/etc.).
@@ -116,7 +134,7 @@ Then attach OCI IAM policies to that Service User.
   - `enforce_role_claim_match` (bool)
   - `role_claim_key` (default `vault_role` or `oci_target`)
 - In `path_exchange.go`:
-  - if enabled, compare claim vs request `role` using the effective subject token (caller-provided or fallback-generated).
+  - if enabled, compare claim vs request `role` only for caller-provided subject tokens.
   - fail with clear error on mismatch.
 
 3. Callback and JWKS operational controls

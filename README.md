@@ -133,7 +133,7 @@ vault write oci/config \
 - `region`: The OCI region (e.g., `us-ashburn-1`, `eu-frankfurt-1`)
 - `default_ttl`: Default TTL for OCI session tokens in seconds (default: 3600)
 - `max_ttl`: Maximum TTL for OCI session tokens in seconds (default: 86400)
-- `enforce_role_claim_match`: When true, requires the effective subject token claim (provided or callback-resolved) to match the requested plugin role (default: `false`)
+- `enforce_role_claim_match`: When true, requires a caller-provided `subject_token` claim to match the requested plugin role (default: `false`)
 - `role_claim_key`: JWT claim key used for role matching when enforcement is enabled (default: `vault_role`)
 - `allow_plugin_identity_fallback`: When true, plugin may resolve subject token via callback if caller omits `subject_token` (default: `true`)
 - `strict_role_name_match`: When true, requires role names to match `[A-Za-z0-9._:-]+` (default: `false`)
@@ -283,7 +283,40 @@ vault write oci/exchange \
 
 See [DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md](DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md) for full architecture and implementation details.
 
-*Important: No-`subject_token` flow depends on callback fallback being enabled. With default callback, Vault identity-token generation is attempted first; if unavailable, self-mint is used only when explicitly configured.*
+*Important: No-`subject_token` flow depends on callback fallback being enabled. With default callback, Vault identity-token generation is attempted first; if unavailable, self-mint is used only when explicitly configured. Self-minted fallback tokens use Vault-derived identity claims, not the request `role`.*
+
+### Default Self-Mint Claim Set
+
+When the default callback falls back to in-plugin self-minting, the emitted JWT uses a fixed, opinionated claim set derived from trusted Vault runtime context.
+
+Standard JWT claims:
+- `iss`
+- `sub`
+- `aud`
+- `iat`
+- `exp`
+- `jti`
+
+Vault-derived claims included when available:
+- `vault_entity_id`
+- `vault_entity_name`
+- `vault_namespace_id`
+- `vault_entity_metadata`
+- `vault_display_name`
+- `vault_mount_accessor`
+- `vault_mount_type`
+- `vault_client_token_accessor`
+- `vault_alias_name`
+- `vault_alias_mount_accessor`
+- `vault_alias_mount_type`
+- `vault_alias_metadata`
+- `vault_alias_custom_metadata`
+- `vault_group_names`
+
+Design notes:
+- The request `role` is not copied into the self-minted JWT.
+- `aud` is currently controlled by plugin config (`subject_token_self_mint_audience`), not by request input.
+- OCI trust rules should use the Vault-derived claims above rather than caller-supplied parameters.
 
 ### Using with OCI CLI
 
@@ -427,11 +460,12 @@ Use Vault policy boundaries as the primary control plane:
 1. Grant `update` on `oci/exchange` only to trusted workloads.
 2. Restrict role usage with path-based ACLs so each workload can only call specific role paths or namespaces.
 3. Keep `allow_plugin_identity_fallback=false` by default for general clients, and enable it only for tightly scoped policies.
-4. Enable `enforce_role_claim_match=true` with a dedicated claim key (for example `vault_role`) so fallback or caller-provided tokens cannot request arbitrary plugin roles.
-5. Enable `strict_role_name_match=true` to prevent malformed role values.
-6. Limit token lifetime with conservative `default_ttl`, `max_ttl`, and per-role TTL caps.
-7. Protect `oci/config` write access so only operators can rotate/replace self-mint settings and keys.
-8. Expose `oci/jwks` as read-only to systems that need trust bootstrap; do not grant broader plugin capabilities with it.
+4. Enable `enforce_role_claim_match=true` with a dedicated claim key (for example `vault_role`) when callers provide their own JWTs and you want the plugin role to be consistent with that caller-supplied token.
+5. Treat self-mint fallback as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the request `role`.
+6. Enable `strict_role_name_match=true` to prevent malformed role values.
+7. Limit token lifetime with conservative `default_ttl`, `max_ttl`, and per-role TTL caps.
+8. Protect `oci/config` write access so only operators can rotate/replace self-mint settings and keys.
+9. Expose `oci/jwks` as read-only to systems that need trust bootstrap; do not grant broader plugin capabilities with it.
 
 ## Development
 

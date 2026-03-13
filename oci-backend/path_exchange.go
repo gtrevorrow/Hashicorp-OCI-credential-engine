@@ -107,8 +107,10 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 
 	subjectToken := ""
+	subjectTokenProvided := false
 	if raw, ok := data.GetOk("subject_token"); ok {
 		subjectToken = raw.(string)
+		subjectTokenProvided = subjectToken != ""
 	}
 
 	subjectTokenType := "urn:ietf:params:oauth:token-type:jwt"
@@ -177,7 +179,10 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 	}
 
-	if config.EnforceRoleClaimMatch {
+	// Role-claim enforcement is only meaningful for caller-supplied subject
+	// tokens. Callback-resolved tokens are treated as plugin-trusted inputs and
+	// use Vault-derived claims instead of caller-selected role values.
+	if config.EnforceRoleClaimMatch && subjectTokenProvided {
 		if roleName == "" {
 			return logical.ErrorResponse("missing 'role' while enforce_role_claim_match is enabled"), nil
 		}

@@ -2,6 +2,9 @@ package ocibackend
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -696,4 +699,114 @@ func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
 	require.NotContains(t, resp.Error().Error(), "failed to mint subject_token via callback")
 	require.NotContains(t, resp.Error().Error(), "role claim mismatch")
 	require.Contains(t, resp.Error().Error(), "token exchange failed")
+}
+
+func TestDefaultCallbackSelfMintUsesTrustedVaultIdentityClaims(t *testing.T) {
+	testKey := generateTestRSAPrivateKeyPEM(t)
+
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+				EntityVal: &logical.Entity{
+					ID:          "entity-123",
+					Name:        "deployer",
+					NamespaceID: "root",
+					Metadata: map[string]string{
+						"team": "platform",
+					},
+					Aliases: []*logical.Alias{
+						{
+							Name:          "sa:default:app",
+							MountAccessor: "auth_kubernetes_123",
+							MountType:     "kubernetes",
+							Metadata: map[string]string{
+								"service_account_name": "app",
+							},
+							CustomMetadata: map[string]string{
+								"cluster": "dev",
+							},
+						},
+					},
+				},
+				GroupsVal: []*logical.Group{
+					{Name: "deployers"},
+					{Name: "platform"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+
+	config := &federatedConfig{
+		SubjectTokenSelfMintEnabled:    true,
+		SubjectTokenSelfMintIssuer:     "https://vault.example.com",
+		SubjectTokenSelfMintAudience:   "urn:mace:oci:idcs",
+		SubjectTokenSelfMintTTLSeconds: 600,
+		SubjectTokenSelfMintPrivateKey: testKey,
+	}
+
+	req := &logical.Request{
+		EntityID:            "entity-123",
+		DisplayName:         "kubernetes-app",
+		MountAccessor:       "auth_kubernetes_123",
+		MountType:           "kubernetes",
+		ClientTokenAccessor: "hmac-token-accessor",
+		Data: map[string]interface{}{
+			"role": "dev",
+		},
+	}
+
+	token, err := backend.defaultSubjectTokenCallback(context.Background(), req, config)
+	require.NoError(t, err)
+
+	claims := decodeJWTClaims(t, token)
+	require.Equal(t, "vault:entity:entity-123", claims["sub"])
+	require.Equal(t, "entity-123", claims["vault_entity_id"])
+	require.Equal(t, "deployer", claims["vault_entity_name"])
+	require.Equal(t, "root", claims["vault_namespace_id"])
+	require.Equal(t, "kubernetes-app", claims["vault_display_name"])
+	require.Equal(t, "auth_kubernetes_123", claims["vault_mount_accessor"])
+	require.Equal(t, "kubernetes", claims["vault_mount_type"])
+	require.Equal(t, "sa:default:app", claims["vault_alias_name"])
+	require.Equal(t, "auth_kubernetes_123", claims["vault_alias_mount_accessor"])
+	require.Equal(t, "kubernetes", claims["vault_alias_mount_type"])
+	require.Equal(t, "hmac-token-accessor", claims["vault_client_token_accessor"])
+	require.NotContains(t, claims, "vault_role")
+	require.NotContains(t, claims, "role")
+
+	entityMetadata, ok := claims["vault_entity_metadata"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "platform", entityMetadata["team"])
+
+	aliasMetadata, ok := claims["vault_alias_metadata"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "app", aliasMetadata["service_account_name"])
+
+	aliasCustomMetadata, ok := claims["vault_alias_custom_metadata"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "dev", aliasCustomMetadata["cluster"])
+
+	groupNames, ok := claims["vault_group_names"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, groupNames, 2)
+	require.Equal(t, "deployers", groupNames[0])
+	require.Equal(t, "platform", groupNames[1])
+}
+
+func decodeJWTClaims(t *testing.T, token string) map[string]interface{} {
+	t.Helper()
+
+	parts := strings.Split(token, ".")
+	require.Len(t, parts, 3)
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+
+	var claims map[string]interface{}
+	require.NoError(t, json.Unmarshal(payload, &claims))
+	return claims
 }

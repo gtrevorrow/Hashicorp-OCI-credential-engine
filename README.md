@@ -103,6 +103,26 @@ vault write sys/plugins/catalog/secrets/oci \
 vault secrets enable -path=oci oci
 ```
 
+### Self-Mint JWKS Publication Workflow
+
+If you enable built-in self-minting, the plugin can expose the signing public key as JWKS at `oci/jwks`. That Vault path is intended as an operator export point, not as the final OCI discovery URL.
+
+Recommended workflow:
+
+1. Configure self-mint on the plugin.
+2. Read the JWKS from Vault:
+
+```bash
+vault read -format=json oci/jwks
+```
+
+3. Publish that JWKS document to an HTTPS location OCI Identity Domains can reach, for example:
+   - GitHub Pages
+   - OCI Object Storage static website hosting
+   - another normal HTTPS-hosted file
+4. Configure OCI token exchange trust to use that published JWKS URL.
+5. If the self-mint signing key changes, publish the updated JWKS before relying on newly minted tokens.
+
 ## Configuration
 
 ### OCI Federated Identity Setup
@@ -144,6 +164,14 @@ vault write oci/config \
 - `subject_token_allowed_audiences`: Optional allowlist for request-level fallback audience override via `subject_token_audience`
 - `subject_token_self_mint_ttl_seconds`: TTL for self-minted token in seconds (default: `600`)
 - `subject_token_self_mint_private_key`: Optional PEM RSA private key. If omitted while self-mint is enabled, the plugin generates one and stores it in Vault plugin storage
+
+If `subject_token_self_mint_enabled=true`, also plan how OCI will discover the public signing key:
+
+1. Read the plugin JWKS from `oci/jwks`
+2. Publish that JWKS to an HTTPS location reachable by OCI
+3. Point OCI token exchange trust configuration at that published JWKS URL
+
+The plugin keeps the private signing key in Vault plugin storage. The published JWKS contains only the public key material.
 
 ### Roles
 
@@ -502,21 +530,12 @@ Please refer to the [Contributing Guide](CONTRIBUTING.md#testing-locally-with-va
 
 ## TODO / Future Enhancements
 
-### Current Scope (OCI Identity Domain is the JWT validation authority)
+The maintained project backlog lives in [TODO.md](/Users/gordon/Documents/projects/Hashicorp-OCI-credential-engine/TODO.md).
 
-- [x] Complete OCI IAM token exchange API integration
-- [x] Callback-based fallback when `subject_token` is omitted (`GenerateIdentityToken` first, optional self-mint)
-- [ ] Add metrics and telemetry (token exchange rate, latency)
-- [ ] Build integration tests with OCI sandbox
-
-### Optional Future Mode (Plugin-issued subject tokens, WIF-style)
-
-- [ ] Add optional mode where the plugin issues subject tokens trusted by OCI Identity Domains
-- [x] Publish JWKS endpoint for OCI trust configuration (single active RSA key)
-- [ ] Add JWKS key rotation/multi-key publication strategy
-- [ ] Add support for multiple issuers/IdPs per backend in plugin-issued token mode
-- [ ] Implement claims mapping/policy translation for plugin-issued tokens
-- [ ] Evaluate OCI Cloud Shell integration for plugin-issued token workflows
+Current highlights:
+- metrics and telemetry
+- OCI sandbox end-to-end integration tests
+- self-mint key rotation and multi-key JWKS publication
 
 ## References
 

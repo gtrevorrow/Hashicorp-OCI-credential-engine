@@ -116,7 +116,7 @@ Current automated coverage is limited to TTL selection and clamping during excha
 
 | ID | Test Case | Steps |
 |---|---|---|
-| E2E-01 | Full Vault-Issued Token Flow | 1. Configure Vault OIDC key<br>2. Create token role with vault_role claim<br>3. Mint identity token<br>4. Exchange via plugin<br>5. Verify OCI UPST received |
+| E2E-01 | Full Vault-Issued Token Flow | 1. Configure Vault identity token or self-mint fallback<br>2. Configure OCI trust against Vault-derived claims<br>3. Invoke exchange via plugin without caller-supplied subject_token<br>4. Verify OCI UPST received |
 | E2E-02 | External IdP to OCI | 1. Configure plugin with OCI domain<br>2. Get JWT from Auth0/Okta<br>3. Exchange via plugin<br>4. Use UPST with OCI CLI |
 | E2E-03 | Multi-tenant setup | 1. Enable multiple plugin mounts (oci-tenant1, oci-tenant2)<br>2. Different configs per mount<br>3. Tokens isolated per tenant |
 

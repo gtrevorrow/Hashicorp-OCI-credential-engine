@@ -1,0 +1,21 @@
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Plugin
+    participant S as Vault Storage
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` with caller JWT and `role`
+    V->>S: Read backend config and requested plugin role
+    S-->>V: `enforce_role_claim_match`, `role_claim_key`, role policy
+    V->>V: Parse caller JWT payload only
+    V->>V: Compare claim value to requested `role`
+
+    alt Claim matches role
+        V->>O: POST OAuth token exchange
+        O-->>V: OCI session token
+        V-->>C: Success response
+    else Claim missing or mismatched
+        V-->>C: Error response before OCI call
+    end
+

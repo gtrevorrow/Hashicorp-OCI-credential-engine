@@ -7,18 +7,18 @@ This document is written as implementation context for LLM-assisted development.
 
 ## Design Decision
 - Keep this plugin focused on token exchange.
-- Keep plugin-issued JWT behavior as optional fallback mode, not the primary design.
+- Treat caller-supplied subject tokens and plugin-issued subject tokens as two supported operating modes.
 - Use Vault Identity Tokens (`identity/oidc/token/<role>`) as the subject token source when role/claim-based mapping is needed.
 - Let OCI Identity Domains remain the JWT validation authority (issuer trust, JWKS, claim evaluation).
 
 ## Current State (in this repo)
 - `oci/exchange` supports:
   - caller-supplied `subject_token`
-  - callback fallback when `subject_token` is omitted:
+  - plugin-issued subject-token mode when `subject_token` is omitted:
     - tries Vault `GenerateIdentityToken` first
-    - optional plugin self-mint fallback (RSA-signed JWT) when configured
+    - plugin self-mint (RSA-signed JWT) only if needed and configured
   - plugin `role` for local TTL/policy behavior only
-- In self-mint fallback mode, plugin emits Vault-derived identity claims and does not copy request `role` into trusted JWT claims.
+- In plugin self-mint mode, plugin emits Vault-derived identity claims and does not copy request `role` into trusted JWT claims.
 - No local JWT signature validation is performed by this plugin.
 - `oci/jwks` endpoint exposes JWKS derived from self-mint signing key for OCI trust bootstrap.
 
@@ -41,8 +41,8 @@ Current self-mint claim set includes:
   - `vault_group_names`
 
 Audience behavior:
-- self-mint and plugin identity fallback default to configured `subject_token_self_mint_audience`
-- callers may request an alternate fallback audience only through `subject_token_audience`
+- self-mint and plugin-issued identity-token mode default to configured `subject_token_self_mint_audience`
+- callers may request an alternate plugin-issued audience only through `subject_token_audience`
 - request-level audience override is accepted only when the value is present in `subject_token_allowed_audiences`
 
 ## Target End-to-End Flow
@@ -104,7 +104,7 @@ Then attach OCI IAM policies to that Service User.
 - Optional guardrail: enforce that plugin request `role` is consistent with a claim value in the supplied JWT (string match only).
   - This is a consistency control, not signature validation.
   - If implemented, parse JWT payload only and compare claim to requested role.
-- Optional self-mint fallback controls:
+- Optional plugin-issued/self-mint controls:
   - auto-generate RSA signing key if missing
   - expose public key as JWKS for OCI trust
 

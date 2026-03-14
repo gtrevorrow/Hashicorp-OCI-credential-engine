@@ -23,10 +23,8 @@ These items are intentionally deferred. They are not part of the current preferr
 
 ### Optional Future Mode: Plugin-Issued Subject Tokens
 
-- [ ] Add a more complete plugin-issued subject-token mode trusted by OCI Identity Domains
 - [ ] Add support for multiple issuers or IdPs per backend in plugin-issued token mode
 - [ ] Implement claims mapping or policy translation for plugin-issued token mode
-- [ ] Evaluate OCI Cloud Shell integration for plugin-issued token workflows
 
 ## Explicit Non-Goals For Now
 
@@ -37,6 +35,6 @@ These items are intentionally deferred. They are not part of the current preferr
 ## Current Design Notes
 
 - Primary integration path: caller supplies `subject_token`
-- Optional convenience path: built-in Vault-native fallback (`GenerateIdentityToken` first, then optional self-mint)
+- Optional plugin-issued subject-token mode: `GenerateIdentityToken` first, then self-mint only if needed and configured
 - OCI remains the authority for token validation, token exchange trust, and final authorization mapping
 - For self-mint JWKS discovery, the plugin is the source of truth and operators publish the JWKS to an OCI-reachable HTTPS location

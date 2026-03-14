@@ -1,0 +1,14 @@
+sequenceDiagram
+    autonumber
+    actor A as Operator
+    participant V as Vault OCI Plugin
+    participant P as Published HTTPS JWKS Location
+    participant O as OCI Identity Domain
+
+    A->>V: `vault read -format=json oci/jwks`
+    V-->>A: JWKS document for active self-mint signing key
+    A->>P: Publish JWKS JSON to HTTPS location
+    A->>O: Configure token exchange trust with JWKS URL
+    O->>P: Fetch JWKS during trust evaluation / key discovery
+    P-->>O: Public keys only
+

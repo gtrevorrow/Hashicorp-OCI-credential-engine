@@ -17,7 +17,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | CFG-09 | strict_role_name_match enabled | Set strict_role_name_match=true | Success, strict role-name validation enabled |
 | CFG-10 | allow_plugin_identity_fallback disabled | Set allow_plugin_identity_fallback=false | Success, subject_token becomes required unless changed |
 | CFG-11 | self-mint enabled without private key | Set subject_token_self_mint_enabled=true, issuer set, omit private key | Success, plugin auto-generates and stores RSA signing key |
-| CFG-12 | allowlisted fallback audiences configured | Set subject_token_allowed_audiences | Success, allowed fallback audiences persisted |
+| CFG-12 | allowlisted plugin-issued audiences configured | Set subject_token_allowed_audiences | Success, allowed plugin-issued audiences persisted |
 
 ## 2. Roles Path Tests
 
@@ -41,15 +41,15 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-01 | Exchange for UPST (default) | subject_token, subject_token_type, role | UPST token returned |
 | EXC-02 | Exchange for RPST | + requested_token_type=oci-rpst, res_type | RPST token returned |
 | EXC-03 | Exchange with explicit UPST type | requested_token_type=oci-upst | UPST token returned |
-| EXC-04 | Exchange without subject_token (fallback enabled) | role only, omit subject_token, enforce=false, allow_plugin_identity_fallback=true | Uses callback fallback (Vault identity token first; self-mint if configured) |
+| EXC-04 | Exchange without subject_token (plugin-issued mode enabled) | role only, omit subject_token, enforce=false, allow_plugin_identity_fallback=true | Uses plugin-issued subject-token mode (Vault identity token first; self-mint if configured) |
 | EXC-05 | Exchange with TTL override | ttl < role.default_ttl | Custom TTL applied |
 | EXC-06 | Exchange with public_key provided | public_key in request | No private_key in response |
-| EXC-07 | Exchange without subject_token (fallback disabled) | omit subject_token, allow_plugin_identity_fallback=false | Error: missing subject_token and fallback disabled |
+| EXC-07 | Exchange without subject_token (plugin-issued mode disabled) | omit subject_token, allow_plugin_identity_fallback=false | Error: missing subject_token and plugin-issued mode disabled |
 | EXC-08 | Exchange without subject_token (enforcement enabled, no role) | omit subject_token, enforce_role_claim_match=true, no role | Error: missing role while enforcement enabled |
-| EXC-09 | Exchange without subject_token (enforcement enabled, role set) | omit subject_token, enforce_role_claim_match=true, role set | Uses fallback token; role-claim enforcement is skipped because no caller-provided JWT was supplied |
-| EXC-10 | Exchange without subject_token (allowlisted audience override) | omit subject_token, set subject_token_audience to allowed value | Fallback token uses requested audience |
+| EXC-09 | Exchange without subject_token (enforcement enabled, role set) | omit subject_token, enforce_role_claim_match=true, role set | Uses plugin-issued token; role-claim enforcement is skipped because no caller-provided JWT was supplied |
+| EXC-10 | Exchange without subject_token (allowlisted audience override) | omit subject_token, set subject_token_audience to allowed value | Plugin-issued token uses requested audience |
 | EXC-11 | Exchange with disallowed audience override | omit subject_token, set subject_token_audience to unlisted value | Error: audience override not allowed |
-| EXC-12 | Exchange with subject_token_audience and caller-provided JWT | subject_token and subject_token_audience set | Error: audience override only applies to fallback tokens |
+| EXC-12 | Exchange with subject_token_audience and caller-provided JWT | subject_token and subject_token_audience set | Error: audience override only applies to plugin-issued tokens |
 
 ## 4. Exchange Path - Token Content Validation
 
@@ -99,9 +99,9 @@ Current automated coverage is limited to TTL selection and clamping during excha
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
-| CLM-01 | Self-mint uses Vault-derived subject | self-mint fallback with `EntityID` present | `sub` is derived from Vault identity, not request `role` |
-| CLM-02 | Self-mint includes entity and alias claims | self-mint fallback with entity/alias metadata available | JWT contains stable Vault-derived identity claims |
-| CLM-03 | Self-mint excludes caller role selector | request includes `role` during self-mint fallback | JWT does not contain `vault_role` or request `role` claim |
+| CLM-01 | Self-mint uses Vault-derived subject | plugin-issued self-mint with `EntityID` present | `sub` is derived from Vault identity, not request `role` |
+| CLM-02 | Self-mint includes entity and alias claims | plugin-issued self-mint with entity/alias metadata available | JWT contains stable Vault-derived identity claims |
+| CLM-03 | Self-mint excludes caller role selector | request includes `role` during plugin-issued self-mint | JWT does not contain `vault_role` or request `role` claim |
 
 ## 9. OCI API Integration (Mock/Real)
 
@@ -116,7 +116,7 @@ Current automated coverage is limited to TTL selection and clamping during excha
 
 | ID | Test Case | Steps |
 |---|---|---|
-| E2E-01 | Full Vault-Issued Token Flow | 1. Configure Vault identity token or self-mint fallback<br>2. Configure OCI trust against Vault-derived claims<br>3. Invoke exchange via plugin without caller-supplied subject_token<br>4. Verify OCI UPST received |
+| E2E-01 | Full Vault-Issued Token Flow | 1. Configure Vault identity token or plugin-issued self-mint mode<br>2. Configure OCI trust against Vault-derived claims<br>3. Invoke exchange via plugin without caller-supplied subject_token<br>4. Verify OCI UPST received |
 | E2E-02 | External IdP to OCI | 1. Configure plugin with OCI domain<br>2. Get JWT from Auth0/Okta<br>3. Exchange via plugin<br>4. Use UPST with OCI CLI |
 | E2E-03 | Multi-tenant setup | 1. Enable multiple plugin mounts (oci-tenant1, oci-tenant2)<br>2. Different configs per mount<br>3. Tokens isolated per tenant |
 
@@ -166,7 +166,7 @@ Not yet covered by automated tests:
 ### Advanced Features (Nice to Have)
 - **E2E-02** - External IdP integration
 - **OCI-04** - Multi-region support
-- **EXC-04** - Callback fallback flow
+- **EXC-04** - Plugin-issued subject-token flow
 - **E2E-03** - Multi-tenant isolation
 
 ## Running Tests
@@ -199,7 +199,7 @@ vault read oci/roles/dev
 ### Automated Testing
 
 Current coverage includes:
-- Unit tests in `oci-backend/*_test.go` for config, roles, claim enforcement, callback fallback, self-mint, and JWKS behavior
+- Unit tests in `oci-backend/*_test.go` for config, roles, claim enforcement, plugin-issued subject-token flow, self-mint, and JWKS behavior
 - Integration tests in [oci_client_integration_test.go](/Users/gordon/Documents/projects/Hashicorp-OCI-credential-engine/oci-backend/oci_client_integration_test.go) for mock OCI token exchange behavior
 
 Future additions:
@@ -212,6 +212,6 @@ Future additions:
 - OCI IAM tokens cannot be actively revoked server-side; Vault lease revocation only drops local tracking
 - `client_secret` is write-only and never returned on read
 - `enforce_role_claim_match` can use default `role_claim_key` (`vault_role`) unless overridden
-- If `enforce_role_claim_match=true`, it applies to caller-provided `subject_token` values; callback-resolved fallback tokens are evaluated under the callback/self-mint trust model instead
+- If `enforce_role_claim_match=true`, it applies to caller-provided `subject_token` values; plugin-issued tokens are evaluated under the plugin-issued/self-mint trust model instead
 - `subject_token_audience` is accepted only when `subject_token` is omitted and the requested audience is present in `subject_token_allowed_audiences`
-- If `allow_plugin_identity_fallback=false`, `subject_token` is required
+- If `allow_plugin_identity_fallback=false`, callers must supply `subject_token`

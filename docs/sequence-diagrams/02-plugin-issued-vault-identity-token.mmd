@@ -1,0 +1,19 @@
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Plugin
+    participant S as Vault Storage
+    participant SV as Vault System View
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` without `subject_token`
+    V->>S: Read backend config and optional plugin role
+    S-->>V: Config and role constraints
+    V->>V: Check `allow_plugin_identity_fallback=true`
+    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>SV: `GenerateIdentityToken(audience)`
+    SV-->>V: Vault-issued identity token
+    V->>O: POST OAuth token exchange with plugin-issued token
+    O-->>V: OCI UPST or RPST
+    V-->>C: Vault secret response with OCI token and lease
+

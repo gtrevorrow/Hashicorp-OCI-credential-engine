@@ -25,3 +25,8 @@
   - `git fetch --all --prune`
   - `git pull --ff-only`
 - If local branch is behind, integrate remote changes before push (fast-forward/rebase/merge as appropriate).
+
+## Documentation Maintenance
+
+- When changing exchange flows, auth behavior, trust assumptions, or other use cases that affect request/response sequencing, review the Mermaid sources under `docs/sequence-diagrams/` and update them if needed.
+- Treat the Mermaid sequence-diagram sources as maintainable design artifacts separate from the README SVGs.

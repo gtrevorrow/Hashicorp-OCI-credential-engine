@@ -9,6 +9,7 @@ This file is the working backlog for the OCI credential engine plugin. It tracks
 - [ ] Add metrics and telemetry for token exchange rate, error rate, and latency
 - [ ] Build end-to-end integration tests against an OCI sandbox or disposable test domain
 - [ ] Add a documented operational runbook for self-mint key rollover and JWKS republishing
+- [ ] Harden `subject_token_allowed_audiences` handling with request normalization and validation (trim, empty/control-character rejection, reasonable length limit)
 
 ### Self-Mint and JWKS
 

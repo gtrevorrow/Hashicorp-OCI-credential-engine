@@ -6,9 +6,9 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
-| CFG-01 | Valid minimal config | tenancy, domain, client_id, secret, region | Success, defaults applied |
+| CFG-01 | Valid minimal config | domain, client_id, secret | Success, defaults applied |
 | CFG-02 | Valid full config | + default_ttl, max_ttl, enforce_role_claim_match=true, role_claim_key | Success, all fields stored |
-| CFG-03 | Config without required field | Missing tenancy_ocid | Error: missing required field |
+| CFG-03 | Config without required field | Missing client_secret | Error: missing required field |
 | CFG-04 | Config with invalid URL | domain_url="not-a-url" | Error: invalid URL format |
 | CFG-05 | Config read returns secrets masked | Write config, then read | client_secret not in response |
 | CFG-06 | Config update | Overwrite existing config | New values persisted |
@@ -38,7 +38,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
-| EXC-01 | Exchange for UPST (default) | subject_token, subject_token_type, role | UPST token returned |
+| EXC-01 | Exchange for UPST (default) | subject_token, role | UPST token returned |
 | EXC-02 | Exchange for RPST | + requested_token_type=oci-rpst, res_type | RPST token returned |
 | EXC-03 | Exchange with explicit UPST type | requested_token_type=oci-upst | UPST token returned |
 | EXC-04 | Exchange without subject_token (plugin-issued mode enabled) | role only, omit subject_token, enforce=false, allow_plugin_identity_fallback=true | Uses plugin-issued subject-token mode (Vault identity token first; self-mint if configured) |
@@ -110,7 +110,7 @@ Current automated coverage is limited to TTL selection and clamping during excha
 | OCI-01 | Successful token exchange | Valid config + valid JWT | OCI returns UPST with access_token |
 | OCI-02 | OCI IAM unavailable | Network failure to domain_url | Error: OCI IAM unreachable |
 | OCI-03 | Invalid OCI client credentials | Wrong client_secret | Error: authentication failed |
-| OCI-04 | Different OCI regions | region="eu-frankfurt-1" | Correct regional endpoint used |
+| OCI-04 | Direct OCI token endpoint | domain_url="https://idcs-xxx.identity.oraclecloud.com" | Correct `/oauth2/v1/token` endpoint used |
 
 ## 10. End-to-End Workflows
 
@@ -165,7 +165,7 @@ Not yet covered by automated tests:
 
 ### Advanced Features (Nice to Have)
 - **E2E-02** - External IdP integration
-- **OCI-04** - Multi-region support
+- **OCI-04** - Direct domain token endpoint support
 - **EXC-04** - Plugin-issued subject-token flow
 - **E2E-03** - Multi-tenant isolation
 
@@ -180,11 +180,9 @@ export VAULT_TOKEN='root'
 
 # Test config (CFG-01)
 vault write oci/config \
-    tenancy_ocid="ocid1.tenancy.oc1..test" \
     domain_url="https://idcs-test.identity.oraclecloud.com" \
     client_id="ocid1.oauth2client.oc1..test" \
-    client_secret="test-secret" \
-    region="us-ashburn-1"
+    client_secret="test-secret"
 
 # Test read (CFG-05)
 vault read oci/config

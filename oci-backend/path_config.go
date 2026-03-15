@@ -22,8 +22,7 @@ func (b *backend) pathConfig() []*framework.Path {
 			Fields: map[string]*framework.FieldSchema{
 				"tenancy_ocid": {
 					Type:        framework.TypeString,
-					Description: "OCID of the OCI tenancy",
-					Required:    true,
+					Description: "Optional OCI tenancy OCID retained for operator metadata",
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name: "Tenancy OCID",
 					},
@@ -55,8 +54,7 @@ func (b *backend) pathConfig() []*framework.Path {
 				},
 				"region": {
 					Type:        framework.TypeString,
-					Description: "OCI region identifier (e.g., us-ashburn-1)",
-					Required:    true,
+					Description: "Optional OCI region retained for operator metadata",
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name: "OCI Region",
 					},
@@ -198,35 +196,36 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 		return nil, nil
 	}
 
-	return &logical.Response{
-		Data: map[string]interface{}{
-			"tenancy_ocid": config.TenancyOCID,
-			"domain_url":   config.DomainUrl,
-			"client_id":    config.ClientID,
-			"region":       config.Region,
-			// Client Secret is intentionally omitted from read
+	respData := map[string]interface{}{
+		"domain_url": config.DomainUrl,
+		"client_id":  config.ClientID,
+		// Client Secret is intentionally omitted from read
 
-			"default_ttl":                         config.DefaultTTL,
-			"max_ttl":                             config.MaxTTL,
-			"enforce_role_claim_match":            config.EnforceRoleClaimMatch,
-			"role_claim_key":                      configRoleClaimKey(config),
-			"allow_plugin_identity_fallback":      configAllowPluginIdentityFallback(config),
-			"strict_role_name_match":              config.StrictRoleNameMatch,
-			"subject_token_self_mint_enabled":     config.SubjectTokenSelfMintEnabled,
-			"subject_token_self_mint_issuer":      config.SubjectTokenSelfMintIssuer,
-			"subject_token_self_mint_audience":    configSubjectTokenSelfMintAudience(config),
-			"subject_token_allowed_audiences":     configSubjectTokenAllowedAudiences(config),
-			"subject_token_self_mint_ttl_seconds": configSubjectTokenSelfMintTTLSeconds(config),
-		},
-	}, nil
+		"default_ttl":                         config.DefaultTTL,
+		"max_ttl":                             config.MaxTTL,
+		"enforce_role_claim_match":            config.EnforceRoleClaimMatch,
+		"role_claim_key":                      configRoleClaimKey(config),
+		"allow_plugin_identity_fallback":      configAllowPluginIdentityFallback(config),
+		"strict_role_name_match":              config.StrictRoleNameMatch,
+		"subject_token_self_mint_enabled":     config.SubjectTokenSelfMintEnabled,
+		"subject_token_self_mint_issuer":      config.SubjectTokenSelfMintIssuer,
+		"subject_token_self_mint_audience":    configSubjectTokenSelfMintAudience(config),
+		"subject_token_allowed_audiences":     configSubjectTokenAllowedAudiences(config),
+		"subject_token_self_mint_ttl_seconds": configSubjectTokenSelfMintTTLSeconds(config),
+	}
+	if config.TenancyOCID != "" {
+		respData["tenancy_ocid"] = config.TenancyOCID
+	}
+	if config.Region != "" {
+		respData["region"] = config.Region
+	}
+
+	return &logical.Response{Data: respData}, nil
 }
 
 // pathConfigWrite creates or updates the configuration
 func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	tenancyOCID := data.Get("tenancy_ocid").(string)
-	if tenancyOCID == "" {
-		return logical.ErrorResponse("missing 'tenancy_ocid'"), nil
-	}
 
 	domainUrl := data.Get("domain_url").(string)
 	if domainUrl == "" {
@@ -244,9 +243,6 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 
 	region := data.Get("region").(string)
-	if region == "" {
-		return logical.ErrorResponse("missing 'region'"), nil
-	}
 
 	existingConfig, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
@@ -302,7 +298,7 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 
 	// Validate basic OCI OCID formats
-	if !strings.HasPrefix(tenancyOCID, "ocid1.tenancy.") {
+	if tenancyOCID != "" && !strings.HasPrefix(tenancyOCID, "ocid1.tenancy.") {
 		return logical.ErrorResponse("invalid tenancy_ocid format"), nil
 	}
 	if !strings.HasPrefix(domainUrl, "https://") {
@@ -407,13 +403,13 @@ const pathConfigHelpDesc = `
 The OCI secrets engine exchanges 3rd party OIDC/OAuth JWT tokens for OCI session tokens.
 
 You must configure:
-  - tenancy_ocid: The OCID of your OCI tenancy
   - domain_url: The URL of your OCI Identity Domain
   - client_id: The Client ID of the OAuth Confidential Application
   - client_secret: The Client Secret of the OAuth Confidential Application
-  - region: The OCI region (e.g., us-ashburn-1)
 
 Optional:
+  - tenancy_ocid: Optional OCI tenancy metadata retained for operators
+  - region: Optional OCI region metadata retained for operators
   - default_ttl: Default session token TTL (default: 3600s)
   - max_ttl: Maximum session token TTL (default: 86400s)
   - enforce_role_claim_match: Require caller-provided subject_token claim to match request role (default: false)
@@ -429,9 +425,7 @@ Optional:
 
 Example:
   $ vault write oci/config \
-      tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \
       domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
       client_id="my-client-id" \
-      client_secret="my-client-secret" \
-      region="us-ashburn-1"
+      client_secret="my-client-secret"
 `

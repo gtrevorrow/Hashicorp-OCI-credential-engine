@@ -25,14 +25,6 @@ func (b *backend) pathExchange() []*framework.Path {
 						Sensitive: true,
 					},
 				},
-				"subject_token_type": {
-					Type:        framework.TypeString,
-					Description: "Type of the subject token (urn:ietf:params:oauth:token-type:jwt)",
-					Default:     "urn:ietf:params:oauth:token-type:jwt",
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Subject Token Type",
-					},
-				},
 				"requested_token_type": {
 					Type:        framework.TypeString,
 					Description: "OCI token type to request (urn:oci:token-type:oci-upst or urn:oci:token-type:oci-rpst)",
@@ -120,11 +112,6 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if raw, ok := data.GetOk("subject_token"); ok {
 		subjectToken = raw.(string)
 		subjectTokenProvided = subjectToken != ""
-	}
-
-	subjectTokenType := "urn:ietf:params:oauth:token-type:jwt"
-	if raw, ok := data.GetOk("subject_token_type"); ok && raw.(string) != "" {
-		subjectTokenType = raw.(string)
 	}
 
 	requestedTokenType := ociRequestedTokenTypeUPST
@@ -237,7 +224,11 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 
 	// Perform the token exchange
-	exchangeResult, err := b.exchangeTokenForOCI(ctx, subjectToken, subjectTokenType, requestedTokenType, resType, publicKey, config)
+	exchanger := b.tokenExchanger
+	if exchanger == nil {
+		exchanger = b.exchangeTokenForOCI
+	}
+	exchangeResult, err := exchanger(ctx, subjectToken, requestedTokenType, resType, publicKey, config)
 	if err != nil {
 		return logical.ErrorResponse("token exchange failed: %v", err), nil
 	}
@@ -249,8 +240,12 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		"requested_token_type": exchangeResult.RequestedTokenType,
 		"expires_in":           int(ttl.Seconds()),
 		"expires_at":           time.Now().Add(ttl).Format(time.RFC3339),
-		"region":               config.Region,
-		"tenancy_ocid":         config.TenancyOCID,
+	}
+	if config.Region != "" {
+		respData["region"] = config.Region
+	}
+	if config.TenancyOCID != "" {
+		respData["tenancy_ocid"] = config.TenancyOCID
 	}
 
 	// If OCI returns a session token specifically
@@ -370,10 +365,9 @@ Subject token behavior:
   - subject_token is optional when allow_plugin_identity_fallback=true and callback fallback is configured
 
 Optional parameters:
-  - subject_token_type: Token type (default: urn:ietf:params:oauth:token-type:jwt)
 	- requested_token_type: OCI token type (default: urn:oci:token-type:oci-upst)
 	- res_type: OCI resource type (required for urn:oci:token-type:oci-rpst)
-	- public_key: Optional PEM public key included in the exchange request
+	- public_key: Optional PEM public key included in the exchange request; if omitted, the plugin generates a fresh RSA key pair for the exchange
   - role: Role defining TTL constraints
   - ttl: Requested TTL for the OCI session token
 

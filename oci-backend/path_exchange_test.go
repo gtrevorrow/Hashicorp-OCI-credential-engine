@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,12 @@ func (m *mockSystemView) GenerateIdentityToken(ctx context.Context, req *pluginu
 	return nil, logical.ErrUnsupportedOperation
 }
 
+func installFailingTokenExchanger(b *backend) {
+	b.tokenExchanger = func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+		return nil, fmt.Errorf("stub exchange failure")
+	}
+}
+
 func TestPathExchange_TokenExchanges(t *testing.T) {
 	// Standard Setup
 	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
@@ -44,6 +51,7 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 	})
 	require.NoError(t, err)
 	backend := b.(*backend)
+	installFailingTokenExchanger(backend)
 	storage := &logical.InmemStorage{}
 
 	// Baseline sanity check for exchange path prerequisites; not tied to a named plan ID.
@@ -140,6 +148,7 @@ func TestPathExchange_WIFEnterprise(t *testing.T) {
 	})
 	require.NoError(t, err)
 	backend := b.(*backend)
+	installFailingTokenExchanger(backend)
 	storage := &logical.InmemStorage{}
 
 	// Pre-populate Config and Role
@@ -187,7 +196,7 @@ func TestPathExchange_WIFEnterprise(t *testing.T) {
 
 		errStr := resp.Error().Error()
 		assert.NotContains(t, errStr, "missing 'subject_token'", "Enterprise WIF bypass failed; it demanded a subject_token")
-		assert.Contains(t, errStr, "unable to exchange JWT for security token", "It successfully bypassed subject_token and attempted the API call utilizing the SDK")
+		assert.Contains(t, errStr, "token exchange failed", "It successfully bypassed subject_token and attempted token exchange")
 	})
 }
 
@@ -204,6 +213,7 @@ func TestPathExchange_RequestedTokenTypeValidation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	backend := b.(*backend)
+	installFailingTokenExchanger(backend)
 	storage := &logical.InmemStorage{}
 
 	// Pre-populate minimal config.
@@ -262,6 +272,7 @@ func TestPathExchange_RequestedTokenTypeValidation(t *testing.T) {
 func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 	// Covers EXC-08, RCM-01, RCM-02, and RCM-05.
 	b, storage := getTestBackend(t)
+	installFailingTokenExchanger(b)
 
 	reqConfig := &logical.Request{
 		Operation: logical.UpdateOperation,
@@ -389,6 +400,7 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
 	// Covers EXC-07.
 	b, storage := getTestBackend(t)
+	installFailingTokenExchanger(b)
 
 	reqConfig := &logical.Request{
 		Operation: logical.UpdateOperation,
@@ -424,6 +436,7 @@ func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
 func TestPathExchange_CustomRoleClaimKey(t *testing.T) {
 	// Covers RCM-01 and RCM-02 with a non-default claim key.
 	b, storage := getTestBackend(t)
+	installFailingTokenExchanger(b)
 
 	reqConfig := &logical.Request{
 		Operation: logical.UpdateOperation,
@@ -494,6 +507,7 @@ func TestPathExchange_CustomRoleClaimKey(t *testing.T) {
 func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
 	// Covers RCM-07.
 	b, storage := getTestBackend(t)
+	installFailingTokenExchanger(b)
 
 	reqConfig := &logical.Request{
 		Operation: logical.UpdateOperation,
@@ -543,6 +557,7 @@ func TestPathExchange_SubjectTokenCallbackFallback(t *testing.T) {
 	})
 	require.NoError(t, err)
 	backend := b.(*backend)
+	installFailingTokenExchanger(backend)
 	storage := &logical.InmemStorage{}
 
 	reqConfig := &logical.Request{
@@ -604,6 +619,7 @@ func TestPathExchange_SubjectTokenCallbackError(t *testing.T) {
 	})
 	require.NoError(t, err)
 	backend := b.(*backend)
+	installFailingTokenExchanger(backend)
 	storage := &logical.InmemStorage{}
 
 	reqConfig := &logical.Request{
@@ -653,6 +669,7 @@ func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
 	})
 	require.NoError(t, err)
 	backend := b.(*backend)
+	installFailingTokenExchanger(backend)
 	storage := &logical.InmemStorage{}
 
 	reqConfig := &logical.Request{
@@ -705,6 +722,7 @@ func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
 
 func TestPathExchange_SubjectTokenAudienceOverrideRejectedForCallerProvidedToken(t *testing.T) {
 	b, storage := getTestBackend(t)
+	installFailingTokenExchanger(b)
 
 	reqConfig := &logical.Request{
 		Operation: logical.UpdateOperation,
@@ -739,6 +757,7 @@ func TestPathExchange_SubjectTokenAudienceOverrideRejectedForCallerProvidedToken
 
 func TestPathExchange_SubjectTokenAudienceOverrideRejectedWhenNotAllowlisted(t *testing.T) {
 	b, storage := getTestBackend(t)
+	installFailingTokenExchanger(b)
 
 	reqConfig := &logical.Request{
 		Operation: logical.UpdateOperation,
@@ -786,6 +805,7 @@ func TestPathExchange_DefaultCallbackSelfMintUsesAudienceOverride(t *testing.T) 
 	})
 	require.NoError(t, err)
 	backend := b.(*backend)
+	installFailingTokenExchanger(backend)
 	storage := &logical.InmemStorage{}
 
 	reqConfig := &logical.Request{
@@ -831,6 +851,7 @@ func TestPathExchange_DefaultCallbackGenerateIdentityTokenUsesAudienceOverride(t
 	})
 	require.NoError(t, err)
 	backend := b.(*backend)
+	installFailingTokenExchanger(backend)
 	storage := &logical.InmemStorage{}
 
 	reqConfig := &logical.Request{

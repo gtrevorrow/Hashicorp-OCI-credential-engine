@@ -40,13 +40,30 @@ func TestPathConfig_Updates(t *testing.T) {
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"region": "us-ashburn-1",
+				"client_id": "test-client-id",
 			},
 		}
 
 		resp, err := b.HandleRequest(context.Background(), req)
 		assert.NoError(t, err) // Validation errors are returned in resp.Error, not err
 		assert.True(t, resp.IsError())
+	})
+
+	t.Run("Create Config", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+				"client_id":     "test-client-id",
+				"client_secret": "test-client-secret",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		assert.False(t, resp != nil && resp.IsError(), "expected no error, got: %v", resp)
 	})
 }
 

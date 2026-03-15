@@ -4,8 +4,10 @@ package ocibackend
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
@@ -19,7 +21,7 @@ import (
 
 const (
 	mockSubjectToken   = "header.payload.signature"
-	mockSubjectTypeJWT = "urn:ietf:params:oauth:token-type:jwt"
+	mockSubjectTypeJWT = "jwt"
 )
 
 func TestIntegrationExchangeTokenForOCI_UPST(t *testing.T) {
@@ -43,7 +45,7 @@ func TestIntegrationExchangeTokenForOCI_UPST(t *testing.T) {
 		require.NotEmpty(t, r.PostForm.Get("public_key"))
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"token":"%s"}`, mockToken)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"%s","token_type":"Bearer"}`, mockToken)))
 	}))
 	defer server.Close()
 
@@ -52,14 +54,12 @@ func TestIntegrationExchangeTokenForOCI_UPST(t *testing.T) {
 		DomainUrl:    server.URL,
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
-		Region:       "us-ashburn-1",
 		DefaultTTL:   3600,
 	}
 
 	result, err := b.exchangeTokenForOCI(
 		context.Background(),
 		mockSubjectToken,
-		mockSubjectTypeJWT,
 		ociRequestedTokenTypeUPST,
 		"",
 		"",
@@ -67,7 +67,7 @@ func TestIntegrationExchangeTokenForOCI_UPST(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, "ST$"+mockToken, result.AccessToken)
+	require.Equal(t, mockToken, result.AccessToken)
 	require.Equal(t, result.AccessToken, result.SessionToken)
 	require.Equal(t, "", result.RPSTToken)
 	require.Equal(t, ociRequestedTokenTypeUPST, result.RequestedTokenType)
@@ -89,7 +89,7 @@ func TestIntegrationExchangeTokenForOCI_RPSTWithPublicKey(t *testing.T) {
 		require.NotEmpty(t, r.PostForm.Get("public_key"))
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"token":"%s"}`, mockToken)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"%s","token_type":"Bearer"}`, mockToken)))
 	}))
 	defer server.Close()
 
@@ -98,22 +98,28 @@ func TestIntegrationExchangeTokenForOCI_RPSTWithPublicKey(t *testing.T) {
 		DomainUrl:    server.URL,
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
-		Region:       "us-ashburn-1",
 		DefaultTTL:   3600,
 	}
+
+	privateKeyPEM := generateTestRSAPrivateKeyPEM(t)
+	block, _ := pem.Decode([]byte(privateKeyPEM))
+	require.NotNil(t, block)
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	require.NoError(t, err)
+	publicKeyPEM, err := marshalPublicKeyToPEM(privateKey.Public())
+	require.NoError(t, err)
 
 	result, err := b.exchangeTokenForOCI(
 		context.Background(),
 		mockSubjectToken,
-		mockSubjectTypeJWT,
 		ociRequestedTokenTypeRPST,
 		"resource_principal",
-		"-----BEGIN PUBLIC KEY-----MIIB...-----END PUBLIC KEY-----",
+		publicKeyPEM,
 		config,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, "ST$"+mockToken, result.AccessToken)
+	require.Equal(t, mockToken, result.AccessToken)
 	require.Equal(t, result.AccessToken, result.RPSTToken)
 	require.Equal(t, "", result.SessionToken)
 	require.Equal(t, ociRequestedTokenTypeRPST, result.RequestedTokenType)
@@ -135,14 +141,12 @@ func TestIntegrationExchangeTokenForOCI_AuthFailure(t *testing.T) {
 		DomainUrl:    server.URL,
 		ClientID:     "bad-client",
 		ClientSecret: "bad-secret",
-		Region:       "us-ashburn-1",
 		DefaultTTL:   3600,
 	}
 
 	_, err := b.exchangeTokenForOCI(
 		context.Background(),
 		mockSubjectToken,
-		mockSubjectTypeJWT,
 		ociRequestedTokenTypeUPST,
 		"",
 		"",

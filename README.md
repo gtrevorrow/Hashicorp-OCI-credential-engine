@@ -53,7 +53,7 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 - **Federated Identity**: Leverage OCI IAM Identity Domains with external IdPs
 - **Role-based TTL Policies**: Define roles with default and maximum TTL constraints
 - **Lease Management**: OCI tokens are issued as Vault secrets with TTL-based lease handling
-- **Multi-tenant Support**: Support for multiple OCI Identity Domains and regions
+- **Direct OCI Token Exchange**: Calls the OCI Identity Domain `/oauth2/v1/token` endpoint directly using Basic auth
 
 ## Prerequisites
 
@@ -131,11 +131,9 @@ Before using the plugin, configure it with your OCI Identity Domain details:
 
 ```bash
 vault write oci/config \
-    tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \
     domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
     client_id="ocid1.oauth2client.oc1..xxxxx" \
     client_secret="<oauth-client-secret>" \
-    region="us-ashburn-1" \
     default_ttl=3600 \
     max_ttl=28800 \
     enforce_role_claim_match=false \
@@ -147,11 +145,11 @@ vault write oci/config \
 ```
 
 **Parameters:**
-- `tenancy_ocid`: The OCID of your OCI tenancy
 - `domain_url`: OCI Identity Domain URL (for example: `https://idcs-xxxxx.identity.oraclecloud.com`)
 - `client_id`: OAuth Confidential Application client ID in the OCI Identity Domain
 - `client_secret`: OAuth Confidential Application client secret in the OCI Identity Domain
-- `region`: The OCI region (e.g., `us-ashburn-1`, `eu-frankfurt-1`)
+- `tenancy_ocid`: Optional OCI tenancy metadata retained for operators
+- `region`: Optional OCI region metadata retained for operators
 - `default_ttl`: Default TTL for OCI session tokens in seconds (default: 3600)
 - `max_ttl`: Maximum TTL for OCI session tokens in seconds (default: 86400)
 - `enforce_role_claim_match`: When true, requires a caller-provided `subject_token` claim to match the requested plugin role (default: `false`)
@@ -205,7 +203,6 @@ vault write oci/roles/prod \
 ```bash
 vault write oci/exchange \
     subject_token="eyJhbGciOiJSUzI1NiIs..." \
-    subject_token_type="urn:ietf:params:oauth:token-type:jwt" \
     requested_token_type="urn:oci:token-type:oci-upst" \
     role="developer" \
     ttl=3600
@@ -214,6 +211,8 @@ vault write oci/exchange \
 *Note: Omitting `subject_token` uses the plugin-issued subject-token mode and requires `allow_plugin_identity_fallback=true`. The default callback first attempts Vault identity-token generation; if unavailable, it can self-mint only when `subject_token_self_mint_enabled=true` and self-mint config is set.*
 
 If the caller omits `subject_token`, it may also provide `subject_token_audience` to request an alternate audience for the plugin-issued subject token. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
+
+The plugin always sends `subject_token_type=jwt` to OCI and generates a fresh RSA key pair per exchange when `public_key` is not supplied by the caller.
 
 *Reference: Oracle JWT-to-UPST flow and request parameters are documented in [Token Exchange Grant Type: Exchanging a JSON Web Token for a UPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm#jwt_token_exchange__get-oci-upst).*
 
@@ -228,9 +227,7 @@ If the caller omits `subject_token`, it may also provide `subject_token_audience
     "requested_token_type": "urn:oci:token-type:oci-upst",
     "token_type": "Bearer",
     "expires_in": 3600,
-    "expires_at": "2024-01-15T10:30:00Z",
-    "region": "us-ashburn-1",
-    "tenancy_ocid": "ocid1.tenancy.oc1..xxxxx"
+    "expires_at": "2024-01-15T10:30:00Z"
   },
   "lease_id": "oci/exchange/...",
   "lease_duration": 3600,
@@ -248,11 +245,9 @@ Use this flow when OCI trust rules should map Vault-issued token claims (for exa
 
 ```bash
 vault write oci/config \
-    tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \
     domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
     client_id="ocid1.oauth2client.oc1..xxxxx" \
     client_secret="<oauth-client-secret>" \
-    region="us-ashburn-1" \
     default_ttl=3600 \
     max_ttl=28800 \
     enforce_role_claim_match=true \
@@ -306,7 +301,6 @@ SUBJECT_TOKEN="$(vault read -field=token identity/oidc/token/oci-developer)"
 ```bash
 vault write oci/exchange \
     subject_token="$SUBJECT_TOKEN" \
-    subject_token_type="urn:ietf:params:oauth:token-type:jwt" \
     requested_token_type="urn:oci:token-type:oci-upst" \
     role="developer"
 ```
@@ -359,7 +353,6 @@ CREDS=$(vault write -format=json oci/exchange subject_token="$JWT" role="develop
 # Extract the session token
 export OCI_CLI_AUTH=security_token
 export OCI_CLI_SECURITY_TOKEN=$(echo $CREDS | jq -r '.data.session_token')
-export OCI_CLI_REGION=$(echo $CREDS | jq -r '.data.region')
 
 # Persist key material returned by the plugin
 mkdir -p ~/.oci
@@ -380,36 +373,12 @@ Use RPST when you need resource-principal style token exchange behavior supporte
 ```bash
 vault write oci/exchange \
     subject_token="eyJhbGciOiJSUzI1NiIs..." \
-    subject_token_type="urn:ietf:params:oauth:token-type:jwt" \
     requested_token_type="urn:oci:token-type:oci-rpst" \
     res_type="resource_principal" \
     role="developer"
 ```
 
 For RPST requests, `res_type` is required and the response will include `rpst_token`.
-
-### Using with OCI SDK (Go)
-
-```go
-import (
-    "github.com/oracle/oci-go-sdk/v65/common"
-    "github.com/oracle/oci-go-sdk/v65/identity"
-)
-
-// Exchange token via Vault API
-// Then use the returned session token
-configProvider := common.NewRawConfigurationProvider(
-    tenancyOCID,
-    "", // user OCID not needed for session token
-    region,
-    "", // fingerprint not needed
-    "", // private key not needed
-    nil,
-)
-
-// Set up authentication with session token
-// (Implementation depends on OCI SDK version)
-```
 
 ## API Reference
 
@@ -443,16 +412,15 @@ vault read oci/jwks
 ```json
 {
   "subject_token": "eyJhbGciOiJSUzI1NiIs...",
-  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
   "subject_token_audience": "urn:oci:test",
   "requested_token_type": "urn:oci:token-type:oci-upst",
-    "res_type": "resource_principal",
-    "public_key": "-----BEGIN PUBLIC KEY-----...",
+  "res_type": "resource_principal",
+  "public_key": "-----BEGIN PUBLIC KEY-----...",
   "role": "developer",
   "ttl": 3600
 }
 ```
-*(Note: `subject_token` is optional when `allow_plugin_identity_fallback=true` and the plugin-issued subject-token mode can resolve a token. `subject_token_audience` is only used for plugin-issued subject tokens.)*
+*(Note: `subject_token` is optional when `allow_plugin_identity_fallback=true` and the plugin-issued subject-token mode can resolve a token. `subject_token_audience` is only used for plugin-issued subject tokens. The plugin always sends `subject_token_type=jwt` to OCI.)*
 
 `requested_token_type` defaults to `urn:oci:token-type:oci-upst`. Supported values:
 - `urn:oci:token-type:oci-upst`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"net/http"
 	"sync"
 
 	"github.com/hashicorp/go-hclog"
@@ -27,7 +28,9 @@ type backend struct {
 	*framework.Backend
 	lock                 sync.RWMutex
 	logger               hclog.Logger
+	httpClient           *http.Client
 	subjectTokenCallback SubjectTokenCallback
+	tokenExchanger       func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error)
 }
 
 // SubjectTokenCallback mints a JWT subject token for fallback flows when callers
@@ -56,7 +59,8 @@ func Factory(version string) logical.Factory {
 		}
 
 		b := backend{
-			logger: conf.Logger,
+			logger:     conf.Logger,
+			httpClient: &http.Client{},
 		}
 		b.Backend = &framework.Backend{
 			Help: backendHelp,
@@ -82,6 +86,7 @@ func Factory(version string) logical.Factory {
 			return nil, err
 		}
 		b.RegisterSubjectTokenCallback(b.defaultSubjectTokenCallback)
+		b.tokenExchanger = b.exchangeTokenForOCI
 
 		return &b, nil
 	}

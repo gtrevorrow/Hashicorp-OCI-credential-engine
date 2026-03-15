@@ -10,7 +10,7 @@ sequenceDiagram
     S-->>V: Config and role constraints
     V->>V: Validate request fields and TTL
     V->>V: Optionally enforce role-claim guardrail against caller JWT
-    V->>O: POST OAuth token exchange with supplied `subject_token`
+    V->>V: Generate exchange RSA keypair when `public_key` is omitted
+    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token and lease
-
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair when generated

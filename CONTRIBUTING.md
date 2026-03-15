@@ -89,7 +89,7 @@ export VAULT_TOKEN='root'
 # Automatically calculates SHA256 and registers the plugin
 ./scripts/register_plugin.sh
 
-vault secrets enable -path=oci vault-plugin-secrets-oci
+vault secrets enable -path=oci -plugin-name=oci plugin
 ```
 
 *(Note: When you are finished developing, you can stop the server with `./scripts/dev_vault.sh stop`)*

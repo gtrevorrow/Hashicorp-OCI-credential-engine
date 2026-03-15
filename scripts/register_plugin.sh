@@ -30,7 +30,7 @@ fi
 echo "SHA256: $SHA256"
 echo "Registering plugin with Vault at $VAULT_ADDR..."
 
-vault write sys/plugins/catalog/secrets/oci \
+vault write sys/plugins/catalog/secret/oci \
     sha_256="$SHA256" \
     command="vault-plugin-secrets-oci"
 
@@ -38,7 +38,7 @@ if [ $? -eq 0 ]; then
     echo "Plugin registered successfully."
     echo ""
     echo "You can now enable it with:"
-    echo "vault secrets enable -path=oci oci"
+    echo "vault secrets enable -path=oci -plugin-name=oci plugin"
 else
     echo "Failed to register plugin. Ensure Vault is running and VAULT_ADDR is accessible."
     exit 1

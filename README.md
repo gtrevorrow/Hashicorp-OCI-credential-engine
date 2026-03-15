@@ -93,14 +93,14 @@ sha256sum bin/vault-plugin-secrets-oci
 # If using a local dev server, ensure VAULT_ADDR is set to http
 export VAULT_ADDR='http://127.0.0.1:8200'
 
-vault write sys/plugins/catalog/secrets/oci \
+vault write sys/plugins/catalog/secret/oci \
     sha_256="<SHA256_CHECKSUM>" \
     command="vault-plugin-secrets-oci"
 ```
 
 3. Enable the secrets engine:
 ```bash
-vault secrets enable -path=oci oci
+vault secrets enable -path=oci -plugin-name=oci plugin
 ```
 
 ### Self-Mint JWKS Publication Workflow

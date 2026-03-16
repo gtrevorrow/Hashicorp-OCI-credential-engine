@@ -99,6 +99,7 @@ func TestPathJWKSRead(t *testing.T) {
 			require.NotEmpty(t, first["kid"])
 			require.NotEmpty(t, first["n"])
 			require.NotEmpty(t, first["e"])
+			require.NotEmpty(t, first["x5c"])
 			return
 		}
 
@@ -110,5 +111,6 @@ func TestPathJWKSRead(t *testing.T) {
 		require.NotEmpty(t, first["kid"])
 		require.NotEmpty(t, first["n"])
 		require.NotEmpty(t, first["e"])
+		require.NotEmpty(t, first["x5c"])
 	})
 }

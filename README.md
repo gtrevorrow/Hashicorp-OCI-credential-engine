@@ -162,6 +162,7 @@ vault write oci/config \
 - `subject_token_allowed_audiences`: Optional allowlist for request-level audience override in plugin-issued subject-token mode via `subject_token_audience`
 - `subject_token_self_mint_ttl_seconds`: TTL for self-minted token in seconds (default: `600`)
 - `subject_token_self_mint_private_key`: Optional PEM RSA private key. If omitted while self-mint is enabled, the plugin generates one and stores it in Vault plugin storage
+- `debug_return_resolved_subject_token_claims`: Development-only flag that includes decoded claims from the resolved subject token in `oci/exchange` responses, including error responses
 
 If `subject_token_self_mint_enabled=true`, also plan how OCI will discover the public signing key:
 
@@ -170,6 +171,20 @@ If `subject_token_self_mint_enabled=true`, also plan how OCI will discover the p
 3. Point OCI token exchange trust configuration at that published JWKS URL
 
 The plugin keeps the private signing key in Vault plugin storage. The published JWKS contains only the public key material.
+
+For local debugging of plugin-issued subject tokens, you can temporarily enable:
+
+```bash
+vault write oci/config \
+    domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
+    client_id="ocid1.oauth2client.oc1..xxxxx" \
+    client_secret="<oauth-client-secret>" \
+    subject_token_self_mint_enabled=true \
+    subject_token_self_mint_issuer="https://vault.example.com" \
+    debug_return_resolved_subject_token_claims=true
+```
+
+Then `vault write -force -format=json oci/exchange` will include `data.resolved_subject_token_claims` even when OCI rejects the exchange. This flag is intended only for development and troubleshooting.
 
 ### Roles
 

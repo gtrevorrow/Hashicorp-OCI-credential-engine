@@ -157,6 +157,14 @@ func (b *backend) pathConfig() []*framework.Path {
 						Sensitive: true,
 					},
 				},
+				"debug_return_resolved_subject_token_claims": {
+					Type:        framework.TypeBool,
+					Description: "Development-only flag to include resolved subject token claims in exchange responses",
+					Default:     false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Debug Resolved Subject Token Claims",
+					},
+				},
 			},
 
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -201,17 +209,18 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 		"client_id":  config.ClientID,
 		// Client Secret is intentionally omitted from read
 
-		"default_ttl":                         config.DefaultTTL,
-		"max_ttl":                             config.MaxTTL,
-		"enforce_role_claim_match":            config.EnforceRoleClaimMatch,
-		"role_claim_key":                      configRoleClaimKey(config),
-		"allow_plugin_identity_fallback":      configAllowPluginIdentityFallback(config),
-		"strict_role_name_match":              config.StrictRoleNameMatch,
-		"subject_token_self_mint_enabled":     config.SubjectTokenSelfMintEnabled,
-		"subject_token_self_mint_issuer":      config.SubjectTokenSelfMintIssuer,
-		"subject_token_self_mint_audience":    configSubjectTokenSelfMintAudience(config),
-		"subject_token_allowed_audiences":     configSubjectTokenAllowedAudiences(config),
-		"subject_token_self_mint_ttl_seconds": configSubjectTokenSelfMintTTLSeconds(config),
+		"default_ttl":                                config.DefaultTTL,
+		"max_ttl":                                    config.MaxTTL,
+		"enforce_role_claim_match":                   config.EnforceRoleClaimMatch,
+		"role_claim_key":                             configRoleClaimKey(config),
+		"allow_plugin_identity_fallback":             configAllowPluginIdentityFallback(config),
+		"strict_role_name_match":                     config.StrictRoleNameMatch,
+		"subject_token_self_mint_enabled":            config.SubjectTokenSelfMintEnabled,
+		"subject_token_self_mint_issuer":             config.SubjectTokenSelfMintIssuer,
+		"subject_token_self_mint_audience":           configSubjectTokenSelfMintAudience(config),
+		"subject_token_allowed_audiences":            configSubjectTokenAllowedAudiences(config),
+		"subject_token_self_mint_ttl_seconds":        configSubjectTokenSelfMintTTLSeconds(config),
+		"debug_return_resolved_subject_token_claims": config.DebugReturnResolvedSubjectTokenClaims,
 	}
 	if config.TenancyOCID != "" {
 		respData["tenancy_ocid"] = config.TenancyOCID
@@ -259,15 +268,16 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		DefaultTTL: data.Get("default_ttl").(int),
 		MaxTTL:     data.Get("max_ttl").(int),
 
-		EnforceRoleClaimMatch:          data.Get("enforce_role_claim_match").(bool),
-		RoleClaimKey:                   data.Get("role_claim_key").(string),
-		StrictRoleNameMatch:            data.Get("strict_role_name_match").(bool),
-		SubjectTokenSelfMintEnabled:    data.Get("subject_token_self_mint_enabled").(bool),
-		SubjectTokenSelfMintIssuer:     data.Get("subject_token_self_mint_issuer").(string),
-		SubjectTokenSelfMintAudience:   data.Get("subject_token_self_mint_audience").(string),
-		SubjectTokenAllowedAudiences:   data.Get("subject_token_allowed_audiences").([]string),
-		SubjectTokenSelfMintTTLSeconds: data.Get("subject_token_self_mint_ttl_seconds").(int),
-		SubjectTokenSelfMintPrivateKey: data.Get("subject_token_self_mint_private_key").(string),
+		EnforceRoleClaimMatch:                 data.Get("enforce_role_claim_match").(bool),
+		RoleClaimKey:                          data.Get("role_claim_key").(string),
+		StrictRoleNameMatch:                   data.Get("strict_role_name_match").(bool),
+		SubjectTokenSelfMintEnabled:           data.Get("subject_token_self_mint_enabled").(bool),
+		SubjectTokenSelfMintIssuer:            data.Get("subject_token_self_mint_issuer").(string),
+		SubjectTokenSelfMintAudience:          data.Get("subject_token_self_mint_audience").(string),
+		SubjectTokenAllowedAudiences:          data.Get("subject_token_allowed_audiences").([]string),
+		SubjectTokenSelfMintTTLSeconds:        data.Get("subject_token_self_mint_ttl_seconds").(int),
+		SubjectTokenSelfMintPrivateKey:        data.Get("subject_token_self_mint_private_key").(string),
+		DebugReturnResolvedSubjectTokenClaims: data.Get("debug_return_resolved_subject_token_claims").(bool),
 	}
 	allowPluginIdentityFallback := data.Get("allow_plugin_identity_fallback").(bool)
 	config.AllowPluginIdentityFallback = &allowPluginIdentityFallback
@@ -422,6 +432,7 @@ Optional:
   - subject_token_allowed_audiences: Optional allowlist for per-request fallback audience override
   - subject_token_self_mint_ttl_seconds: TTL for self-minted token (default: 600)
   - subject_token_self_mint_private_key: Optional PEM RSA private key; auto-generated and stored if omitted when self-mint is enabled
+  - debug_return_resolved_subject_token_claims: Development-only flag to include resolved subject token claims in exchange responses
 
 Example:
   $ vault write oci/config \

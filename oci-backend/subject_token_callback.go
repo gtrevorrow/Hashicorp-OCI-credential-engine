@@ -81,6 +81,24 @@ func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedCo
 	return signJWT(header, claims, privateKey)
 }
 
+func decodeJWTClaimsMap(token string) (map[string]interface{}, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("token is not a JWT")
+	}
+
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, err
+	}
+
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
 type logicalRequestFieldData struct {
 	*logical.Request
 }

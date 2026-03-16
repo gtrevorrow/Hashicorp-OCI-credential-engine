@@ -166,6 +166,18 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		return logical.ErrorResponse("subject_token_audience is only supported when subject_token is omitted"), nil
 	}
 
+	var resolvedSubjectTokenClaims map[string]interface{}
+	if config.DebugReturnResolvedSubjectTokenClaims {
+		claims, claimsErr := decodeJWTClaimsMap(subjectToken)
+		if claimsErr != nil {
+			resolvedSubjectTokenClaims = map[string]interface{}{
+				"_decode_error": claimsErr.Error(),
+			}
+		} else {
+			resolvedSubjectTokenClaims = claims
+		}
+	}
+
 	// Get role if specified
 	roleName := ""
 	if raw, ok := data.GetOk("role"); ok {
@@ -230,7 +242,13 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 	exchangeResult, err := exchanger(ctx, subjectToken, requestedTokenType, resType, publicKey, config)
 	if err != nil {
-		return logical.ErrorResponse("token exchange failed: %v", err), nil
+		resp := logical.ErrorResponse("token exchange failed: %v", err)
+		if resolvedSubjectTokenClaims != nil {
+			resp.Data = map[string]interface{}{
+				"resolved_subject_token_claims": resolvedSubjectTokenClaims,
+			}
+		}
+		return resp, nil
 	}
 
 	// Prepare the response with OCI session token
@@ -246,6 +264,9 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 	if config.TenancyOCID != "" {
 		respData["tenancy_ocid"] = config.TenancyOCID
+	}
+	if resolvedSubjectTokenClaims != nil {
+		respData["resolved_subject_token_claims"] = resolvedSubjectTokenClaims
 	}
 
 	// If OCI returns a session token specifically

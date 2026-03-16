@@ -358,6 +358,8 @@ Design notes:
 - The request `role` is not copied into the self-minted JWT.
 - `aud` defaults to plugin config (`subject_token_self_mint_audience`) and may be overridden per request only through allowlisted `subject_token_audience` values.
 - OCI trust rules should use the Vault-derived claims above rather than caller-supplied parameters.
+- When the caller request is backed by a Vault Identity entity, `vault_entity_id` is the preferred stable trust-mapping claim.
+- When the caller is using a token flow without an attached entity, the self-minted JWT still includes token-context claims such as `vault_display_name`, `vault_mount_accessor`, `vault_mount_type`, and `vault_client_token_accessor`, and OCI trust can map on those if needed.
 
 ### Using with OCI CLI
 

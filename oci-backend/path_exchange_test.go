@@ -984,6 +984,51 @@ func TestDefaultCallbackSelfMintUsesTrustedVaultIdentityClaims(t *testing.T) {
 	require.Equal(t, "platform", groupNames[1])
 }
 
+func TestDefaultCallbackSelfMintWithoutEntityUsesTokenContextClaims(t *testing.T) {
+	testKey := generateTestRSAPrivateKeyPEM(t)
+
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+
+	config := &federatedConfig{
+		SubjectTokenSelfMintEnabled:    true,
+		SubjectTokenSelfMintIssuer:     "https://vault.example.com",
+		SubjectTokenSelfMintAudience:   "urn:mace:oci:idcs",
+		SubjectTokenSelfMintTTLSeconds: 600,
+		SubjectTokenSelfMintPrivateKey: testKey,
+	}
+
+	req := &logical.Request{
+		DisplayName:         "token",
+		MountAccessor:       "oci_automation_123",
+		MountType:           "token",
+		ClientTokenAccessor: "hmac-token-accessor",
+	}
+
+	token, err := backend.defaultSubjectTokenCallback(context.Background(), req, config)
+	require.NoError(t, err)
+
+	claims := decodeJWTClaims(t, token)
+	require.Equal(t, "vault:display:token", claims["sub"])
+	require.Equal(t, "token", claims["vault_display_name"])
+	require.Equal(t, "oci_automation_123", claims["vault_mount_accessor"])
+	require.Equal(t, "token", claims["vault_mount_type"])
+	require.Equal(t, "hmac-token-accessor", claims["vault_client_token_accessor"])
+	require.NotContains(t, claims, "vault_entity_id")
+	require.NotContains(t, claims, "vault_entity_name")
+	require.NotContains(t, claims, "vault_alias_name")
+	require.NotContains(t, claims, "vault_group_names")
+}
+
 func decodeJWTClaims(t *testing.T, token string) map[string]interface{} {
 	t.Helper()
 

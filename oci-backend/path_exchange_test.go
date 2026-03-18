@@ -430,7 +430,7 @@ func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
 	resp, err := b.HandleRequest(context.Background(), req)
 	require.NoError(t, err)
 	require.True(t, resp.IsError())
-	require.Contains(t, resp.Error().Error(), "missing 'subject_token' and plugin identity fallback is disabled")
+	require.Contains(t, resp.Error().Error(), "missing 'subject_token' and plugin-issued subject token mode is disabled")
 }
 
 func TestPathExchange_CustomRoleClaimKey(t *testing.T) {

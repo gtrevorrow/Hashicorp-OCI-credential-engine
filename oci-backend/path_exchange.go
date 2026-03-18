@@ -144,8 +144,8 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 
 	// Resolve missing subject token through registered callback flow.
 	if subjectToken == "" {
-		if !configAllowPluginIdentityFallback(config) {
-			return logical.ErrorResponse("missing 'subject_token' and plugin identity fallback is disabled"), nil
+		if !configEnablePluginIssuedSubjectToken(config) {
+			return logical.ErrorResponse("missing 'subject_token' and plugin-issued subject token mode is disabled"), nil
 		}
 		if _, audienceErr := resolveSubjectTokenAudience(data, config); audienceErr != nil {
 			return logical.ErrorResponse("%v", audienceErr), nil

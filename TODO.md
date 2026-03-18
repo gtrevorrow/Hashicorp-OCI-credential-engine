@@ -10,6 +10,7 @@ This file is the working backlog for the OCI credential engine plugin. It tracks
 - [ ] Build end-to-end integration tests against an OCI sandbox or disposable test domain
 - [ ] Add a documented operational runbook for self-mint key rollover and JWKS republishing
 - [ ] Harden `subject_token_allowed_audiences` handling with request normalization and validation (trim, empty/control-character rejection, reasonable length limit)
+- [ ] Apply role-scoped `default_ttl` and `max_ttl` to RPST token-exchange requests sent to OCI; document that UPST lifetime remains OCI-controlled
 
 ### Self-Mint and JWKS
 

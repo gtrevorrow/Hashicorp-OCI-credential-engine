@@ -151,11 +151,11 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
 - **UPST and RPST Support**: Request either `urn:oci:token-type:oci-upst` or `urn:oci:token-type:oci-rpst`
-- **Returned OCI Key Pair**: Exchange responses include PEM-encoded `private_key` and `public_key` for request-signing workflows
+- **Returned OCI Key Pair**: Exchange responses can include Credential Engine generated PEM-encoded `private_key` and `public_key` for request-signing workflows
 - **Plugin-Issued Subject Token Mode**: If `subject_token` is omitted and `enable_plugin_issued_subject_token=true`, the plugin resolves a token itself (default callback: Vault identity token first if availble in the version of vualt, self-mint if configured)
 - **Role-based TTL Policies**: Define roles with default and maximum TTL constraints
 - **Lease Management**: OCI tokens are issued as Vault secrets with TTL-based lease handling
-- **Direct OCI Token Exchange**: Calls the OCI Identity Domain `/oauth2/v1/token` endpoint directly using Basic auth
+
 
 ## Prerequisites
 
@@ -287,7 +287,7 @@ Then `vault write -force -format=json oci/exchange` will include `data.resolved_
 
 ### Roles
 
-Create roles to define Vault lease policy and RPST TTL constraints:
+Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exchange does not currently let the client request token lifetime through the token-exchange call, so these TTL settings only directly shape the OCI request for RPST. For UPST, they mainly affect Vault-side lease metadata today.
 
 ```bash
 # Create a development role
@@ -307,6 +307,8 @@ vault write oci/roles/prod \
 ```
 
 **Role Parameters:**
+- `default_ttl`: Default Vault lease TTL for credentials issued under the role. Intended to also be the default requested TTL for RPST exchanges when a request TTL is not supplied.
+- `max_ttl`: Maximum Vault lease TTL for credentials issued under the role. Intended to also be the maximum requested TTL allowed for RPST exchanges.
 - `allowed_groups`: Stored role metadata for future claim filtering
 - `allowed_subjects`: Stored role metadata for future subject filtering
 

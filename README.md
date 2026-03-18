@@ -149,6 +149,11 @@ vault write oci/config \
 - `default_ttl`: Default Vault lease TTL for exchanged credentials, and the default requested TTL for RPST exchanges when a request TTL is not supplied (default: 3600)
 - `max_ttl`: Maximum Vault lease TTL for exchanged credentials, and the maximum requested TTL allowed for RPST exchanges (default: 86400)
 - `subject_token_role_mappings`: Optional JSON array of ordered rules used to derive a Vault role from a caller-supplied `subject_token`
+  Each rule has:
+  `claim`: JWT claim name to inspect
+  `op`: match operator, one of `eq`, `co`, `sw`
+  `value`: string to compare against the claim value
+  `role`: Vault role name to apply when the rule matches
 - `enable_plugin_issued_subject_token`: When true, plugin-issued subject-token mode is enabled when the caller omits `subject_token` (default: `true`)
 - `strict_role_name_match`: When true, requires role names to match `[A-Za-z0-9._:-]+` (default: `false`)
 - `subject_token_self_mint_enabled`: Enables built-in self-mint in plugin-issued subject-token mode when Vault identity-token generation is unavailable (default: `false`)
@@ -275,6 +280,28 @@ Rule semantics:
 - Matching works with string claims and array-of-string claims.
 - When `subject_token_role_mappings` is configured, callers must omit the request `role`; the plugin derives it from the JWT instead.
 - If no rule matches, the exchange is rejected.
+
+Example mapping behavior:
+
+```json
+[
+  {"claim":"vault_role","op":"eq","value":"developer","role":"developer"},
+  {"claim":"groups","op":"co","value":"ops","role":"operations"},
+  {"claim":"sub","op":"sw","value":"svc:","role":"service"}
+]
+```
+
+If the caller-supplied JWT contains:
+
+```json
+{
+  "vault_role": "developer",
+  "groups": ["team-ops", "team-dev"],
+  "sub": "svc:deploy"
+}
+```
+
+then the effective Vault role is `developer`, because the first rule already matches and later rules are not evaluated.
 
 Example Vault-issued JWT setup:
 

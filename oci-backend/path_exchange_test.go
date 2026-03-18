@@ -78,11 +78,9 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
 			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
 			"client_id":     "test-client-id",
 			"client_secret": "test-client-secret",
-			"region":        "us-ashburn-1",
 		},
 	}
 	_, err = backend.HandleRequest(context.Background(), reqConfig)
@@ -157,11 +155,9 @@ func TestPathExchange_WIFEnterprise(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
 			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
 			"client_id":     "test-client-id",
 			"client_secret": "test-client-secret",
-			"region":        "us-ashburn-1",
 		},
 	}
 	_, _ = backend.HandleRequest(context.Background(), reqConfig)
@@ -222,11 +218,9 @@ func TestPathExchange_RequestedTokenTypeValidation(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
 			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
 			"client_id":     "test-client-id",
 			"client_secret": "test-client-secret",
-			"region":        "us-ashburn-1",
 		},
 	}
 	_, err = backend.HandleRequest(context.Background(), reqConfig)
@@ -279,11 +273,9 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":             "ocid1.tenancy.oc1..test",
 			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                "test-client-id",
 			"client_secret":            "test-client-secret",
-			"region":                   "us-ashburn-1",
 			"enforce_role_claim_match": true,
 			"role_claim_key":           "vault_role",
 		},
@@ -407,11 +399,9 @@ func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                       "ocid1.tenancy.oc1..test",
 			"domain_url":                         "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                          "test-client-id",
 			"client_secret":                      "test-client-secret",
-			"region":                             "us-ashburn-1",
 			"enable_plugin_issued_subject_token": false,
 		},
 	}
@@ -443,11 +433,9 @@ func TestPathExchange_CustomRoleClaimKey(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":             "ocid1.tenancy.oc1..test",
 			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                "test-client-id",
 			"client_secret":            "test-client-secret",
-			"region":                   "us-ashburn-1",
 			"enforce_role_claim_match": true,
 			"role_claim_key":           "oci_target",
 		},
@@ -514,11 +502,9 @@ func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":             "ocid1.tenancy.oc1..test",
 			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                "test-client-id",
 			"client_secret":            "test-client-secret",
-			"region":                   "us-ashburn-1",
 			"strict_role_name_match":   true,
 			"enforce_role_claim_match": true,
 			"role_claim_key":           "vault_role",
@@ -565,11 +551,9 @@ func TestPathExchange_SubjectTokenCallbackFallback(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
 			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
 			"client_id":     "test-client-id",
 			"client_secret": "test-client-secret",
-			"region":        "us-ashburn-1",
 		},
 	}
 	_, err = backend.HandleRequest(context.Background(), reqConfig)
@@ -627,11 +611,9 @@ func TestPathExchange_SubjectTokenCallbackError(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
 			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
 			"client_id":     "test-client-id",
 			"client_secret": "test-client-secret",
-			"region":        "us-ashburn-1",
 		},
 	}
 	_, err = backend.HandleRequest(context.Background(), reqConfig)
@@ -677,11 +659,9 @@ func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                        "ocid1.tenancy.oc1..test",
 			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                           "test-client-id",
 			"client_secret":                       "test-client-secret",
-			"region":                              "us-ashburn-1",
 			"subject_token_self_mint_enabled":     true,
 			"subject_token_self_mint_issuer":      "https://vault.example.com",
 			"subject_token_self_mint_private_key": testKey,
@@ -729,11 +709,9 @@ func TestPathExchange_SubjectTokenAudienceOverrideRejectedForCallerProvidedToken
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
 			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
 			"client_id":     "test-client-id",
 			"client_secret": "test-client-secret",
-			"region":        "us-ashburn-1",
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqConfig)
@@ -764,11 +742,9 @@ func TestPathExchange_SubjectTokenAudienceOverrideRejectedWhenNotAllowlisted(t *
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                    "ocid1.tenancy.oc1..test",
 			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                       "test-client-id",
 			"client_secret":                   "test-client-secret",
-			"region":                          "us-ashburn-1",
 			"subject_token_self_mint_enabled": true,
 			"subject_token_self_mint_issuer":  "https://vault.example.com",
 		},
@@ -813,11 +789,9 @@ func TestPathExchange_DefaultCallbackSelfMintUsesAudienceOverride(t *testing.T) 
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                        "ocid1.tenancy.oc1..test",
 			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                           "test-client-id",
 			"client_secret":                       "test-client-secret",
-			"region":                              "us-ashburn-1",
 			"subject_token_self_mint_enabled":     true,
 			"subject_token_self_mint_issuer":      "https://vault.example.com",
 			"subject_token_self_mint_private_key": testKey,
@@ -859,11 +833,9 @@ func TestPathExchange_DefaultCallbackGenerateIdentityTokenUsesAudienceOverride(t
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                     "ocid1.tenancy.oc1..test",
 			"domain_url":                       "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                        "test-client-id",
 			"client_secret":                    "test-client-secret",
-			"region":                           "us-ashburn-1",
 			"subject_token_self_mint_audience": "urn:mace:oci:idcs",
 			"subject_token_allowed_audiences":  []string{"urn:oci:test"},
 		},

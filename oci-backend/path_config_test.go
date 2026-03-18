@@ -19,11 +19,9 @@ func TestPathConfig_Updates(t *testing.T) {
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"tenancy_ocid":  "ocid1.tenancy.oc1..test",
 				"domain_url":    "https://idcs-test.identity.oraclecloud.com",
 				"client_id":     "test-client-id",
 				"client_secret": "test-client-secret",
-				"region":        "us-ashburn-1",
 				"jwks_url":      "https://example.com/jwks",
 			},
 		}
@@ -76,11 +74,9 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
 			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
 			"client_id":     "test-client-id",
 			"client_secret": "test-client-secret",
-			"region":        "us-ashburn-1",
 			"jwks_url":      "https://example.com/jwks",
 		},
 	}
@@ -99,11 +95,9 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 
-		assert.Equal(t, "ocid1.tenancy.oc1..test", resp.Data["tenancy_ocid"])
 		assert.Equal(t, "https://idcs-test.identity.oraclecloud.com", resp.Data["domain_url"])
 		assert.Equal(t, "test-client-id", resp.Data["client_id"])
 		assert.Nil(t, resp.Data["client_secret"])
-		assert.Equal(t, "us-ashburn-1", resp.Data["region"])
 		assert.Equal(t, false, resp.Data["enforce_role_claim_match"])
 		assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
 		assert.Equal(t, true, resp.Data["enable_plugin_issued_subject_token"])
@@ -148,11 +142,9 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                        "ocid1.tenancy.oc1..test",
 			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                           "test-client-id",
 			"client_secret":                       "test-client-secret",
-			"region":                              "us-ashburn-1",
 			"enforce_role_claim_match":            true,
 			"role_claim_key":                      "vault_role",
 			"enable_plugin_issued_subject_token":  false,
@@ -198,11 +190,9 @@ func TestPathConfig_RoleClaimKeyRequiresEnforcement(t *testing.T) {
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"tenancy_ocid":   "ocid1.tenancy.oc1..test",
 				"domain_url":     "https://idcs-test.identity.oraclecloud.com",
 				"client_id":      "test-client-id",
 				"client_secret":  "test-client-secret",
-				"region":         "us-ashburn-1",
 				"role_claim_key": "vault_role",
 			},
 		}
@@ -221,11 +211,9 @@ func TestPathConfig_RoleClaimKeyRequiresEnforcement(t *testing.T) {
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"tenancy_ocid":             "ocid1.tenancy.oc1..test",
 				"domain_url":               "https://idcs-test.identity.oraclecloud.com",
 				"client_id":                "test-client-id",
 				"client_secret":            "test-client-secret",
-				"region":                   "us-ashburn-1",
 				"enforce_role_claim_match": true,
 				"role_claim_key":           "vault_role",
 			},
@@ -247,11 +235,9 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                        "ocid1.tenancy.oc1..test",
 			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                           "test-client-id",
 			"client_secret":                       "test-client-secret",
-			"region":                              "us-ashburn-1",
 			"subject_token_self_mint_enabled":     true,
 			"subject_token_self_mint_private_key": testKey,
 		},
@@ -267,11 +253,9 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                    "ocid1.tenancy.oc1..test",
 			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                       "test-client-id",
 			"client_secret":                   "test-client-secret",
-			"region":                          "us-ashburn-1",
 			"subject_token_self_mint_enabled": true,
 			"subject_token_self_mint_issuer":  "https://vault.example.com",
 		},
@@ -296,11 +280,9 @@ func TestPathConfig_SelfMintGeneratedKeyIsReused(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                    "ocid1.tenancy.oc1..test",
 			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                       "test-client-id",
 			"client_secret":                   "test-client-secret",
-			"region":                          "us-ashburn-1",
 			"subject_token_self_mint_enabled": true,
 			"subject_token_self_mint_issuer":  "https://vault.example.com",
 		},
@@ -320,11 +302,9 @@ func TestPathConfig_SelfMintGeneratedKeyIsReused(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                    "ocid1.tenancy.oc1..test",
 			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                       "test-client-id",
 			"client_secret":                   "test-client-secret",
-			"region":                          "us-ashburn-1",
 			"subject_token_self_mint_enabled": true,
 			"subject_token_self_mint_issuer":  "https://vault.example.com",
 		},

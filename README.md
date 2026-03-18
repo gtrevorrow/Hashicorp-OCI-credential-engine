@@ -147,8 +147,6 @@ vault write oci/config \
 - `domain_url`: OCI Identity Domain URL (for example: `https://idcs-xxxxx.identity.oraclecloud.com`)
 - `client_id`: OAuth Confidential Application client ID in the OCI Identity Domain
 - `client_secret`: OAuth Confidential Application client secret in the OCI Identity Domain
-- `tenancy_ocid`: Optional OCI tenancy metadata retained for operators
-- `region`: Optional OCI region metadata retained for operators
 - `default_ttl`: Default TTL for OCI session tokens in seconds (default: 3600)
 - `max_ttl`: Maximum TTL for OCI session tokens in seconds (default: 86400)
 - `enforce_role_claim_match`: When true, requires a caller-provided `subject_token` claim to match the requested plugin role (default: `false`)

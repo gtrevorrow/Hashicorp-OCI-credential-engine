@@ -20,13 +20,6 @@ func (b *backend) pathConfig() []*framework.Path {
 		{
 			Pattern: path.Join("config"),
 			Fields: map[string]*framework.FieldSchema{
-				"tenancy_ocid": {
-					Type:        framework.TypeString,
-					Description: "Optional OCI tenancy OCID retained for operator metadata",
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Tenancy OCID",
-					},
-				},
 				"domain_url": {
 					Type:        framework.TypeString,
 					Description: "URL of the OCI Identity Domain (e.g. https://idcs-xxxx.identity.oraclecloud.com)",
@@ -52,14 +45,6 @@ func (b *backend) pathConfig() []*framework.Path {
 						Sensitive: true,
 					},
 				},
-				"region": {
-					Type:        framework.TypeString,
-					Description: "Optional OCI region retained for operator metadata",
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "OCI Region",
-					},
-				},
-
 				"default_ttl": {
 					Type:        framework.TypeDurationSecond,
 					Description: "Default TTL for OCI session tokens (seconds)",
@@ -222,20 +207,11 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 		"subject_token_self_mint_ttl_seconds":        configSubjectTokenSelfMintTTLSeconds(config),
 		"debug_return_resolved_subject_token_claims": config.DebugReturnResolvedSubjectTokenClaims,
 	}
-	if config.TenancyOCID != "" {
-		respData["tenancy_ocid"] = config.TenancyOCID
-	}
-	if config.Region != "" {
-		respData["region"] = config.Region
-	}
-
 	return &logical.Response{Data: respData}, nil
 }
 
 // pathConfigWrite creates or updates the configuration
 func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	tenancyOCID := data.Get("tenancy_ocid").(string)
-
 	domainUrl := data.Get("domain_url").(string)
 	if domainUrl == "" {
 		return logical.ErrorResponse("missing 'domain_url'"), nil
@@ -251,19 +227,15 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		return logical.ErrorResponse("missing 'client_secret'"), nil
 	}
 
-	region := data.Get("region").(string)
-
 	existingConfig, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
 		return nil, err
 	}
 
 	config := &federatedConfig{
-		TenancyOCID:  tenancyOCID,
 		DomainUrl:    domainUrl,
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		Region:       region,
 
 		DefaultTTL: data.Get("default_ttl").(int),
 		MaxTTL:     data.Get("max_ttl").(int),
@@ -307,10 +279,6 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		}
 	}
 
-	// Validate basic OCI OCID formats
-	if tenancyOCID != "" && !strings.HasPrefix(tenancyOCID, "ocid1.tenancy.") {
-		return logical.ErrorResponse("invalid tenancy_ocid format"), nil
-	}
 	if !strings.HasPrefix(domainUrl, "https://") {
 		return logical.ErrorResponse("invalid domain_url format, must start with https://"), nil
 	}
@@ -418,8 +386,6 @@ You must configure:
   - client_secret: The Client Secret of the OAuth Confidential Application
 
 Optional:
-  - tenancy_ocid: Optional OCI tenancy metadata retained for operators
-  - region: Optional OCI region metadata retained for operators
   - default_ttl: Default session token TTL (default: 3600s)
   - max_ttl: Maximum session token TTL (default: 86400s)
   - enforce_role_claim_match: Require caller-provided subject_token claim to match request role (default: false)

@@ -259,12 +259,6 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		"expires_in":           int(ttl.Seconds()),
 		"expires_at":           time.Now().Add(ttl).Format(time.RFC3339),
 	}
-	if config.Region != "" {
-		respData["region"] = config.Region
-	}
-	if config.TenancyOCID != "" {
-		respData["tenancy_ocid"] = config.TenancyOCID
-	}
 	if resolvedSubjectTokenClaims != nil {
 		respData["resolved_subject_token_claims"] = resolvedSubjectTokenClaims
 	}
@@ -353,14 +347,6 @@ func (b *backend) ociTokenSecret() *framework.Secret {
 				Type:        framework.TypeString,
 				Description: "OCI token type returned by token exchange",
 			},
-			"region": {
-				Type:        framework.TypeString,
-				Description: "OCI region",
-			},
-			"tenancy_ocid": {
-				Type:        framework.TypeString,
-				Description: "OCI tenancy OCID",
-			},
 		},
 		Revoke: b.tokenRevoke,
 	}
@@ -406,6 +392,4 @@ The response includes:
 	- requested_token_type: The OCI token type requested/returned
   - token_type: Bearer
   - expires_in: Token lifetime in seconds
-  - region: The configured OCI region
-  - tenancy_ocid: The OCI tenancy OCID
 `

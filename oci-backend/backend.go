@@ -99,14 +99,8 @@ func TLSProvider() (*tls.Config, error) {
 
 // federatedConfig holds OCI federated identity configuration
 type federatedConfig struct {
-	// OCI tenancy and identity domain
-	TenancyOCID string `json:"tenancy_ocid" mapstructure:"tenancy_ocid"`
-
 	// OCI Identity Domain URL (e.g., https://idcs-xxxx.identity.oraclecloud.com)
 	DomainUrl string `json:"domain_url" mapstructure:"domain_url"`
-
-	// OCI Region
-	Region string `json:"region" mapstructure:"region"`
 
 	// Client credentials for the OAuth Confidential Application inside the Identity Domain
 	ClientID     string `json:"client_id" mapstructure:"client_id"`

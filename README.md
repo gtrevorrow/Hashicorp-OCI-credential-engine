@@ -21,21 +21,82 @@ Actor definitions used in diagrams:
 
 #### 1) Standard Exchange (Caller Provides `subject_token`)
 
-![Standard Exchange Diagram](./assets/diagram-1.svg)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Plugin
+    participant S as Vault Storage
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` with `subject_token`
+    V->>S: Read backend config and optional plugin role
+    S-->>V: Config and role constraints
+    V->>V: Validate request fields and TTL
+    V->>V: If `subject_token_role_mappings` exist, derive Vault role from caller JWT
+    V->>V: Generate exchange RSA keypair when `public_key` is omitted
+    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    O-->>V: OCI UPST or RPST
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair when generated
+```
 
 Client sends `subject_token`; plugin validates role constraints/guardrails and performs token exchange against OCI.
 
 #### 2) Exchange Without `subject_token` (Plugin-Issued Subject Token Mode)
 
-![Exchange Without subject_token (Plugin-Issued Subject Token Mode)](./assets/diagram-2.svg)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Plugin
+    participant S as Vault Storage
+    participant SV as Vault System View
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` without `subject_token`
+    V->>S: Read backend config and optional plugin role
+    S-->>V: Config and role constraints
+    V->>V: Check `enable_plugin_issued_subject_token=true`
+    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>SV: `GenerateIdentityToken(audience)`
+    SV-->>V: Vault-issued identity token
+    V->>V: Generate exchange RSA keypair when `public_key` is omitted
+    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    O-->>V: OCI UPST or RPST
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair when generated
+```
 
 Client omits `subject_token`; plugin uses its plugin-issued subject-token mode when enabled. Default callback behavior is: `GenerateIdentityToken` first, then self-mint JWT only if needed and configured.
 
-#### 3) Role-Claim Guardrail and Strict Role Name Validation
+#### 3) Caller JWT Role Mapping
 
-![Role-Claim Guardrail and Strict Role Name Validation](./assets/diagram-3.svg)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Plugin
+    participant S as Vault Storage
+    participant O as OCI Token Endpoint
 
-Plugin enforces role-name validation and optional claim-to-role matching before OCI exchange.
+    C->>V: `vault write oci/exchange` with caller JWT
+    V->>S: Read backend config and role policy
+    S-->>V: `subject_token_role_mappings`, role entries
+    V->>V: Parse caller JWT payload only
+    V->>V: Evaluate ordered role-mapping rules
+    V->>V: First matching rule selects Vault role
+    V->>S: Read derived Vault role entry
+    S-->>V: Role TTL and local policy constraints
+
+    alt Mapping rule matches
+        V->>O: POST `/oauth2/v1/token`
+        O-->>V: OCI session token
+        V-->>C: Success response
+    else No rule matches
+        V-->>C: Error response before OCI call
+    end
+```
+
+Plugin derives the effective Vault role from trusted JWT claims before OCI exchange.
 
 ### Terminology
 When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC 8693) and OCI Identity nomenclature:
@@ -164,11 +225,7 @@ vault write oci/config \
 - `subject_token_self_mint_private_key`: Optional PEM RSA private key. If omitted while self-mint is enabled, the plugin generates one and stores it in Vault plugin storage
 - `debug_return_resolved_subject_token_claims`: Development-only flag that includes decoded claims from the resolved subject token in `oci/exchange` responses, including error responses
 
-If `subject_token_self_mint_enabled=true`, also plan how OCI will discover the public signing key:
-
-1. Read the plugin JWKS from `oci/jwks`
-2. Publish that JWKS to an HTTPS location reachable by OCI
-3. Point OCI token exchange trust configuration at that published JWKS URL
+If `subject_token_self_mint_enabled=true`, OCI must be able to discover the published JWKS for the self-mint signing key. See [Self-Mint JWKS Publication Workflow](#self-mint-jwks-publication-workflow).
 
 The plugin keeps the private signing key in Vault plugin storage. The published JWKS contains only the public key material.
 

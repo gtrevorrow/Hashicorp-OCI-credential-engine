@@ -2,8 +2,10 @@ package ocibackend
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"strings"
 	"testing"
@@ -598,6 +600,71 @@ func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
 	require.Contains(t, resp.Error().Error(), "token exchange failed")
 }
 
+func TestPathExchange_DefaultCallbackSelfMintUsesCallerPublicKey(t *testing.T) {
+	testKey := generateTestRSAPrivateKeyPEM(t)
+	suppliedPublicKey := deriveTestPublicKeyPEM(t, testKey)
+
+	b, err := Factory("v0.0.0-test")(context.Background(), &logical.BackendConfig{
+		System: &mockSystemView{
+			mockIdentity: "",
+			StaticSystemView: logical.StaticSystemView{
+				DefaultLeaseTTLVal: time.Hour,
+				MaxLeaseTTLVal:     24 * time.Hour,
+			},
+		},
+	})
+	require.NoError(t, err)
+	backend := b.(*backend)
+	storage := &logical.InmemStorage{}
+
+	backend.tokenExchanger = func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+		require.NotEmpty(t, subjectToken)
+		require.Equal(t, suppliedPublicKey, publicKey)
+		return &tokenExchangeResult{
+			AccessToken:        "access-token",
+			SessionToken:       "session-token",
+			TokenType:          "Bearer",
+			RequestedTokenType: ociRequestedTokenTypeUPST,
+			PrivateKey:         "should-not-be-returned",
+			PublicKey:          "should-not-be-returned",
+		}, nil
+	}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                           "test-client-id",
+			"client_secret":                       "test-client-secret",
+			"subject_token_self_mint_enabled":     true,
+			"subject_token_self_mint_issuer":      "https://vault.example.com",
+			"subject_token_self_mint_private_key": testKey,
+		},
+	}
+	_, err = backend.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"public_key": suppliedPublicKey,
+		},
+	}
+
+	resp, err := backend.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.False(t, resp.IsError())
+	require.Equal(t, "access-token", resp.Data["access_token"])
+	require.Equal(t, "session-token", resp.Data["session_token"])
+	require.Nil(t, resp.Data["private_key"])
+	require.Nil(t, resp.Data["public_key"])
+}
+
 func TestPathExchange_SubjectTokenAudienceOverrideRejectedForCallerProvidedToken(t *testing.T) {
 	b, storage := getTestBackend(t)
 	installFailingTokenExchanger(b)
@@ -756,6 +823,20 @@ func mustGetConfig(t *testing.T, b *backend, storage logical.Storage) *federated
 	require.NoError(t, err)
 	require.NotNil(t, config)
 	return config
+}
+
+func deriveTestPublicKeyPEM(t *testing.T, privateKeyPEM string) string {
+	t.Helper()
+
+	block, _ := pem.Decode([]byte(privateKeyPEM))
+	require.NotNil(t, block)
+
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	require.NoError(t, err)
+
+	publicKeyPEM, err := marshalPublicKeyToPEM(privateKey.Public())
+	require.NoError(t, err)
+	return publicKeyPEM
 }
 
 func TestDefaultCallbackSelfMintUsesTrustedVaultIdentityClaims(t *testing.T) {

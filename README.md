@@ -359,6 +359,7 @@ Design notes:
 - OCI trust rules should use the Vault-derived claims above rather than caller-supplied parameters.
 - When the caller request is backed by a Vault Identity entity, `vault_entity_id` is the preferred stable trust-mapping claim.
 - When the caller is using a token flow without an attached entity, the self-minted JWT still includes token-context claims such as `vault_display_name`, `vault_mount_accessor`, `vault_mount_type`, and `vault_client_token_accessor`, and OCI trust can map on those if needed.
+- Claims like `vault_display_name` and `vault_client_token_accessor` are a weaker trust anchor than `vault_entity_id` because they identify token context rather than a durable Vault identity. Prefer `vault_entity_id` whenever it is available.
 
 ### Using with OCI CLI
 
@@ -480,9 +481,12 @@ Use Vault policy boundaries as the primary control plane:
 4. Enable `enforce_role_claim_match=true` with a dedicated claim key (for example `vault_role`) when callers provide their own JWTs and you want the plugin role to be consistent with that caller-supplied token.
 5. Treat plugin-issued self-mint as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the request `role`.
 6. Enable `strict_role_name_match=true` to prevent malformed role values.
-7. Limit token lifetime with conservative `default_ttl`, `max_ttl`, and per-role TTL caps.
-8. Protect `oci/config` write access so only operators can rotate/replace self-mint settings and keys.
+7. Protect `oci/config` write access so only operators can rotate or replace self-mint settings and signing keys.
+8. Treat `oci/exchange` as a privileged identity-issuance path when plugin-issued subject-token mode is enabled; do not grant it broadly just because OCI permissions are controlled later by service-user policy.
 9. Expose `oci/jwks` as read-only to systems that need trust bootstrap; do not grant broader plugin capabilities with it.
+
+Highly visible operator note:
+- Vault policy on `oci/config` and `oci/exchange` is part of the security boundary for the self-minted flow. If those paths are too broadly accessible, callers may be able to mint Vault-backed subject tokens or alter the signing/trust configuration.
 
 ## Development
 

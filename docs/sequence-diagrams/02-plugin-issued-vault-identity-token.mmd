@@ -9,7 +9,7 @@ sequenceDiagram
     C->>V: `vault write oci/exchange` without `subject_token`
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
-    V->>V: Check `allow_plugin_identity_fallback=true`
+    V->>V: Check `enable_plugin_issued_subject_token=true`
     V->>V: Resolve audience from config or allowlisted `subject_token_audience`
     V->>SV: `GenerateIdentityToken(audience)`
     SV-->>V: Vault-issued identity token

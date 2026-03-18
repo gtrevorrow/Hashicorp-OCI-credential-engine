@@ -106,6 +106,7 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		assert.Equal(t, "us-ashburn-1", resp.Data["region"])
 		assert.Equal(t, false, resp.Data["enforce_role_claim_match"])
 		assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
+		assert.Equal(t, true, resp.Data["enable_plugin_issued_subject_token"])
 		assert.Equal(t, true, resp.Data["allow_plugin_identity_fallback"])
 		assert.Equal(t, false, resp.Data["strict_role_name_match"])
 		assert.Equal(t, false, resp.Data["subject_token_self_mint_enabled"])
@@ -155,7 +156,7 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 			"region":                              "us-ashburn-1",
 			"enforce_role_claim_match":            true,
 			"role_claim_key":                      "vault_role",
-			"allow_plugin_identity_fallback":      false,
+			"enable_plugin_issued_subject_token":  false,
 			"strict_role_name_match":              true,
 			"subject_token_self_mint_enabled":     true,
 			"subject_token_self_mint_issuer":      "https://vault.example.com",
@@ -179,6 +180,7 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 
 	assert.Equal(t, true, resp.Data["enforce_role_claim_match"])
 	assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
+	assert.Equal(t, false, resp.Data["enable_plugin_issued_subject_token"])
 	assert.Equal(t, false, resp.Data["allow_plugin_identity_fallback"])
 	assert.Equal(t, true, resp.Data["strict_role_name_match"])
 	assert.Equal(t, true, resp.Data["subject_token_self_mint_enabled"])
@@ -186,6 +188,38 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 	assert.Equal(t, "urn:mace:oci:idcs", resp.Data["subject_token_self_mint_audience"])
 	assert.Equal(t, []string{"urn:oci:test", "urn:oci:prod"}, resp.Data["subject_token_allowed_audiences"])
 	assert.Equal(t, 900, resp.Data["subject_token_self_mint_ttl_seconds"])
+}
+
+func TestPathConfig_DeprecatedPluginIssuedSubjectTokenAlias(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqCreate := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                     "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                      "test-client-id",
+			"client_secret":                  "test-client-secret",
+			"allow_plugin_identity_fallback": false,
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), reqCreate)
+	require.NoError(t, err)
+	assert.False(t, resp != nil && resp.IsError())
+
+	reqRead := &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	}
+	readResp, err := b.HandleRequest(context.Background(), reqRead)
+	require.NoError(t, err)
+	require.NotNil(t, readResp)
+
+	assert.Equal(t, false, readResp.Data["enable_plugin_issued_subject_token"])
+	assert.Equal(t, false, readResp.Data["allow_plugin_identity_fallback"])
 }
 
 func TestPathConfig_RoleClaimKeyRequiresEnforcement(t *testing.T) {

@@ -16,7 +16,7 @@ Actor definitions used in diagrams:
 - **Vault OCI Plugin**: This secrets-engine plugin instance mounted in Vault.
 - **Vault Storage**: Plugin storage view used for reading config and role entries.
 - **Vault System View**: Vault runtime interface available to plugins; used by the default subject-token callback to call `GenerateIdentityToken` when available.
-- **Subject Token Callback**: Plugin hook used when `subject_token` is omitted and `allow_plugin_identity_fallback=true`. This is the plugin-issued subject-token mode. The default callback tries Vault identity-token generation first, then self-mints only if needed and configured.
+- **Subject Token Callback**: Plugin hook used when `subject_token` is omitted and `enable_plugin_issued_subject_token=true`. This is the plugin-issued subject-token mode. The default callback tries Vault identity-token generation first, then self-mints only if needed and configured.
 - **OCI Token Endpoint**: OCI Identity Domain OAuth token exchange endpoint (`/oauth2/v1/token`).
 
 #### 1) Standard Exchange (Caller Provides `subject_token`)
@@ -49,7 +49,7 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
 - **UPST and RPST Support**: Request either `urn:oci:token-type:oci-upst` or `urn:oci:token-type:oci-rpst`
 - **Returned OCI Key Pair**: Exchange responses include PEM-encoded `private_key` and `public_key` for request-signing workflows
-- **Plugin-Issued Subject Token Mode**: If `subject_token` is omitted and `allow_plugin_identity_fallback=true`, the plugin resolves a token itself (default callback: Vault identity token first, self-mint only if needed and configured)
+- **Plugin-Issued Subject Token Mode**: If `subject_token` is omitted and `enable_plugin_issued_subject_token=true`, the plugin resolves a token itself (default callback: Vault identity token first, self-mint only if needed and configured)
 - **Federated Identity**: Leverage OCI IAM Identity Domains with external IdPs
 - **Role-based TTL Policies**: Define roles with default and maximum TTL constraints
 - **Lease Management**: OCI tokens are issued as Vault secrets with TTL-based lease handling
@@ -138,7 +138,7 @@ vault write oci/config \
     max_ttl=28800 \
     enforce_role_claim_match=false \
     role_claim_key="vault_role" \
-    allow_plugin_identity_fallback=true \
+    enable_plugin_issued_subject_token=true \
     strict_role_name_match=false \
     subject_token_self_mint_enabled=false \
     subject_token_allowed_audiences="urn:oci:test,urn:oci:prod"
@@ -154,7 +154,8 @@ vault write oci/config \
 - `max_ttl`: Maximum TTL for OCI session tokens in seconds (default: 86400)
 - `enforce_role_claim_match`: When true, requires a caller-provided `subject_token` claim to match the requested plugin role (default: `false`)
 - `role_claim_key`: JWT claim key used for role matching when enforcement is enabled (default: `vault_role`)
-- `allow_plugin_identity_fallback`: When true, plugin-issued subject-token mode is enabled when the caller omits `subject_token` (default: `true`)
+- `enable_plugin_issued_subject_token`: When true, plugin-issued subject-token mode is enabled when the caller omits `subject_token` (default: `true`)
+- `allow_plugin_identity_fallback`: Deprecated alias for `enable_plugin_issued_subject_token`
 - `strict_role_name_match`: When true, requires role names to match `[A-Za-z0-9._:-]+` (default: `false`)
 - `subject_token_self_mint_enabled`: Enables built-in self-mint in plugin-issued subject-token mode when Vault identity-token generation is unavailable (default: `false`)
 - `subject_token_self_mint_issuer`: Required when self-mint is enabled
@@ -223,7 +224,7 @@ vault write oci/exchange \
     ttl=3600
 ```
 
-*Note: Omitting `subject_token` uses the plugin-issued subject-token mode and requires `allow_plugin_identity_fallback=true`. The default callback first attempts Vault identity-token generation; if unavailable, it can self-mint only when `subject_token_self_mint_enabled=true` and self-mint config is set.*
+*Note: Omitting `subject_token` uses the plugin-issued subject-token mode and requires `enable_plugin_issued_subject_token=true`. The default callback first attempts Vault identity-token generation; if unavailable, it can self-mint only when `subject_token_self_mint_enabled=true` and self-mint config is set.*
 
 If the caller omits `subject_token`, it may also provide `subject_token_audience` to request an alternate audience for the plugin-issued subject token. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
 
@@ -324,7 +325,7 @@ vault write oci/exchange \
 
 See [DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md](DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md) for full architecture and implementation details.
 
-*Important: No-`subject_token` flow uses plugin-issued subject-token mode and depends on `allow_plugin_identity_fallback=true`. With the default callback, Vault identity-token generation is attempted first; if unavailable, self-mint is used only when explicitly configured. Self-minted tokens use Vault-derived identity claims, not the request `role`.*
+*Important: No-`subject_token` flow uses plugin-issued subject-token mode and depends on `enable_plugin_issued_subject_token=true`. With the default callback, Vault identity-token generation is attempted first; if unavailable, self-mint is used only when explicitly configured. Self-minted tokens use Vault-derived identity claims, not the request `role`.*
 
 ### Default Self-Mint Claim Set
 
@@ -437,7 +438,7 @@ vault read oci/jwks
   "ttl": 3600
 }
 ```
-*(Note: `subject_token` is optional when `allow_plugin_identity_fallback=true` and the plugin-issued subject-token mode can resolve a token. `subject_token_audience` is only used for plugin-issued subject tokens. The plugin always sends `subject_token_type=jwt` to OCI.)*
+*(Note: `subject_token` is optional when `enable_plugin_issued_subject_token=true` and the plugin-issued subject-token mode can resolve a token. `subject_token_audience` is only used for plugin-issued subject tokens. The plugin always sends `subject_token_type=jwt` to OCI.)*
 
 `requested_token_type` defaults to `urn:oci:token-type:oci-upst`. Supported values:
 - `urn:oci:token-type:oci-upst`
@@ -477,7 +478,7 @@ Use Vault policy boundaries as the primary control plane:
 
 1. Grant `update` on `oci/exchange` only to trusted workloads.
 2. Restrict role usage with path-based ACLs so each workload can only call specific role paths or namespaces.
-3. Keep `allow_plugin_identity_fallback=false` by default for general clients, and enable plugin-issued subject-token mode only for tightly scoped policies.
+3. Keep `enable_plugin_issued_subject_token=false` by default for general clients, and enable plugin-issued subject-token mode only for tightly scoped policies.
 4. Enable `enforce_role_claim_match=true` with a dedicated claim key (for example `vault_role`) when callers provide their own JWTs and you want the plugin role to be consistent with that caller-supplied token.
 5. Treat plugin-issued self-mint as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the request `role`.
 6. Enable `strict_role_name_match=true` to prevent malformed role values.

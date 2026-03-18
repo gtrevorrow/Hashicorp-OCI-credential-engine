@@ -15,7 +15,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | CFG-07 | Config delete | Delete after creation | Config removed, subsequent read fails |
 | CFG-08 | role_claim_key without enforcement | Set role_claim_key while enforce_role_claim_match=false | Error: role_claim_key requires enforce_role_claim_match=true |
 | CFG-09 | strict_role_name_match enabled | Set strict_role_name_match=true | Success, strict role-name validation enabled |
-| CFG-10 | allow_plugin_identity_fallback disabled | Set allow_plugin_identity_fallback=false | Success, subject_token becomes required unless changed |
+| CFG-10 | plugin-issued subject token disabled | Set enable_plugin_issued_subject_token=false | Success, subject_token becomes required unless changed |
 | CFG-11 | self-mint enabled without private key | Set subject_token_self_mint_enabled=true, issuer set, omit private key | Success, plugin auto-generates and stores RSA signing key |
 | CFG-12 | allowlisted plugin-issued audiences configured | Set subject_token_allowed_audiences | Success, allowed plugin-issued audiences persisted |
 
@@ -41,10 +41,10 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-01 | Exchange for UPST (default) | subject_token, role | UPST token returned |
 | EXC-02 | Exchange for RPST | + requested_token_type=oci-rpst, res_type | RPST token returned |
 | EXC-03 | Exchange with explicit UPST type | requested_token_type=oci-upst | UPST token returned |
-| EXC-04 | Exchange without subject_token (plugin-issued mode enabled) | role only, omit subject_token, enforce=false, allow_plugin_identity_fallback=true | Uses plugin-issued subject-token mode (Vault identity token first; self-mint if configured) |
+| EXC-04 | Exchange without subject_token (plugin-issued mode enabled) | role only, omit subject_token, enforce=false, enable_plugin_issued_subject_token=true | Uses plugin-issued subject-token mode (Vault identity token first; self-mint if configured) |
 | EXC-05 | Exchange with TTL override | ttl < role.default_ttl | Custom TTL applied |
 | EXC-06 | Exchange with public_key provided | public_key in request | No private_key in response |
-| EXC-07 | Exchange without subject_token (plugin-issued mode disabled) | omit subject_token, allow_plugin_identity_fallback=false | Error: missing subject_token and plugin-issued mode disabled |
+| EXC-07 | Exchange without subject_token (plugin-issued mode disabled) | omit subject_token, enable_plugin_issued_subject_token=false | Error: missing subject_token and plugin-issued mode disabled |
 | EXC-08 | Exchange without subject_token (enforcement enabled, no role) | omit subject_token, enforce_role_claim_match=true, no role | Error: missing role while enforcement enabled |
 | EXC-09 | Exchange without subject_token (enforcement enabled, role set) | omit subject_token, enforce_role_claim_match=true, role set | Uses plugin-issued token; role-claim enforcement is skipped because no caller-provided JWT was supplied |
 | EXC-10 | Exchange without subject_token (allowlisted audience override) | omit subject_token, set subject_token_audience to allowed value | Plugin-issued token uses requested audience |
@@ -212,4 +212,4 @@ Future additions:
 - `enforce_role_claim_match` can use default `role_claim_key` (`vault_role`) unless overridden
 - If `enforce_role_claim_match=true`, it applies to caller-provided `subject_token` values; plugin-issued tokens are evaluated under the plugin-issued/self-mint trust model instead
 - `subject_token_audience` is accepted only when `subject_token` is omitted and the requested audience is present in `subject_token_allowed_audiences`
-- If `allow_plugin_identity_fallback=false`, callers must supply `subject_token`
+- If `enable_plugin_issued_subject_token=false`, callers must supply `subject_token`

@@ -92,12 +92,20 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Role Claim Key",
 					},
 				},
-				"allow_plugin_identity_fallback": {
+				"enable_plugin_issued_subject_token": {
 					Type:        framework.TypeBool,
-					Description: "When true, allow callback fallback if subject_token is omitted",
+					Description: "When true, allow the plugin to resolve or mint a subject_token when the caller omits one",
 					Default:     true,
 					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Allow Plugin Identity Fallback",
+						Name: "Enable Plugin-Issued Subject Token",
+					},
+				},
+				"allow_plugin_identity_fallback": {
+					Type:        framework.TypeBool,
+					Description: "Deprecated alias for enable_plugin_issued_subject_token",
+					Default:     true,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Allow Plugin Identity Fallback (Deprecated)",
 					},
 				},
 				"strict_role_name_match": {
@@ -213,6 +221,7 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 		"max_ttl":                                    config.MaxTTL,
 		"enforce_role_claim_match":                   config.EnforceRoleClaimMatch,
 		"role_claim_key":                             configRoleClaimKey(config),
+		"enable_plugin_issued_subject_token":         configAllowPluginIdentityFallback(config),
 		"allow_plugin_identity_fallback":             configAllowPluginIdentityFallback(config),
 		"strict_role_name_match":                     config.StrictRoleNameMatch,
 		"subject_token_self_mint_enabled":            config.SubjectTokenSelfMintEnabled,
@@ -279,8 +288,11 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		SubjectTokenSelfMintPrivateKey:        data.Get("subject_token_self_mint_private_key").(string),
 		DebugReturnResolvedSubjectTokenClaims: data.Get("debug_return_resolved_subject_token_claims").(bool),
 	}
-	allowPluginIdentityFallback := data.Get("allow_plugin_identity_fallback").(bool)
-	config.AllowPluginIdentityFallback = &allowPluginIdentityFallback
+	enablePluginIssuedSubjectToken := data.Get("enable_plugin_issued_subject_token").(bool)
+	if _, ok := req.Data["allow_plugin_identity_fallback"]; ok {
+		enablePluginIssuedSubjectToken = data.Get("allow_plugin_identity_fallback").(bool)
+	}
+	config.AllowPluginIdentityFallback = &enablePluginIssuedSubjectToken
 
 	// Preserve previously stored signing key unless caller explicitly sets a replacement.
 	if _, keyProvided := req.Data["subject_token_self_mint_private_key"]; !keyProvided && existingConfig != nil {
@@ -424,7 +436,8 @@ Optional:
   - max_ttl: Maximum session token TTL (default: 86400s)
   - enforce_role_claim_match: Require caller-provided subject_token claim to match request role (default: false)
   - role_claim_key: Claim key used for role matching (default: vault_role)
-  - allow_plugin_identity_fallback: Allow callback fallback when subject_token is omitted (default: true)
+  - enable_plugin_issued_subject_token: Allow the plugin to resolve or mint subject_token when omitted by the caller (default: true)
+  - allow_plugin_identity_fallback: Deprecated alias for enable_plugin_issued_subject_token
   - strict_role_name_match: Require role names to match [A-Za-z0-9._:-]+ (default: false)
   - subject_token_self_mint_enabled: Enable built-in callback self-mint fallback (default: false)
   - subject_token_self_mint_issuer: Required when self-mint is enabled

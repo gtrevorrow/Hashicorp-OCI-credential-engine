@@ -382,8 +382,8 @@ This endpoint accepts a JWT subject token from a configured external Identity Pr
 and exchanges it for an OCI session token via the OCI IAM token exchange API.
 
 Subject token behavior:
-  - subject_token is required when allow_plugin_identity_fallback=false
-  - subject_token is optional when allow_plugin_identity_fallback=true and callback fallback is configured
+  - subject_token is required when enable_plugin_issued_subject_token=false
+  - subject_token is optional when enable_plugin_issued_subject_token=true and callback fallback is configured
 
 Optional parameters:
 	- requested_token_type: OCI token type (default: urn:oci:token-type:oci-upst)

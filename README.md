@@ -46,6 +46,36 @@ sequenceDiagram
 
 Client sends `subject_token`; plugin validates role constraints/guardrails and performs token exchange against OCI.
 
+#### 1.1) Caller JWT Role Mapping Variant
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Credential Engine
+    participant S as Vault Storage
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` with caller JWT
+    V->>S: Read backend config and role policy
+    S-->>V: `subject_token_role_mappings`, role entries
+    V->>V: Parse caller JWT payload only
+    V->>V: Evaluate ordered role-mapping rules
+    V->>V: First matching rule selects Vault role
+    V->>S: Read derived Vault role entry
+    S-->>V: Role TTL and local policy constraints
+
+    alt Mapping rule matches
+        V->>O: POST `/oauth2/v1/token`
+        O-->>V: OCI session token
+        V-->>C: Success response
+    else No rule matches
+        V-->>C: Error response before OCI call
+    end
+```
+
+This is a caller-supplied `subject_token` variant of flow 1. When `subject_token_role_mappings` are configured, the engine derives the effective Vault role from trusted JWT claims before OCI exchange instead of relying on a caller-supplied `role`.
+
 #### 2) Exchange Without `subject_token` (Plugin-Issued Subject Token Mode)
 
 ```mermaid
@@ -76,7 +106,7 @@ sequenceDiagram
 
 Client omits `subject_token`; plugin uses its plugin-issued subject-token mode when enabled. Default callback behavior is: `GenerateIdentityToken` first, then self-mint JWT only if needed and configured.
 
-#### 3) Exchange Without `subject_token` (Plugin-Issued Self-Mint)
+#### 2.1) Plugin-Issued Self-Mint Variant
 
 ```mermaid
 sequenceDiagram
@@ -109,36 +139,6 @@ sequenceDiagram
 ```
 
 Client omits `subject_token`; Vault identity-token generation is unavailable, so the plugin self-mints the subject token from trusted Vault context and then exchanges it with OCI.
-
-#### 4) Caller JWT Role Mapping Variant of 1
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor C as Client / Workload
-    participant V as Vault OCI Credential Engine
-    participant S as Vault Storage
-    participant O as OCI Token Endpoint
-
-    C->>V: `vault write oci/exchange` with caller JWT
-    V->>S: Read backend config and role policy
-    S-->>V: `subject_token_role_mappings`, role entries
-    V->>V: Parse caller JWT payload only
-    V->>V: Evaluate ordered role-mapping rules
-    V->>V: First matching rule selects Vault role
-    V->>S: Read derived Vault role entry
-    S-->>V: Role TTL and local policy constraints
-
-    alt Mapping rule matches
-        V->>O: POST `/oauth2/v1/token`
-        O-->>V: OCI session token
-        V-->>C: Success response
-    else No rule matches
-        V-->>C: Error response before OCI call
-    end
-```
-
-This is a caller-supplied `subject_token` variant of flow 1. When `subject_token_role_mappings` are configured, the engine derives the effective Vault role from trusted JWT claims before OCI exchange instead of relying on a caller-supplied `role`.
 
 ### Terminology
 When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC 8693) and OCI Identity nomenclature:

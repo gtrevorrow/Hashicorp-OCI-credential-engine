@@ -98,8 +98,7 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		assert.Equal(t, "https://idcs-test.identity.oraclecloud.com", resp.Data["domain_url"])
 		assert.Equal(t, "test-client-id", resp.Data["client_id"])
 		assert.Nil(t, resp.Data["client_secret"])
-		assert.Equal(t, false, resp.Data["enforce_role_claim_match"])
-		assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
+		assert.Nil(t, resp.Data["subject_token_role_mappings"])
 		assert.Equal(t, true, resp.Data["enable_plugin_issued_subject_token"])
 		assert.Equal(t, false, resp.Data["strict_role_name_match"])
 		assert.Equal(t, false, resp.Data["subject_token_self_mint_enabled"])
@@ -132,7 +131,7 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 	})
 }
 
-func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
+func TestPathConfig_SubjectTokenRoleMappings(t *testing.T) {
 	b, storage := getTestBackend(t)
 	testKey := generateTestRSAPrivateKeyPEM(t)
 	// Covers CFG-02 and exercises CFG-09/CFG-10 with non-default settings.
@@ -142,11 +141,10 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
+			"subject_token_role_mappings":         `[{"claim":"vault_role","op":"eq","value":"dev","role":"dev"}]`,
 			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                           "test-client-id",
 			"client_secret":                       "test-client-secret",
-			"enforce_role_claim_match":            true,
-			"role_claim_key":                      "vault_role",
 			"enable_plugin_issued_subject_token":  false,
 			"strict_role_name_match":              true,
 			"subject_token_self_mint_enabled":     true,
@@ -169,8 +167,9 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
-	assert.Equal(t, true, resp.Data["enforce_role_claim_match"])
-	assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
+	require.Equal(t, []subjectTokenRoleMapping{
+		{Claim: "vault_role", Op: "eq", Value: "dev", Role: "dev"},
+	}, resp.Data["subject_token_role_mappings"])
 	assert.Equal(t, false, resp.Data["enable_plugin_issued_subject_token"])
 	assert.Equal(t, true, resp.Data["strict_role_name_match"])
 	assert.Equal(t, true, resp.Data["subject_token_self_mint_enabled"])
@@ -180,20 +179,19 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 	assert.Equal(t, 900, resp.Data["subject_token_self_mint_ttl_seconds"])
 }
 
-func TestPathConfig_RoleClaimKeyRequiresEnforcement(t *testing.T) {
+func TestPathConfig_SubjectTokenRoleMappingsValidation(t *testing.T) {
 	b, storage := getTestBackend(t)
 
-	// Covers CFG-08.
-	t.Run("Rejects role_claim_key without enforcement", func(t *testing.T) {
+	t.Run("Rejects invalid JSON", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"domain_url":     "https://idcs-test.identity.oraclecloud.com",
-				"client_id":      "test-client-id",
-				"client_secret":  "test-client-secret",
-				"role_claim_key": "vault_role",
+				"domain_url":                  "https://idcs-test.identity.oraclecloud.com",
+				"client_id":                   "test-client-id",
+				"client_secret":               "test-client-secret",
+				"subject_token_role_mappings": `{not-json}`,
 			},
 		}
 
@@ -201,27 +199,48 @@ func TestPathConfig_RoleClaimKeyRequiresEnforcement(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "role_claim_key requires enforce_role_claim_match=true")
+		require.Contains(t, resp.Error().Error(), "invalid subject_token_role_mappings")
 	})
 
-	// Covers CFG-02 for enforced role-claim config.
-	t.Run("Accepts role_claim_key with enforcement", func(t *testing.T) {
+	t.Run("Rejects unsupported operator", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"domain_url":               "https://idcs-test.identity.oraclecloud.com",
-				"client_id":                "test-client-id",
-				"client_secret":            "test-client-secret",
-				"enforce_role_claim_match": true,
-				"role_claim_key":           "vault_role",
+				"domain_url":                  "https://idcs-test.identity.oraclecloud.com",
+				"client_id":                   "test-client-id",
+				"client_secret":               "test-client-secret",
+				"subject_token_role_mappings": `[{"claim":"vault_role","op":"ne","value":"dev","role":"dev"}]`,
 			},
 		}
 
 		resp, err := b.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
-		assert.False(t, resp != nil && resp.IsError())
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "unsupported op")
+	})
+
+	t.Run("Rejects invalid mapped role in strict mode", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"domain_url":                  "https://idcs-test.identity.oraclecloud.com",
+				"client_id":                   "test-client-id",
+				"client_secret":               "test-client-secret",
+				"strict_role_name_match":      true,
+				"subject_token_role_mappings": `[{"claim":"groups","op":"co","value":"team","role":"dev@team"}]`,
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "invalid mapped role")
 	})
 }
 

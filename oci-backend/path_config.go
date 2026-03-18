@@ -61,20 +61,11 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Maximum TTL",
 					},
 				},
-				"enforce_role_claim_match": {
-					Type:        framework.TypeBool,
-					Description: "When true, require caller-provided subject_token claim to match request role",
-					Default:     false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Enforce Role Claim Match",
-					},
-				},
-				"role_claim_key": {
+				"subject_token_role_mappings": {
 					Type:        framework.TypeString,
-					Description: "JWT claim key used for role matching when enforce_role_claim_match is true",
-					Default:     "vault_role",
+					Description: "JSON array of ordered role-mapping rules for caller-supplied subject_token values",
 					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Role Claim Key",
+						Name: "Subject Token Role Mappings",
 					},
 				},
 				"enable_plugin_issued_subject_token": {
@@ -196,8 +187,7 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 
 		"default_ttl":                                config.DefaultTTL,
 		"max_ttl":                                    config.MaxTTL,
-		"enforce_role_claim_match":                   config.EnforceRoleClaimMatch,
-		"role_claim_key":                             configRoleClaimKey(config),
+		"subject_token_role_mappings":                config.SubjectTokenRoleMappings,
 		"enable_plugin_issued_subject_token":         configEnablePluginIssuedSubjectToken(config),
 		"strict_role_name_match":                     config.StrictRoleNameMatch,
 		"subject_token_self_mint_enabled":            config.SubjectTokenSelfMintEnabled,
@@ -240,8 +230,6 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		DefaultTTL: data.Get("default_ttl").(int),
 		MaxTTL:     data.Get("max_ttl").(int),
 
-		EnforceRoleClaimMatch:                 data.Get("enforce_role_claim_match").(bool),
-		RoleClaimKey:                          data.Get("role_claim_key").(string),
 		StrictRoleNameMatch:                   data.Get("strict_role_name_match").(bool),
 		SubjectTokenSelfMintEnabled:           data.Get("subject_token_self_mint_enabled").(bool),
 		SubjectTokenSelfMintIssuer:            data.Get("subject_token_self_mint_issuer").(string),
@@ -254,17 +242,22 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	enablePluginIssuedSubjectToken := data.Get("enable_plugin_issued_subject_token").(bool)
 	config.EnablePluginIssuedSubjectToken = &enablePluginIssuedSubjectToken
 
+	mappings, mappingErr := decodeSubjectTokenRoleMappings(data.Get("subject_token_role_mappings").(string))
+	if mappingErr != nil {
+		return logical.ErrorResponse("invalid subject_token_role_mappings: %v", mappingErr), nil
+	}
+	if config.StrictRoleNameMatch {
+		for _, mapping := range mappings {
+			if !isStrictRoleNameValid(mapping.Role) {
+				return logical.ErrorResponse("invalid mapped role '%s': strict_role_name_match requires pattern [A-Za-z0-9._:-]+", mapping.Role), nil
+			}
+		}
+	}
+	config.SubjectTokenRoleMappings = mappings
+
 	// Preserve previously stored signing key unless caller explicitly sets a replacement.
 	if _, keyProvided := req.Data["subject_token_self_mint_private_key"]; !keyProvided && existingConfig != nil {
 		config.SubjectTokenSelfMintPrivateKey = existingConfig.SubjectTokenSelfMintPrivateKey
-	}
-
-	if !config.EnforceRoleClaimMatch {
-		if rawRoleClaimKey, ok := req.Data["role_claim_key"]; ok {
-			if roleClaimKey, keyIsString := rawRoleClaimKey.(string); keyIsString && roleClaimKey != "" {
-				return logical.ErrorResponse("role_claim_key requires enforce_role_claim_match=true"), nil
-			}
-		}
 	}
 	if config.SubjectTokenSelfMintEnabled {
 		if config.SubjectTokenSelfMintIssuer == "" {
@@ -325,13 +318,6 @@ const pathConfigHelpSyn = `
 Configure the OCI federated identity backend.
 `
 
-func configRoleClaimKey(config *federatedConfig) string {
-	if config != nil && config.RoleClaimKey != "" {
-		return config.RoleClaimKey
-	}
-	return "vault_role"
-}
-
 func configEnablePluginIssuedSubjectToken(config *federatedConfig) bool {
 	// Preserve backward compatibility for older stored configs that lack this field.
 	if config == nil || config.EnablePluginIssuedSubjectToken == nil {
@@ -388,8 +374,7 @@ You must configure:
 Optional:
   - default_ttl: Default session token TTL (default: 3600s)
   - max_ttl: Maximum session token TTL (default: 86400s)
-  - enforce_role_claim_match: Require caller-provided subject_token claim to match request role (default: false)
-  - role_claim_key: Claim key used for role matching (default: vault_role)
+  - subject_token_role_mappings: JSON array of ordered rules used to derive a Vault role from a caller-supplied subject_token
   - enable_plugin_issued_subject_token: Allow the plugin to resolve or mint subject_token when omitted by the caller (default: true)
   - strict_role_name_match: Require role names to match [A-Za-z0-9._:-]+ (default: false)
   - subject_token_self_mint_enabled: Enable built-in callback self-mint fallback (default: false)

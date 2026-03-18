@@ -7,13 +7,13 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | CFG-01 | Valid minimal config | domain, client_id, secret | Success, defaults applied |
-| CFG-02 | Valid full config | + default_ttl, max_ttl, enforce_role_claim_match=true, role_claim_key | Success, all fields stored |
+| CFG-02 | Valid full config | + default_ttl, max_ttl, subject_token_role_mappings | Success, all fields stored |
 | CFG-03 | Config without required field | Missing client_secret | Error: missing required field |
 | CFG-04 | Config with invalid URL | domain_url="not-a-url" | Error: invalid URL format |
 | CFG-05 | Config read returns secrets masked | Write config, then read | client_secret not in response |
 | CFG-06 | Config update | Overwrite existing config | New values persisted |
 | CFG-07 | Config delete | Delete after creation | Config removed, subsequent read fails |
-| CFG-08 | role_claim_key without enforcement | Set role_claim_key while enforce_role_claim_match=false | Error: role_claim_key requires enforce_role_claim_match=true |
+| CFG-08 | Invalid role-mapping config | Set malformed or unsupported subject_token_role_mappings | Error: invalid subject_token_role_mappings |
 | CFG-09 | strict_role_name_match enabled | Set strict_role_name_match=true | Success, strict role-name validation enabled |
 | CFG-10 | plugin-issued subject token disabled | Set enable_plugin_issued_subject_token=false | Success, subject_token becomes required unless changed |
 | CFG-11 | self-mint enabled without private key | Set subject_token_self_mint_enabled=true, issuer set, omit private key | Success, plugin auto-generates and stores RSA signing key |
@@ -45,8 +45,8 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-05 | Exchange with TTL override | ttl < role.default_ttl | Custom TTL applied |
 | EXC-06 | Exchange with public_key provided | public_key in request | No private_key in response |
 | EXC-07 | Exchange without subject_token (plugin-issued mode disabled) | omit subject_token, enable_plugin_issued_subject_token=false | Error: missing subject_token and plugin-issued mode disabled |
-| EXC-08 | Exchange without subject_token (enforcement enabled, no role) | omit subject_token, enforce_role_claim_match=true, no role | Error: missing role while enforcement enabled |
-| EXC-09 | Exchange without subject_token (enforcement enabled, role set) | omit subject_token, enforce_role_claim_match=true, role set | Uses plugin-issued token; role-claim enforcement is skipped because no caller-provided JWT was supplied |
+| EXC-08 | Exchange with caller-supplied JWT and derived role mapping | subject_token provided, subject_token_role_mappings configured, omit role | First matching mapping selects Vault role and exchange proceeds |
+| EXC-09 | Exchange with caller-supplied JWT and explicit role while mappings enabled | subject_token provided, role set, subject_token_role_mappings configured | Error: role must be omitted |
 | EXC-10 | Exchange without subject_token (allowlisted audience override) | omit subject_token, set subject_token_audience to allowed value | Plugin-issued token uses requested audience |
 | EXC-11 | Exchange with disallowed audience override | omit subject_token, set subject_token_audience to unlisted value | Error: audience override not allowed |
 | EXC-12 | Exchange with subject_token_audience and caller-provided JWT | subject_token and subject_token_audience set | Error: audience override only applies to plugin-issued tokens |
@@ -63,17 +63,17 @@ These cases are primarily OCI-behavior or end-to-end validation scenarios unless
 | EXC-23 | Wrong audience in JWT | JWT aud doesn't match OCI client | Error from OCI IAM |
 | EXC-24 | Missing required claims | JWT missing claims required by OCI trust | Error from OCI IAM / trust evaluation |
 
-## 5. Role Claim Matching (Security)
+## 5. Subject Token Role Mapping
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
-| RCM-01 | Matching role claim | enforce=true, role_claim_key="vault_role", JWT claim matches requested role | Success |
-| RCM-02 | Mismatched role claim | enforce=true, JWT claim="admin", request role="dev" | Error: role claim mismatch |
-| RCM-03 | Missing claim key | enforce=true, JWT doesn't have role_claim_key | Error: required claim missing |
-| RCM-04 | Enforcement disabled | enforce=false, mismatched claims | Success (no enforcement) |
-| RCM-05 | String array claim matching | enforce=true, claim value is array containing requested role | Success |
-| RCM-06 | Invalid claim array content | enforce=true, claim array contains non-string/empty values | Error |
-| RCM-07 | Strict role name match in exchange | strict_role_name_match=true, role contains invalid chars | Error |
+| RCM-01 | Exact string match | mapping op=`eq`, JWT claim matches rule value | First matching rule selects role |
+| RCM-02 | Contains match | mapping op=`co`, JWT claim contains rule value | First matching rule selects role |
+| RCM-03 | Starts-with match | mapping op=`sw`, JWT claim starts with rule value | First matching rule selects role |
+| RCM-04 | No mapping match | JWT does not match any configured rule | Error: no subject_token_role_mappings matched |
+| RCM-05 | String array claim matching | claim value is array containing an element that matches a rule | Matching rule selects role |
+| RCM-06 | Caller-supplied role rejected when mappings enabled | subject_token and request role both supplied | Error: role must be omitted |
+| RCM-07 | Strict role name match in config | strict_role_name_match=true, mapped role contains invalid chars | Error |
 
 ## 6. Lease & TTL Management
 
@@ -209,7 +209,7 @@ Future additions:
 
 - OCI IAM tokens cannot be actively revoked server-side; Vault lease revocation only drops local tracking
 - `client_secret` is write-only and never returned on read
-- `enforce_role_claim_match` can use default `role_claim_key` (`vault_role`) unless overridden
-- If `enforce_role_claim_match=true`, it applies to caller-provided `subject_token` values; plugin-issued tokens are evaluated under the plugin-issued/self-mint trust model instead
+- `subject_token_role_mappings` applies only to caller-provided `subject_token` values; plugin-issued tokens continue to use the request `role` when one is supplied
+- `subject_token_role_mappings` uses first-match-wins semantics, so rule order matters
 - `subject_token_audience` is accepted only when `subject_token` is omitted and the requested audience is present in `subject_token_allowed_audiences`
 - If `enable_plugin_issued_subject_token=false`, callers must supply `subject_token`

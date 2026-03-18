@@ -263,8 +263,7 @@ func TestPathExchange_RequestedTokenTypeValidation(t *testing.T) {
 	})
 }
 
-func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
-	// Covers EXC-08, RCM-01, RCM-02, and RCM-05.
+func TestPathExchange_SubjectTokenRoleMappings(t *testing.T) {
 	b, storage := getTestBackend(t)
 	installFailingTokenExchanger(b)
 
@@ -273,11 +272,10 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
-			"client_id":                "test-client-id",
-			"client_secret":            "test-client-secret",
-			"enforce_role_claim_match": true,
-			"role_claim_key":           "vault_role",
+			"domain_url":                  "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                   "test-client-id",
+			"client_secret":               "test-client-secret",
+			"subject_token_role_mappings": `[{"claim":"vault_role","op":"eq","value":"dev","role":"dev"},{"claim":"groups","op":"co","value":"ops","role":"ops"}]`,
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqConfig)
@@ -294,8 +292,18 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 	_, err = b.HandleRequest(context.Background(), reqRole)
 	require.NoError(t, err)
 
-	// Covers EXC-08.
-	t.Run("Missing Role When Enforced", func(t *testing.T) {
+	reqOpsRole := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "roles/ops",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"description": "ops role",
+		},
+	}
+	_, err = b.HandleRequest(context.Background(), reqOpsRole)
+	require.NoError(t, err)
+
+	t.Run("Derives Role From First Matching Rule", func(t *testing.T) {
 		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "dev"})
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
@@ -309,28 +317,29 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 		resp, err := b.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "missing 'role'")
+		require.NotContains(t, resp.Error().Error(), "unable to derive role from subject_token")
+		require.Contains(t, resp.Error().Error(), "token exchange failed")
 	})
 
-	// Covers the failure mode of EXC-09 when fallback token resolution is unavailable.
-	t.Run("Missing Subject Token When Enforced", func(t *testing.T) {
+	t.Run("Rejects Caller Supplied Role When Mappings Configured", func(t *testing.T) {
+		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "dev"})
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
 			Path:      "exchange",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"role": "dev",
+				"subject_token": subjectToken,
+				"role":          "dev",
 			},
 		}
 
 		resp, err := b.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "failed to mint subject_token via callback")
+		require.Contains(t, resp.Error().Error(), "role must be omitted when subject_token_role_mappings are configured")
 	})
 
-	// Covers RCM-02.
-	t.Run("Claim Mismatch", func(t *testing.T) {
+	t.Run("Rejects No Match", func(t *testing.T) {
 		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "prod"})
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
@@ -338,53 +347,30 @@ func TestPathExchange_RoleClaimMatchGuardrail(t *testing.T) {
 			Storage:   storage,
 			Data: map[string]interface{}{
 				"subject_token": subjectToken,
-				"role":          "dev",
 			},
 		}
 
 		resp, err := b.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "role claim mismatch")
+		require.Contains(t, resp.Error().Error(), "no subject_token_role_mappings matched")
 	})
 
-	// Covers RCM-01.
-	t.Run("Claim Match Proceeds Past Guardrail", func(t *testing.T) {
-		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "dev"})
+	t.Run("Array Claim Match Uses Contains Operator", func(t *testing.T) {
+		subjectToken := makeTestJWT(t, map[string]interface{}{"groups": []string{"team-ops", "team-dev"}})
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
 			Path:      "exchange",
 			Storage:   storage,
 			Data: map[string]interface{}{
 				"subject_token": subjectToken,
-				"role":          "dev",
 			},
 		}
 
 		resp, err := b.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.NotContains(t, resp.Error().Error(), "role claim mismatch")
-		require.Contains(t, resp.Error().Error(), "token exchange failed")
-	})
-
-	// Covers RCM-05.
-	t.Run("Array Claim Match Proceeds Past Guardrail", func(t *testing.T) {
-		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": []string{"prod", "dev"}})
-		req := &logical.Request{
-			Operation: logical.CreateOperation,
-			Path:      "exchange",
-			Storage:   storage,
-			Data: map[string]interface{}{
-				"subject_token": subjectToken,
-				"role":          "dev",
-			},
-		}
-
-		resp, err := b.HandleRequest(context.Background(), req)
-		require.NoError(t, err)
-		require.True(t, resp.IsError())
-		require.NotContains(t, resp.Error().Error(), "role claim mismatch")
+		require.NotContains(t, resp.Error().Error(), "unable to derive role from subject_token")
 		require.Contains(t, resp.Error().Error(), "token exchange failed")
 	})
 }
@@ -423,77 +409,7 @@ func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
 	require.Contains(t, resp.Error().Error(), "missing 'subject_token' and plugin-issued subject token mode is disabled")
 }
 
-func TestPathExchange_CustomRoleClaimKey(t *testing.T) {
-	// Covers RCM-01 and RCM-02 with a non-default claim key.
-	b, storage := getTestBackend(t)
-	installFailingTokenExchanger(b)
-
-	reqConfig := &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]interface{}{
-			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
-			"client_id":                "test-client-id",
-			"client_secret":            "test-client-secret",
-			"enforce_role_claim_match": true,
-			"role_claim_key":           "oci_target",
-		},
-	}
-	_, err := b.HandleRequest(context.Background(), reqConfig)
-	require.NoError(t, err)
-
-	reqRole := &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "roles/svc-dev-automation",
-		Storage:   storage,
-		Data: map[string]interface{}{
-			"description": "service-user role",
-		},
-	}
-	_, err = b.HandleRequest(context.Background(), reqRole)
-	require.NoError(t, err)
-
-	t.Run("Custom Claim Match", func(t *testing.T) {
-		subjectToken := makeTestJWT(t, map[string]interface{}{"oci_target": "svc-dev-automation"})
-		req := &logical.Request{
-			Operation: logical.CreateOperation,
-			Path:      "exchange",
-			Storage:   storage,
-			Data: map[string]interface{}{
-				"subject_token": subjectToken,
-				"role":          "svc-dev-automation",
-			},
-		}
-
-		resp, err := b.HandleRequest(context.Background(), req)
-		require.NoError(t, err)
-		require.True(t, resp.IsError())
-		require.NotContains(t, resp.Error().Error(), "role claim mismatch")
-		require.Contains(t, resp.Error().Error(), "token exchange failed")
-	})
-
-	t.Run("Custom Claim Mismatch", func(t *testing.T) {
-		subjectToken := makeTestJWT(t, map[string]interface{}{"oci_target": "svc-prod-automation"})
-		req := &logical.Request{
-			Operation: logical.CreateOperation,
-			Path:      "exchange",
-			Storage:   storage,
-			Data: map[string]interface{}{
-				"subject_token": subjectToken,
-				"role":          "svc-dev-automation",
-			},
-		}
-
-		resp, err := b.HandleRequest(context.Background(), req)
-		require.NoError(t, err)
-		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "role claim mismatch")
-	})
-}
-
 func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
-	// Covers RCM-07.
 	b, storage := getTestBackend(t)
 	installFailingTokenExchanger(b)
 
@@ -502,32 +418,17 @@ func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"domain_url":               "https://idcs-test.identity.oraclecloud.com",
-			"client_id":                "test-client-id",
-			"client_secret":            "test-client-secret",
-			"strict_role_name_match":   true,
-			"enforce_role_claim_match": true,
-			"role_claim_key":           "vault_role",
+			"domain_url":                  "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                   "test-client-id",
+			"client_secret":               "test-client-secret",
+			"strict_role_name_match":      true,
+			"subject_token_role_mappings": `[{"claim":"vault_role","op":"eq","value":"dev@team","role":"dev@team"}]`,
 		},
 	}
-	_, err := b.HandleRequest(context.Background(), reqConfig)
-	require.NoError(t, err)
-
-	subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "dev@team"})
-	req := &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "exchange",
-		Storage:   storage,
-		Data: map[string]interface{}{
-			"subject_token": subjectToken,
-			"role":          "dev@team",
-		},
-	}
-
-	resp, err := b.HandleRequest(context.Background(), req)
+	resp, err := b.HandleRequest(context.Background(), reqConfig)
 	require.NoError(t, err)
 	require.True(t, resp.IsError())
-	require.Contains(t, resp.Error().Error(), "invalid role")
+	require.Contains(t, resp.Error().Error(), "invalid mapped role")
 }
 
 func TestPathExchange_SubjectTokenCallbackFallback(t *testing.T) {
@@ -665,8 +566,6 @@ func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
 			"subject_token_self_mint_enabled":     true,
 			"subject_token_self_mint_issuer":      "https://vault.example.com",
 			"subject_token_self_mint_private_key": testKey,
-			"enforce_role_claim_match":            true,
-			"role_claim_key":                      "vault_role",
 		},
 	}
 	_, err = backend.HandleRequest(context.Background(), reqConfig)
@@ -696,7 +595,6 @@ func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.IsError())
 	require.NotContains(t, resp.Error().Error(), "failed to mint subject_token via callback")
-	require.NotContains(t, resp.Error().Error(), "role claim mismatch")
 	require.Contains(t, resp.Error().Error(), "token exchange failed")
 }
 

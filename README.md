@@ -135,8 +135,7 @@ vault write oci/config \
     client_secret="<oauth-client-secret>" \
     default_ttl=3600 \
     max_ttl=28800 \
-    enforce_role_claim_match=false \
-    role_claim_key="vault_role" \
+    subject_token_role_mappings='[{"claim":"vault_role","op":"eq","value":"developer","role":"developer"}]' \
     enable_plugin_issued_subject_token=true \
     strict_role_name_match=false \
     subject_token_self_mint_enabled=false \
@@ -149,8 +148,7 @@ vault write oci/config \
 - `client_secret`: OAuth Confidential Application client secret in the OCI Identity Domain
 - `default_ttl`: Default Vault lease TTL for exchanged credentials, and the default requested TTL for RPST exchanges when a request TTL is not supplied (default: 3600)
 - `max_ttl`: Maximum Vault lease TTL for exchanged credentials, and the maximum requested TTL allowed for RPST exchanges (default: 86400)
-- `enforce_role_claim_match`: When true, requires a caller-provided `subject_token` claim to match the requested plugin role (default: `false`)
-- `role_claim_key`: JWT claim key used for role matching when enforcement is enabled (default: `vault_role`)
+- `subject_token_role_mappings`: Optional JSON array of ordered rules used to derive a Vault role from a caller-supplied `subject_token`
 - `enable_plugin_issued_subject_token`: When true, plugin-issued subject-token mode is enabled when the caller omits `subject_token` (default: `true`)
 - `strict_role_name_match`: When true, requires role names to match `[A-Za-z0-9._:-]+` (default: `false`)
 - `subject_token_self_mint_enabled`: Enables built-in self-mint in plugin-issued subject-token mode when Vault identity-token generation is unavailable (default: `false`)
@@ -249,11 +247,11 @@ The plugin always sends `subject_token_type=jwt` to OCI and generates a fresh RS
 
 If `public_key` is provided in the request, the plugin will not return `private_key` or `public_key` in the response.
 
-### Vault-Issued Subject Token Flow (Role to OCI Principal Mapping)
+### Caller-Supplied Subject Token Flow (JWT Claim to Vault Role Mapping)
 
-Use this flow when OCI trust rules should map Vault-issued token claims (for example `vault_role` or `oci_target`) to OCI Domain Service Users.
+Use this flow when callers supply their own JWTs and the plugin should derive the effective Vault role from trusted JWT claims before applying local Vault constraints.
 
-1. Configure plugin role-claim guardrail (optional but recommended):
+1. Configure ordered subject-token role mappings:
 
 ```bash
 vault write oci/config \
@@ -262,13 +260,23 @@ vault write oci/config \
     client_secret="<oauth-client-secret>" \
     default_ttl=3600 \
     max_ttl=28800 \
-    enforce_role_claim_match=true \
-    role_claim_key="vault_role"
+    subject_token_role_mappings='[
+      {"claim":"vault_role","op":"eq","value":"developer","role":"developer"},
+      {"claim":"groups","op":"co","value":"ops","role":"operations"}
+    ]'
 ```
 
-2. In Vault Identity/OIDC, define a token role that emits a mapping claim (example: `vault_role=developer`) and allow workloads to mint from it.
+2. Ensure the upstream JWT issuer emits the claim values you want to match.
 
-Example Vault setup:
+Rule semantics:
+- Rules are evaluated in order.
+- The first matching rule wins.
+- Supported operators are `eq` (equals), `co` (contains), and `sw` (starts with).
+- Matching works with string claims and array-of-string claims.
+- When `subject_token_role_mappings` is configured, callers must omit the request `role`; the plugin derives it from the JWT instead.
+- If no rule matches, the exchange is rejected.
+
+Example Vault-issued JWT setup:
 
 ```bash
 # Set issuer used in OIDC discovery/JWKS
@@ -480,7 +488,7 @@ Use Vault policy boundaries as the primary control plane:
 1. Grant `update` on `oci/exchange` only to trusted workloads.
 2. Restrict role usage with path-based ACLs so each workload can only call specific role paths or namespaces.
 3. Keep `enable_plugin_issued_subject_token=false` by default for general clients, and enable plugin-issued subject-token mode only for tightly scoped policies.
-4. Enable `enforce_role_claim_match=true` with a dedicated claim key (for example `vault_role`) when callers provide their own JWTs and you want the plugin role to be consistent with that caller-supplied token.
+4. Use `subject_token_role_mappings` when callers provide their own JWTs and you want Vault role selection to come from trusted JWT claims rather than a caller-supplied `role` parameter.
 5. Treat plugin-issued self-mint as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the request `role`.
 6. Enable `strict_role_name_match=true` to prevent malformed role values.
 7. Protect `oci/config` write access so only operators can rotate or replace self-mint settings and signing keys.

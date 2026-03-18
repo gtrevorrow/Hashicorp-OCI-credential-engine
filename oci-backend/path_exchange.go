@@ -183,6 +183,16 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if raw, ok := data.GetOk("role"); ok {
 		roleName = raw.(string)
 	}
+	if subjectTokenProvided && len(config.SubjectTokenRoleMappings) > 0 {
+		if roleName != "" {
+			return logical.ErrorResponse("role must be omitted when subject_token_role_mappings are configured"), nil
+		}
+		derivedRoleName, derivedRoleErr := resolveRoleFromSubjectToken(subjectToken, config.SubjectTokenRoleMappings)
+		if derivedRoleErr != nil {
+			return logical.ErrorResponse("unable to derive role from subject_token: %v", derivedRoleErr), nil
+		}
+		roleName = derivedRoleName
+	}
 	if roleName != "" && config.StrictRoleNameMatch && !isStrictRoleNameValid(roleName) {
 		return logical.ErrorResponse("invalid role '%s': strict_role_name_match requires pattern [A-Za-z0-9._:-]+", roleName), nil
 	}
@@ -194,25 +204,6 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 		if role == nil {
 			return logical.ErrorResponse("role '%s' not found", roleName), nil
-		}
-	}
-
-	// Role-claim enforcement is only meaningful for caller-supplied subject
-	// tokens. Callback-resolved tokens are treated as plugin-trusted inputs and
-	// use Vault-derived claims instead of caller-selected role values.
-	if config.EnforceRoleClaimMatch && subjectTokenProvided {
-		if roleName == "" {
-			return logical.ErrorResponse("missing 'role' while enforce_role_claim_match is enabled"), nil
-		}
-
-		claimKey := configRoleClaimKey(config)
-		roleMatched, claimValue, claimErr := jwtClaimContainsRole(subjectToken, claimKey, roleName)
-		if claimErr != nil {
-			return logical.ErrorResponse("unable to enforce role claim match: %v", claimErr), nil
-		}
-
-		if !roleMatched {
-			return logical.ErrorResponse("role claim mismatch: claim '%s' value '%s' does not match requested role '%s'", claimKey, claimValue, roleName), nil
 		}
 	}
 

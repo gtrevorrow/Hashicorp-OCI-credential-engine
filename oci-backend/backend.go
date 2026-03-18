@@ -112,11 +112,8 @@ type federatedConfig struct {
 	// Maximum TTL for issued OCI session tokens
 	MaxTTL int `json:"max_ttl" mapstructure:"max_ttl"`
 
-	// Enforce that a claim in caller-provided subject_token matches request role.
-	EnforceRoleClaimMatch bool `json:"enforce_role_claim_match" mapstructure:"enforce_role_claim_match"`
-
-	// Claim key used when EnforceRoleClaimMatch is enabled.
-	RoleClaimKey string `json:"role_claim_key" mapstructure:"role_claim_key"`
+	// Ordered rules used to derive a Vault role from a caller-supplied subject token.
+	SubjectTokenRoleMappings []subjectTokenRoleMapping `json:"subject_token_role_mappings,omitempty" mapstructure:"subject_token_role_mappings"`
 
 	// Allow plugin identity token fallback when subject_token is omitted.
 	// Pointer is used to preserve default behavior for legacy configs with missing field.
@@ -133,6 +130,13 @@ type federatedConfig struct {
 	SubjectTokenSelfMintTTLSeconds        int      `json:"subject_token_self_mint_ttl_seconds" mapstructure:"subject_token_self_mint_ttl_seconds"`
 	SubjectTokenSelfMintPrivateKey        string   `json:"subject_token_self_mint_private_key" mapstructure:"subject_token_self_mint_private_key"`
 	DebugReturnResolvedSubjectTokenClaims bool     `json:"debug_return_resolved_subject_token_claims" mapstructure:"debug_return_resolved_subject_token_claims"`
+}
+
+type subjectTokenRoleMapping struct {
+	Claim string `json:"claim" mapstructure:"claim"`
+	Op    string `json:"op" mapstructure:"op"`
+	Value string `json:"value" mapstructure:"value"`
+	Role  string `json:"role" mapstructure:"role"`
 }
 
 // getConfig retrieves the backend configuration from storage

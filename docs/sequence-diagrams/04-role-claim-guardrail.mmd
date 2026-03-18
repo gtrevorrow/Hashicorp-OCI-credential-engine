@@ -11,9 +11,11 @@ sequenceDiagram
     V->>V: Parse caller JWT payload only
     V->>V: Evaluate ordered role-mapping rules
     V->>V: First matching rule selects Vault role
+    V->>S: Read derived Vault role entry
+    S-->>V: Role TTL and local policy constraints
 
     alt Mapping rule matches
-        V->>O: POST OAuth token exchange
+        V->>O: POST `/oauth2/v1/token`
         O-->>V: OCI session token
         V-->>C: Success response
     else No rule matches

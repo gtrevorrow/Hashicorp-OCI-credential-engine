@@ -9,7 +9,7 @@ sequenceDiagram
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Validate request fields and TTL
-    V->>V: Optionally enforce role-claim guardrail against caller JWT
+    V->>V: If `subject_token_role_mappings` exist, derive Vault role from caller JWT
     V->>V: Generate exchange RSA keypair when `public_key` is omitted
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
     O-->>V: OCI UPST or RPST

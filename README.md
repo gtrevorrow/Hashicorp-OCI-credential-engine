@@ -147,8 +147,8 @@ vault write oci/config \
 - `domain_url`: OCI Identity Domain URL (for example: `https://idcs-xxxxx.identity.oraclecloud.com`)
 - `client_id`: OAuth Confidential Application client ID in the OCI Identity Domain
 - `client_secret`: OAuth Confidential Application client secret in the OCI Identity Domain
-- `default_ttl`: Default TTL for OCI session tokens in seconds (default: 3600)
-- `max_ttl`: Maximum TTL for OCI session tokens in seconds (default: 86400)
+- `default_ttl`: Default Vault lease TTL for exchanged credentials, and the default requested TTL for RPST exchanges when a request TTL is not supplied (default: 3600)
+- `max_ttl`: Maximum Vault lease TTL for exchanged credentials, and the maximum requested TTL allowed for RPST exchanges (default: 86400)
 - `enforce_role_claim_match`: When true, requires a caller-provided `subject_token` claim to match the requested plugin role (default: `false`)
 - `role_claim_key`: JWT claim key used for role matching when enforcement is enabled (default: `vault_role`)
 - `enable_plugin_issued_subject_token`: When true, plugin-issued subject-token mode is enabled when the caller omits `subject_token` (default: `true`)
@@ -185,7 +185,7 @@ Then `vault write -force -format=json oci/exchange` will include `data.resolved_
 
 ### Roles
 
-Create roles to define token TTL constraints:
+Create roles to define Vault lease policy and RPST TTL constraints:
 
 ```bash
 # Create a development role
@@ -441,6 +441,10 @@ vault read oci/jwks
 - `urn:oci:token-type:oci-upst`
 - `urn:oci:token-type:oci-rpst` (requires `res_type`)
 
+TTL note:
+- For RPST, the plugin uses config and role TTL policy to bound the requested lifetime sent to OCI.
+- For UPST, OCI determines the token lifetime; plugin TTL settings affect Vault lease metadata, not OCI-side UPST expiration.
+
 ### Roles Path
 
 | Method | Path | Description |
@@ -464,7 +468,7 @@ vault read oci/jwks
 ### Security Considerations
 
 - **Token Validation**: Subject token validation is performed by OCI IAM during token exchange
-- **Short-lived Tokens**: OCI exchanged tokens have configurable TTL (default 1 hour)
+- **TTL Semantics**: RPST requests can be bounded by plugin TTL policy. UPST lifetime is determined by OCI; plugin TTL settings mainly control Vault lease metadata for UPST responses.
 - **Lease Management**: Vault lease lifecycle is applied to issued secrets, but OCI exchanged tokens cannot be actively revoked server-side before expiration. Vault simply drops the lease locally.
 - **Audit Logging**: All token exchanges are logged to Vault audit log
 - **Self-Mint Key Handling**: When `subject_token_self_mint_enabled=true` and no private key is supplied, the plugin generates an RSA key pair and persists the private key in plugin storage. The key is never returned by `read oci/config`.

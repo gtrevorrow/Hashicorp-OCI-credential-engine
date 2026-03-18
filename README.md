@@ -110,7 +110,7 @@ sequenceDiagram
 
 Client omits `subject_token`; Vault identity-token generation is unavailable, so the plugin self-mints the subject token from trusted Vault context and then exchanges it with OCI.
 
-#### 4) Caller JWT Role Mapping
+#### 4) Caller JWT Role Mapping Variant of 1
 
 ```mermaid
 sequenceDiagram
@@ -138,7 +138,7 @@ sequenceDiagram
     end
 ```
 
-Plugin derives the effective Vault role from trusted JWT claims before OCI exchange.
+This is a caller-supplied `subject_token` variant of flow 1. When `subject_token_role_mappings` are configured, the engine derives the effective Vault role from trusted JWT claims before OCI exchange instead of relying on a caller-supplied `role`.
 
 ### Terminology
 When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC 8693) and OCI Identity nomenclature:

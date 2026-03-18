@@ -34,10 +34,14 @@ sequenceDiagram
     S-->>V: Config and role constraints
     V->>V: Validate request fields and TTL
     V->>V: If `subject_token_role_mappings` exist, derive Vault role from caller JWT
-    V->>V: Generate exchange RSA keypair when `public_key` is omitted
+    alt Caller supplies `public_key`
+        V->>V: Use caller public key for OCI exchange
+    else `public_key` omitted
+        V->>V: Generate exchange RSA keypair
+    end
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair when generated
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
 ```
 
 Client sends `subject_token`; plugin validates role constraints/guardrails and performs token exchange against OCI.
@@ -60,10 +64,14 @@ sequenceDiagram
     V->>V: Resolve audience from config or allowlisted `subject_token_audience`
     V->>SV: `GenerateIdentityToken(audience)`
     SV-->>V: Vault-issued identity token
-    V->>V: Generate exchange RSA keypair when `public_key` is omitted
+    alt Caller supplies `public_key`
+        V->>V: Use caller public key for OCI exchange
+    else `public_key` omitted
+        V->>V: Generate exchange RSA keypair
+    end
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair when generated
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
 ```
 
 Client omits `subject_token`; plugin uses its plugin-issued subject-token mode when enabled. Default callback behavior is: `GenerateIdentityToken` first, then self-mint JWT only if needed and configured.
@@ -120,10 +128,14 @@ sequenceDiagram
     SV-->>V: Entity, alias, group, mount metadata
     V->>V: Build JWT with Vault-derived claims
     V->>V: Sign self-minted JWT with plugin signing key
-    V->>V: Generate exchange RSA keypair when `public_key` is omitted
+    alt Caller supplies `public_key`
+        V->>V: Use caller public key for OCI exchange
+    else `public_key` omitted
+        V->>V: Generate exchange RSA keypair
+    end
     V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair when generated
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
 ```
 
 Client omits `subject_token`; Vault identity-token generation is unavailable, so the plugin self-mints the subject token from trusted Vault context and then exchanges it with OCI.

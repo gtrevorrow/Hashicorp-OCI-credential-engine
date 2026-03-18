@@ -17,7 +17,11 @@ sequenceDiagram
     SV-->>V: Entity, alias, group, mount metadata
     V->>V: Build JWT with Vault-derived claims
     V->>V: Sign self-minted JWT with plugin signing key
-    V->>V: Generate exchange RSA keypair when `public_key` is omitted
+    alt Caller supplies `public_key`
+        V->>V: Use caller public key for OCI exchange
+    else `public_key` omitted
+        V->>V: Generate exchange RSA keypair
+    end
     V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair when generated
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated

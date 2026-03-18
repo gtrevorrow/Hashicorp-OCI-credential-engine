@@ -13,19 +13,19 @@ These diagrams describe the implemented request flows in the plugin.
 Actor definitions used in diagrams:
 
 - **Client/Workload**: The caller (app, CI job, script, or human) that invokes `vault write oci/exchange`.
-- **Vault OCI Plugin**: This secrets-engine plugin instance mounted in Vault.
+- **Vault OCI Credential Engine**: This secrets-engine plugin instance mounted in Vault.
 - **Vault Storage**: Plugin storage view used for reading config and role entries.
 - **Vault System View**: Vault runtime interface available to plugins; used by the default subject-token callback to call `GenerateIdentityToken` when available.
 - **Subject Token Callback**: Plugin hook used when `subject_token` is omitted and `enable_plugin_issued_subject_token=true`. This is the plugin-issued subject-token mode. The default callback tries Vault identity-token generation first, then self-mints only if needed and configured.
 - **OCI Token Endpoint**: OCI Identity Domain OAuth token exchange endpoint (`/oauth2/v1/token`).
 
-#### 1) Standard Exchange (Caller Provides `subject_token`)
+#### 1) Subject Token Exchange (Caller Provides `subject_token`)
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor C as Client / Workload
-    participant V as Vault OCI Plugin
+    participant V as Vault OCI Credential Engine
     participant S as Vault Storage
     participant O as OCI Token Endpoint
 
@@ -48,7 +48,7 @@ Client sends `subject_token`; plugin validates role constraints/guardrails and p
 sequenceDiagram
     autonumber
     actor C as Client / Workload
-    participant V as Vault OCI Plugin
+    participant V as Vault OCI Credential Engine
     participant S as Vault Storage
     participant SV as Vault System View
     participant O as OCI Token Endpoint
@@ -74,7 +74,7 @@ Client omits `subject_token`; plugin uses its plugin-issued subject-token mode w
 sequenceDiagram
     autonumber
     actor C as Client / Workload
-    participant V as Vault OCI Plugin
+    participant V as Vault OCI Credential Engine
     participant S as Vault Storage
     participant O as OCI Token Endpoint
 
@@ -104,7 +104,7 @@ Plugin derives the effective Vault role from trusted JWT claims before OCI excha
 sequenceDiagram
     autonumber
     actor C as Client / Workload
-    participant V as Vault OCI Plugin
+    participant V as Vault OCI Credential Engine
     participant S as Vault Storage
     participant SV as Vault System View
     participant O as OCI Token Endpoint

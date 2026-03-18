@@ -1,7 +1,7 @@
 sequenceDiagram
     autonumber
     actor A as Operator
-    participant V as Vault OCI Plugin
+    participant V as Vault OCI Credential Engine
     participant P as Published HTTPS JWKS Location
     participant O as OCI Identity Domain
 
@@ -11,4 +11,3 @@ sequenceDiagram
     A->>O: Configure token exchange trust with JWKS URL
     O->>P: Fetch JWKS during trust evaluation / key discovery
     P-->>O: Public keys only
-

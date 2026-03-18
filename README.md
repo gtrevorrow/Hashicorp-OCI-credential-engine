@@ -98,6 +98,36 @@ sequenceDiagram
 
 Plugin derives the effective Vault role from trusted JWT claims before OCI exchange.
 
+#### 4) Exchange Without `subject_token` (Plugin-Issued Self-Mint)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Plugin
+    participant S as Vault Storage
+    participant SV as Vault System View
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` without `subject_token`
+    V->>S: Read backend config and self-mint key
+    S-->>V: Config, role constraints, signing key
+    V->>V: Check plugin-issued mode is enabled
+    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>SV: `GenerateIdentityToken(audience)`
+    SV-->>V: Identity token unavailable
+    V->>SV: Read trusted Vault request and identity context
+    SV-->>V: Entity, alias, group, mount metadata
+    V->>V: Build JWT with Vault-derived claims
+    V->>V: Sign self-minted JWT with plugin signing key
+    V->>V: Generate exchange RSA keypair when `public_key` is omitted
+    V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    O-->>V: OCI UPST or RPST
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair when generated
+```
+
+Client omits `subject_token`; Vault identity-token generation is unavailable, so the plugin self-mints the subject token from trusted Vault context and then exchanges it with OCI.
+
 ### Terminology
 When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC 8693) and OCI Identity nomenclature:
 

@@ -251,7 +251,7 @@ The plugin always sends `subject_token_type=jwt` to OCI and generates a fresh RS
 ```
 
 If `public_key` is provided in the request, the plugin will not return `private_key` or `public_key` in the response.
-This also applies to plugin-issued self-mint mode: if the caller supplies `public_key`, the plugin uses that key in the OCI token exchange payload and does not generate or return an exchange key pair.
+This applies to both caller-supplied `subject_token` mode and plugin-issued self-mint mode: if the caller supplies `public_key`, the plugin uses that key in the OCI token exchange payload and does not generate or return an exchange key pair.
 
 ### Caller-Supplied Subject Token Flow (JWT Claim to Vault Role Mapping)
 

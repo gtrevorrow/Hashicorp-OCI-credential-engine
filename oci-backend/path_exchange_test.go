@@ -665,6 +665,58 @@ func TestPathExchange_DefaultCallbackSelfMintUsesCallerPublicKey(t *testing.T) {
 	require.Nil(t, resp.Data["public_key"])
 }
 
+func TestPathExchange_CallerSuppliedSubjectTokenUsesCallerPublicKey(t *testing.T) {
+	suppliedPrivateKey := generateTestRSAPrivateKeyPEM(t)
+	suppliedPublicKey := deriveTestPublicKeyPEM(t, suppliedPrivateKey)
+
+	b, storage := getTestBackend(t)
+
+	b.tokenExchanger = func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+		require.Equal(t, "caller-jwt-token", subjectToken)
+		require.Equal(t, suppliedPublicKey, publicKey)
+		return &tokenExchangeResult{
+			AccessToken:        "access-token",
+			SessionToken:       "session-token",
+			TokenType:          "Bearer",
+			RequestedTokenType: ociRequestedTokenTypeUPST,
+			PrivateKey:         "should-not-be-returned",
+			PublicKey:          "should-not-be-returned",
+		}, nil
+	}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token": "caller-jwt-token",
+			"public_key":    suppliedPublicKey,
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.False(t, resp.IsError())
+	require.Equal(t, "access-token", resp.Data["access_token"])
+	require.Equal(t, "session-token", resp.Data["session_token"])
+	require.Nil(t, resp.Data["private_key"])
+	require.Nil(t, resp.Data["public_key"])
+}
+
 func TestPathExchange_SubjectTokenAudienceOverrideRejectedForCallerProvidedToken(t *testing.T) {
 	b, storage := getTestBackend(t)
 	installFailingTokenExchanger(b)

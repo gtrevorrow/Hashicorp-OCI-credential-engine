@@ -320,13 +320,14 @@ vault write oci/roles/prod \
 vault write oci/exchange \
     subject_token="eyJhbGciOiJSUzI1NiIs..." \
     requested_token_type="urn:oci:token-type:oci-upst" \
-    role="developer" \
     ttl=3600
 ```
 
 *Note: Omitting `subject_token` uses the plugin-issued subject-token mode and requires `enable_plugin_issued_subject_token=true`. The default callback first attempts Vault identity-token generation; if unavailable, it can self-mint only when `subject_token_self_mint_enabled=true` and self-mint config is set.*
 
 If the caller omits `subject_token`, it may also provide `subject_token_audience` to request an alternate audience for the plugin-issued subject token. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
+
+If the caller supplies `subject_token`, it may provide `role` only when `subject_token_role_mappings` are not configured. When mappings are configured, the engine derives the effective Vault role from the JWT claims and rejects caller-supplied `role`.
 
 The plugin always sends `subject_token_type=jwt` to OCI and generates a fresh RSA key pair per exchange when `public_key` is not supplied by the caller.
 

@@ -323,7 +323,7 @@ vault write oci/exchange \
     ttl=3600
 ```
 
-*Note: Omitting `subject_token` uses the plugin-issued subject-token mode and requires `enable_plugin_issued_subject_token=true`. The default callback first attempts Vault identity-token generation; if unavailable, it can self-mint only when `subject_token_self_mint_enabled=true` and self-mint config is set.*
+*Note: Omit `subject_token` if you want the credential engine to obtain one on your behalf. On Vault Enterprise, it first tries Vault identity-token generation. On Vault Open Source, or if that path is unavailable, it can fall back to a self-minted trusted subject token when plugin-issued mode and self-mint are both enabled and configured.*
 
 If the caller omits `subject_token`, it may also provide `subject_token_audience` to request an alternate audience for the plugin-issued subject token. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
 

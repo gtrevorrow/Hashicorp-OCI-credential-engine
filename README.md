@@ -327,7 +327,7 @@ Notes:
 
 - Omit `subject_token` if you want the credential engine to obtain one on your behalf.
 - On Vault Enterprise, the engine first tries Vault identity-token generation.
-- On Vault Open Source, or when that path is unavailable, the engine can fall back to a self-minted trusted subject token if both plugin-issued mode and self-mint are enabled and configured.
+- On Vault Open Source, or if Vault cannot generate an identity token for the request, the engine can fall back to a self-minted trusted subject token if both plugin-issued mode and self-mint are enabled and configured.
 - If `subject_token` is omitted, the caller may optionally provide `subject_token_audience`. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
 - If `subject_token` is supplied, the caller may provide `role` only when `subject_token_role_mappings` are not configured. When mappings are configured, the engine derives the effective Vault role from JWT claims and rejects caller-supplied `role`.
 - The engine always sends `subject_token_type=jwt` to OCI.

@@ -323,13 +323,15 @@ vault write oci/exchange \
     ttl=3600
 ```
 
-*Note: Omit `subject_token` if you want the credential engine to obtain one on your behalf. On Vault Enterprise, it first tries Vault identity-token generation. On Vault Open Source, or if that path is unavailable, it can fall back to a self-minted trusted subject token when plugin-issued mode and self-mint are both enabled and configured.*
+Notes:
 
-If the caller omits `subject_token`, it may also provide `subject_token_audience` to request an alternate audience for the plugin-issued subject token. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
-
-If the caller supplies `subject_token`, it may provide `role` only when `subject_token_role_mappings` are not configured. When mappings are configured, the engine derives the effective Vault role from the JWT claims and rejects caller-supplied `role`.
-
-The plugin always sends `subject_token_type=jwt` to OCI and generates a fresh RSA key pair per exchange when `public_key` is not supplied by the caller.
+- Omit `subject_token` if you want the credential engine to obtain one on your behalf.
+- On Vault Enterprise, the engine first tries Vault identity-token generation.
+- On Vault Open Source, or when that path is unavailable, the engine can fall back to a self-minted trusted subject token if both plugin-issued mode and self-mint are enabled and configured.
+- If `subject_token` is omitted, the caller may optionally provide `subject_token_audience`. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
+- If `subject_token` is supplied, the caller may provide `role` only when `subject_token_role_mappings` are not configured. When mappings are configured, the engine derives the effective Vault role from JWT claims and rejects caller-supplied `role`.
+- The engine always sends `subject_token_type=jwt` to OCI.
+- If `public_key` is not supplied, the engine generates a fresh RSA key pair for the exchange.
 
 *Reference: Oracle JWT-to-UPST flow and request parameters are documented in [Token Exchange Grant Type: Exchanging a JSON Web Token for a UPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm#jwt_token_exchange__get-oci-upst).*
 

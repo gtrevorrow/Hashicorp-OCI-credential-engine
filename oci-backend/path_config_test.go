@@ -399,6 +399,41 @@ func TestPathConfig_PartialUpdates(t *testing.T) {
 	})
 }
 
+func TestPathConfig_CreateAppliesDefaults(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqCreate := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), reqCreate)
+	require.NoError(t, err)
+	require.False(t, resp != nil && resp.IsError())
+
+	reqRead := &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	}
+
+	readResp, err := b.HandleRequest(context.Background(), reqRead)
+	require.NoError(t, err)
+	require.NotNil(t, readResp)
+	assert.Equal(t, 3600, readResp.Data["default_ttl"])
+	assert.Equal(t, 86400, readResp.Data["max_ttl"])
+	assert.Equal(t, true, readResp.Data["enable_plugin_issued_subject_token"])
+	assert.Equal(t, false, readResp.Data["subject_token_self_mint_enabled"])
+	assert.Equal(t, "urn:mace:oci:idcs", readResp.Data["subject_token_self_mint_audience"])
+	assert.Equal(t, 600, readResp.Data["subject_token_self_mint_ttl_seconds"])
+}
+
 func TestPathConfig_SelfMintGeneratedKeyIsReused(t *testing.T) {
 	b, storage := getTestBackend(t)
 	// Covers the persistence aspect of CFG-11 across config updates.

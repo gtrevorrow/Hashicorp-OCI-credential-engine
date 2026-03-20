@@ -210,6 +210,17 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	config := &federatedConfig{}
 	if existingConfig != nil {
 		*config = *existingConfig
+	} else {
+		config.DefaultTTL = data.Get("default_ttl").(int)
+		config.MaxTTL = data.Get("max_ttl").(int)
+		config.StrictRoleNameMatch = data.Get("strict_role_name_match").(bool)
+		config.SubjectTokenSelfMintEnabled = data.Get("subject_token_self_mint_enabled").(bool)
+		config.SubjectTokenSelfMintAudience = data.Get("subject_token_self_mint_audience").(string)
+		config.SubjectTokenAllowedAudiences = data.Get("subject_token_allowed_audiences").([]string)
+		config.SubjectTokenSelfMintTTLSeconds = data.Get("subject_token_self_mint_ttl_seconds").(int)
+		config.DebugReturnResolvedSubjectTokenClaims = data.Get("debug_return_resolved_subject_token_claims").(bool)
+		enablePluginIssuedSubjectToken := data.Get("enable_plugin_issued_subject_token").(bool)
+		config.EnablePluginIssuedSubjectToken = &enablePluginIssuedSubjectToken
 	}
 
 	if _, ok := req.Data["domain_url"]; ok {

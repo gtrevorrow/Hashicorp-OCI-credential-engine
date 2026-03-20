@@ -185,7 +185,29 @@ make build-all
 
 ### Register the Plugin with Vault
 
-For local development, `./scripts/dev_vault.sh start` now starts Vault dev mode, registers the plugin, and enables the `oci` mount automatically. The manual steps below are still useful for non-dev setups and for understanding the underlying Vault operations.
+For local development, `./scripts/dev_vault.sh start` now starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are still useful for non-dev setups and for understanding the underlying Vault operations.
+
+If you want dev startup to reapply backend config automatically, create `.env.local` in the repo root with at least:
+
+```bash
+OCI_DOMAIN_URL="https://idcs-xxxxx.identity.oraclecloud.com:443"
+OCI_CLIENT_ID="..."
+OCI_CLIENT_SECRET="..."
+```
+
+Optional `.env.local` settings also map directly to `oci/config`, including:
+- `OCI_DEFAULT_TTL`
+- `OCI_MAX_TTL`
+- `OCI_ENABLE_PLUGIN_ISSUED_SUBJECT_TOKEN`
+- `OCI_STRICT_ROLE_NAME_MATCH`
+- `OCI_SUBJECT_TOKEN_ROLE_MAPPINGS`
+- `OCI_SUBJECT_TOKEN_ALLOWED_AUDIENCES`
+- `OCI_SUBJECT_TOKEN_SELF_MINT_ENABLED`
+- `OCI_SUBJECT_TOKEN_SELF_MINT_ISSUER`
+- `OCI_SUBJECT_TOKEN_SELF_MINT_AUDIENCE`
+- `OCI_SUBJECT_TOKEN_SELF_MINT_TTL_SECONDS`
+- `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY`
+- `OCI_DEBUG_RETURN_RESOLVED_SUBJECT_TOKEN_CLAIMS`
 
 1. Calculate the SHA256 checksum of the plugin binary:
 ```bash

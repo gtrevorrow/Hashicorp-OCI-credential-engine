@@ -4,6 +4,7 @@
 ACTION=$1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEV_ENV_FILE="$REPO_ROOT/.env.local"
 
 if [ "$ACTION" == "start" ]; then
     echo "Starting Vault in dev mode..."
@@ -32,6 +33,12 @@ if [ "$ACTION" == "start" ]; then
     export VAULT_ADDR=${VAULT_ADDR:-"http://127.0.0.1:8200"}
     export VAULT_TOKEN=${VAULT_TOKEN:-"root"}
 
+    if [ -f "$DEV_ENV_FILE" ]; then
+        echo "Loading local dev settings from $DEV_ENV_FILE..."
+        # shellcheck disable=SC1090
+        . "$DEV_ENV_FILE"
+    fi
+
     echo "Vault started with PID $PID."
     echo "Logs are available at /tmp/vault.log"
 
@@ -58,6 +65,56 @@ if [ "$ACTION" == "start" ]; then
         echo "OCI secrets engine already mounted."
     else
         vault secrets enable -path=oci -plugin-name=oci plugin
+    fi
+
+    if [ -n "${OCI_DOMAIN_URL:-}" ] && [ -n "${OCI_CLIENT_ID:-}" ] && [ -n "${OCI_CLIENT_SECRET:-}" ]; then
+        echo "Seeding OCI backend config from local dev settings..."
+        CONFIG_ARGS=(
+            "domain_url=$OCI_DOMAIN_URL"
+            "client_id=$OCI_CLIENT_ID"
+            "client_secret=$OCI_CLIENT_SECRET"
+        )
+
+        if [ -n "${OCI_DEFAULT_TTL:-}" ]; then
+            CONFIG_ARGS+=("default_ttl=$OCI_DEFAULT_TTL")
+        fi
+        if [ -n "${OCI_MAX_TTL:-}" ]; then
+            CONFIG_ARGS+=("max_ttl=$OCI_MAX_TTL")
+        fi
+        if [ -n "${OCI_ENABLE_PLUGIN_ISSUED_SUBJECT_TOKEN:-}" ]; then
+            CONFIG_ARGS+=("enable_plugin_issued_subject_token=$OCI_ENABLE_PLUGIN_ISSUED_SUBJECT_TOKEN")
+        fi
+        if [ -n "${OCI_STRICT_ROLE_NAME_MATCH:-}" ]; then
+            CONFIG_ARGS+=("strict_role_name_match=$OCI_STRICT_ROLE_NAME_MATCH")
+        fi
+        if [ -n "${OCI_SUBJECT_TOKEN_ROLE_MAPPINGS:-}" ]; then
+            CONFIG_ARGS+=("subject_token_role_mappings=$OCI_SUBJECT_TOKEN_ROLE_MAPPINGS")
+        fi
+        if [ -n "${OCI_SUBJECT_TOKEN_ALLOWED_AUDIENCES:-}" ]; then
+            CONFIG_ARGS+=("subject_token_allowed_audiences=$OCI_SUBJECT_TOKEN_ALLOWED_AUDIENCES")
+        fi
+        if [ -n "${OCI_SUBJECT_TOKEN_SELF_MINT_ENABLED:-}" ]; then
+            CONFIG_ARGS+=("subject_token_self_mint_enabled=$OCI_SUBJECT_TOKEN_SELF_MINT_ENABLED")
+        fi
+        if [ -n "${OCI_SUBJECT_TOKEN_SELF_MINT_ISSUER:-}" ]; then
+            CONFIG_ARGS+=("subject_token_self_mint_issuer=$OCI_SUBJECT_TOKEN_SELF_MINT_ISSUER")
+        fi
+        if [ -n "${OCI_SUBJECT_TOKEN_SELF_MINT_AUDIENCE:-}" ]; then
+            CONFIG_ARGS+=("subject_token_self_mint_audience=$OCI_SUBJECT_TOKEN_SELF_MINT_AUDIENCE")
+        fi
+        if [ -n "${OCI_SUBJECT_TOKEN_SELF_MINT_TTL_SECONDS:-}" ]; then
+            CONFIG_ARGS+=("subject_token_self_mint_ttl_seconds=$OCI_SUBJECT_TOKEN_SELF_MINT_TTL_SECONDS")
+        fi
+        if [ -n "${OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY:-}" ]; then
+            CONFIG_ARGS+=("subject_token_self_mint_private_key=$OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY")
+        fi
+        if [ -n "${OCI_DEBUG_RETURN_RESOLVED_SUBJECT_TOKEN_CLAIMS:-}" ]; then
+            CONFIG_ARGS+=("debug_return_resolved_subject_token_claims=$OCI_DEBUG_RETURN_RESOLVED_SUBJECT_TOKEN_CLAIMS")
+        fi
+
+        vault write oci/config "${CONFIG_ARGS[@]}"
+    else
+        echo "OCI backend config not seeded. Set OCI_DOMAIN_URL, OCI_CLIENT_ID, and OCI_CLIENT_SECRET in $DEV_ENV_FILE to auto-configure it on startup."
     fi
 
     echo ""

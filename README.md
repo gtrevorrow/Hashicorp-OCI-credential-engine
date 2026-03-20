@@ -185,6 +185,8 @@ make build-all
 
 ### Register the Plugin with Vault
 
+For local development, `./scripts/dev_vault.sh start` now starts Vault dev mode, registers the plugin, and enables the `oci` mount automatically. The manual steps below are still useful for non-dev setups and for understanding the underlying Vault operations.
+
 1. Calculate the SHA256 checksum of the plugin binary:
 ```bash
 sha256sum bin/vault-plugin-secrets-oci

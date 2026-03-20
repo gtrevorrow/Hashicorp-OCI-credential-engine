@@ -12,6 +12,12 @@ This file is the working backlog for the OCI credential engine plugin. It tracks
 - [ ] Harden `subject_token_allowed_audiences` handling with request normalization and validation (trim, empty/control-character rejection, reasonable length limit)
 - [ ] Apply role-scoped `default_ttl` and `max_ttl` to RPST token-exchange requests sent to OCI; document that UPST lifetime remains OCI-controlled
 
+### FIPS Readiness
+
+- [ ] Document what "usable in Vault Enterprise FIPS deployments" means for this external plugin versus claiming the plugin itself is inside a FIPS-validated crypto boundary
+- [ ] Review the plugin's direct crypto usage (RSA key generation, JWT signing, TLS client behavior, X.509 handling) for FIPS-oriented deployment expectations
+- [ ] Confirm whether additional hardening or build constraints are needed for external plugin binaries in Vault Enterprise FIPS deployments
+
 ### Self-Mint and JWKS
 
 - [ ] Add self-mint key rotation with overlapping verification keys

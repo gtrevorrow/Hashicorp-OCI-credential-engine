@@ -233,13 +233,12 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 	exchangeResult, err := exchanger(ctx, subjectToken, requestedTokenType, resType, publicKey, config)
 	if err != nil {
-		resp := logical.ErrorResponse("token exchange failed: %v", err)
 		if resolvedSubjectTokenClaims != nil {
-			resp.Data = map[string]interface{}{
+			return logical.ErrorResponseWithData(map[string]interface{}{
 				"resolved_subject_token_claims": resolvedSubjectTokenClaims,
-			}
+			}, "token exchange failed: %v", err), nil
 		}
-		return resp, nil
+		return logical.ErrorResponse("token exchange failed: %v", err), nil
 	}
 
 	// Prepare the response with OCI session token

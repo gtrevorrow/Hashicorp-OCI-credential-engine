@@ -717,6 +717,47 @@ func TestPathExchange_CallerSuppliedSubjectTokenUsesCallerPublicKey(t *testing.T
 	require.Nil(t, resp.Data["public_key"])
 }
 
+func TestPathExchange_DebugClaimsDoNotSuppressErrorResponse(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	b.tokenExchanger = func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+		return nil, fmt.Errorf("upstream exchange failure")
+	}
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                           "test-client-id",
+			"client_secret":                       "test-client-secret",
+			"debug_return_resolved_subject_token_claims": true,
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0IiwiaXNzIjoiaHR0cHM6Ly92YXVsdC5leGFtcGxlLmNvbSIsImF1ZCI6InVybjptYWNlOm9jaTppZGNzIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.True(t, resp.IsError())
+	require.Contains(t, resp.Error().Error(), "token exchange failed")
+	require.NotNil(t, resp.Data)
+	debugData, ok := resp.Data["data"].(map[string]interface{})
+	require.True(t, ok)
+	require.Contains(t, debugData, "resolved_subject_token_claims")
+}
+
 func TestPathExchange_SubjectTokenAudienceOverrideRejectedForCallerProvidedToken(t *testing.T) {
 	b, storage := getTestBackend(t)
 	installFailingTokenExchanger(b)

@@ -2,10 +2,8 @@ package ocibackend
 
 import (
 	"context"
-	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -16,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/hashicorp/vault/sdk/helper/pluginutil"
 	"github.com/hashicorp/vault/sdk/logical"
 )
@@ -59,17 +59,12 @@ func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedCo
 	ttl := time.Duration(configSubjectTokenSelfMintTTLSeconds(config)) * time.Second
 	expiresAt := now.Add(ttl)
 
-	header := map[string]interface{}{
-		"alg": "RS256",
-		"typ": "JWT",
-	}
-
 	claims := map[string]interface{}{
 		"iss": config.SubjectTokenSelfMintIssuer,
 		"sub": buildSelfMintSubject(req),
 		"aud": audience,
-		"iat": now.Unix(),
-		"exp": expiresAt.Unix(),
+		"iat": jwt.NewNumericDate(now),
+		"exp": jwt.NewNumericDate(expiresAt),
 		"jti": randomJTI(),
 	}
 
@@ -78,7 +73,12 @@ func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedCo
 		return "", err
 	}
 
-	return signJWT(header, claims, privateKey)
+	signer, err := newSelfMintSigner(privateKey)
+	if err != nil {
+		return "", err
+	}
+
+	return jwt.Signed(signer).Claims(claims).Serialize()
 }
 
 func decodeJWTClaimsMap(token string) (map[string]interface{}, error) {
@@ -253,28 +253,19 @@ func parseRSAPrivateKey(pemString string) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
-func signJWT(header, claims map[string]interface{}, privateKey *rsa.PrivateKey) (string, error) {
-	headerJSON, err := json.Marshal(header)
+func newSelfMintSigner(privateKey *rsa.PrivateKey) (jose.Signer, error) {
+	jwk, err := buildSelfMintSigningJWK(privateKey)
 	if err != nil {
-		return "", err
-	}
-	claimsJSON, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	encodedHeader := base64.RawURLEncoding.EncodeToString(headerJSON)
-	encodedClaims := base64.RawURLEncoding.EncodeToString(claimsJSON)
-	signingInput := encodedHeader + "." + encodedClaims
-
-	digest := sha256.Sum256([]byte(signingInput))
-	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, digest[:])
-	if err != nil {
-		return "", err
-	}
-
-	encodedSig := base64.RawURLEncoding.EncodeToString(signature)
-	return strings.Join([]string{encodedHeader, encodedClaims, encodedSig}, "."), nil
+	return jose.NewSigner(
+		jose.SigningKey{
+			Algorithm: jose.RS256,
+			Key:       jwk,
+		},
+		(&jose.SignerOptions{}).WithType("JWT"),
+	)
 }
 
 func randomJTI() string {

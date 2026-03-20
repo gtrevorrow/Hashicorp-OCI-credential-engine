@@ -3,6 +3,7 @@ module github.com/gordon/Hashicorp-OCI-credential-engine
 go 1.25.0
 
 require (
+	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/vault/sdk v0.19.0
 	github.com/oracle/oci-go-sdk/v65 v65.65.2

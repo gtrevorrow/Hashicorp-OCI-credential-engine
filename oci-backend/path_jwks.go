@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
 	"fmt"
 	"math/big"
 	"path"
@@ -70,35 +68,26 @@ func buildRSAJWK(privateKey *rsa.PrivateKey) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("invalid RSA private key")
 	}
 	publicKey := &privateKey.PublicKey
-	n := publicKey.N
-	if n == nil || publicKey.E <= 0 {
+	if publicKey.N == nil || publicKey.E <= 0 {
 		return nil, fmt.Errorf("invalid RSA public key")
 	}
 
-	modulus := base64.RawURLEncoding.EncodeToString(n.Bytes())
-	exponent := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(publicKey.E)).Bytes())
-
-	pubDER, err := x509.MarshalPKIXPublicKey(publicKey)
+	jwk, err := buildSelfMintSigningJWK(privateKey)
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(pubDER)
-	kid := base64.RawURLEncoding.EncodeToString(sum[:])
+	jwk.Key = publicKey
 
-	leafCertDER, err := buildSelfSignedJWTCertificate(privateKey, kid)
+	leafCertDER, err := buildSelfSignedJWTCertificate(privateKey, jwk.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	jwk.Certificates, err = parseSingleCertificate(leafCertDER)
 	if err != nil {
 		return nil, err
 	}
 
-	return map[string]interface{}{
-		"kty": "RSA",
-		"use": "sig",
-		"alg": "RS256",
-		"kid": kid,
-		"n":   modulus,
-		"e":   exponent,
-		"x5c": []string{base64.StdEncoding.EncodeToString(leafCertDER)},
-	}, nil
+	return jsonWebKeyMap(jwk)
 }
 
 func buildSelfSignedJWTCertificate(privateKey *rsa.PrivateKey, kid string) ([]byte, error) {

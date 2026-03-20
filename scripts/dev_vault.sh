@@ -5,6 +5,7 @@ ACTION=$1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEV_ENV_FILE="$REPO_ROOT/.env.local"
+DEV_SELF_MINT_KEY_FILE="$REPO_ROOT/.vault-dev-self-mint-key.pem"
 
 reset_dev_oci_env() {
     unset OCI_DOMAIN_URL
@@ -26,6 +27,12 @@ reset_dev_oci_env() {
 
 if [ "$ACTION" == "start" ]; then
     echo "Starting Vault in dev mode..."
+
+    echo "Building plugin..."
+    if ! make -C "$REPO_ROOT" build; then
+        echo "Plugin build failed."
+        exit 1
+    fi
 
     PLUGIN_BIN="$REPO_ROOT/bin/vault-plugin-secrets-oci"
     PLUGIN_DIR="/tmp/vault-dev-plugins"
@@ -56,6 +63,20 @@ if [ "$ACTION" == "start" ]; then
         echo "Loading local dev settings from $DEV_ENV_FILE..."
         # shellcheck disable=SC1090
         . "$DEV_ENV_FILE"
+    fi
+
+    if [ "${OCI_SUBJECT_TOKEN_SELF_MINT_ENABLED:-}" = "true" ] && [ -z "${OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY:-}" ]; then
+        if [ -f "$DEV_SELF_MINT_KEY_FILE" ]; then
+            echo "Reusing local dev self-mint signing key from $DEV_SELF_MINT_KEY_FILE..."
+        else
+            echo "Generating local dev self-mint signing key at $DEV_SELF_MINT_KEY_FILE..."
+            if ! openssl genrsa -out "$DEV_SELF_MINT_KEY_FILE" 2048 >/dev/null 2>&1; then
+                echo "Failed to generate local dev self-mint signing key with openssl."
+                exit 1
+            fi
+            chmod 600 "$DEV_SELF_MINT_KEY_FILE"
+        fi
+        OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY="$(cat "$DEV_SELF_MINT_KEY_FILE")"
     fi
 
     echo "Vault started with PID $PID."
@@ -141,6 +162,9 @@ if [ "$ACTION" == "start" ]; then
     echo "Environment:"
     echo "export VAULT_ADDR='$VAULT_ADDR'"
     echo "export VAULT_TOKEN='$VAULT_TOKEN'"
+    if [ -f "$DEV_SELF_MINT_KEY_FILE" ]; then
+        echo "Self-mint signing key: $DEV_SELF_MINT_KEY_FILE"
+    fi
 
 elif [ "$ACTION" == "stop" ]; then
     if [ -f /tmp/vault.pid ]; then

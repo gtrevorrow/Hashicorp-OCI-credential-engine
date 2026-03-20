@@ -185,7 +185,7 @@ make build-all
 
 ### Register the Plugin with Vault
 
-For local development, `./scripts/dev_vault.sh start` now starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are still useful for non-dev setups and for understanding the underlying Vault operations.
+For local development, `./scripts/dev_vault.sh start` now runs `make build`, starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are still useful for non-dev setups and for understanding the underlying Vault operations.
 
 If you want dev startup to reapply backend config automatically, create `.env.local` in the repo root with at least:
 
@@ -208,6 +208,8 @@ Optional `.env.local` settings also map directly to `oci/config`, including:
 - `OCI_SUBJECT_TOKEN_SELF_MINT_TTL_SECONDS`
 - `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY`
 - `OCI_DEBUG_RETURN_RESOLVED_SUBJECT_TOKEN_CLAIMS`
+
+If self-mint is enabled in `.env.local` and `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY` is not set, `./scripts/dev_vault.sh start` will create and reuse a local ignored PEM file at `.vault-dev-self-mint-key.pem`. That keeps the self-mint JWKS stable across dev restarts.
 
 1. Calculate the SHA256 checksum of the plugin binary:
 ```bash

@@ -33,6 +33,8 @@ func TestPathConfig_Updates(t *testing.T) {
 
 	// Covers CFG-03.
 	t.Run("Create Config Missing Variables", func(t *testing.T) {
+		b, storage := getTestBackend(t)
+
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
 			Path:      "config",
@@ -288,6 +290,113 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 	require.NotNil(t, config)
 	require.NotEmpty(t, config.SubjectTokenSelfMintPrivateKey)
 	require.Contains(t, config.SubjectTokenSelfMintPrivateKey, "BEGIN RSA PRIVATE KEY")
+}
+
+func TestPathConfig_PartialUpdates(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqCreate := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), reqCreate)
+	require.NoError(t, err)
+	require.False(t, resp != nil && resp.IsError())
+
+	t.Run("Toggle debug flag without rewriting base config", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"debug_return_resolved_subject_token_claims": true,
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.False(t, resp != nil && resp.IsError())
+
+		readReq := &logical.Request{
+			Operation: logical.ReadOperation,
+			Path:      "config",
+			Storage:   storage,
+		}
+		readResp, err := b.HandleRequest(context.Background(), readReq)
+		require.NoError(t, err)
+		require.NotNil(t, readResp)
+
+		assert.Equal(t, "https://idcs-test.identity.oraclecloud.com", readResp.Data["domain_url"])
+		assert.Equal(t, "test-client-id", readResp.Data["client_id"])
+		assert.Equal(t, true, readResp.Data["debug_return_resolved_subject_token_claims"])
+	})
+
+	t.Run("Enable self-mint incrementally with issuer", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"subject_token_self_mint_enabled": true,
+				"subject_token_self_mint_issuer":  "https://vault.example.com",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.False(t, resp != nil && resp.IsError())
+
+		readReq := &logical.Request{
+			Operation: logical.ReadOperation,
+			Path:      "config",
+			Storage:   storage,
+		}
+		readResp, err := b.HandleRequest(context.Background(), readReq)
+		require.NoError(t, err)
+		require.NotNil(t, readResp)
+
+		assert.Equal(t, true, readResp.Data["subject_token_self_mint_enabled"])
+		assert.Equal(t, "https://vault.example.com", readResp.Data["subject_token_self_mint_issuer"])
+	})
+
+	t.Run("Reject enabling self-mint without issuer on partial update", func(t *testing.T) {
+		b, storage := getTestBackend(t)
+		reqCreate := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+				"client_id":     "test-client-id",
+				"client_secret": "test-client-secret",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), reqCreate)
+		require.NoError(t, err)
+		require.False(t, resp != nil && resp.IsError())
+
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"subject_token_self_mint_enabled": true,
+			},
+		}
+
+		resp, err = b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "subject_token_self_mint_issuer is required")
+	})
 }
 
 func TestPathConfig_SelfMintGeneratedKeyIsReused(t *testing.T) {

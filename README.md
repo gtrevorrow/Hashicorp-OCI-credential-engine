@@ -291,6 +291,8 @@ vault write oci/config \
 - `subject_token_self_mint_private_key`: Optional PEM RSA private key. If omitted while self-mint is enabled, the plugin generates one and stores it in Vault plugin storage
 - `debug_return_resolved_subject_token_claims`: Development-only flag that includes decoded claims from the resolved subject token in `oci/exchange` responses, including error responses
 
+`oci/config` supports incremental updates. After the initial configuration is created, later `vault write oci/config ...` calls may update only the fields you want to change.
+
 If `subject_token_self_mint_enabled=true`, OCI must be able to discover the published JWKS for the self-mint signing key. See [Self-Mint JWKS Publication Workflow](#self-mint-jwks-publication-workflow).
 
 The plugin keeps the private signing key in Vault plugin storage. The published JWKS contains only the public key material.
@@ -299,11 +301,6 @@ For local debugging of plugin-issued subject tokens, you can temporarily enable:
 
 ```bash
 vault write oci/config \
-    domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
-    client_id="ocid1.oauth2client.oc1..xxxxx" \
-    client_secret="<oauth-client-secret>" \
-    subject_token_self_mint_enabled=true \
-    subject_token_self_mint_issuer="https://vault.example.com" \
     debug_return_resolved_subject_token_claims=true
 ```
 

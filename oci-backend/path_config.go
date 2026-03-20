@@ -202,62 +202,83 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 
 // pathConfigWrite creates or updates the configuration
 func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	domainUrl := data.Get("domain_url").(string)
-	if domainUrl == "" {
-		return logical.ErrorResponse("missing 'domain_url'"), nil
-	}
-
-	clientID := data.Get("client_id").(string)
-	if clientID == "" {
-		return logical.ErrorResponse("missing 'client_id'"), nil
-	}
-
-	clientSecret := data.Get("client_secret").(string)
-	if clientSecret == "" {
-		return logical.ErrorResponse("missing 'client_secret'"), nil
-	}
-
 	existingConfig, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
 		return nil, err
 	}
 
-	config := &federatedConfig{
-		DomainUrl:    domainUrl,
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-
-		DefaultTTL: data.Get("default_ttl").(int),
-		MaxTTL:     data.Get("max_ttl").(int),
-
-		StrictRoleNameMatch:                   data.Get("strict_role_name_match").(bool),
-		SubjectTokenSelfMintEnabled:           data.Get("subject_token_self_mint_enabled").(bool),
-		SubjectTokenSelfMintIssuer:            data.Get("subject_token_self_mint_issuer").(string),
-		SubjectTokenSelfMintAudience:          data.Get("subject_token_self_mint_audience").(string),
-		SubjectTokenAllowedAudiences:          data.Get("subject_token_allowed_audiences").([]string),
-		SubjectTokenSelfMintTTLSeconds:        data.Get("subject_token_self_mint_ttl_seconds").(int),
-		SubjectTokenSelfMintPrivateKey:        data.Get("subject_token_self_mint_private_key").(string),
-		DebugReturnResolvedSubjectTokenClaims: data.Get("debug_return_resolved_subject_token_claims").(bool),
+	config := &federatedConfig{}
+	if existingConfig != nil {
+		*config = *existingConfig
 	}
-	enablePluginIssuedSubjectToken := data.Get("enable_plugin_issued_subject_token").(bool)
-	config.EnablePluginIssuedSubjectToken = &enablePluginIssuedSubjectToken
 
-	mappings, mappingErr := decodeSubjectTokenRoleMappings(data.Get("subject_token_role_mappings").(string))
-	if mappingErr != nil {
-		return logical.ErrorResponse("invalid subject_token_role_mappings: %v", mappingErr), nil
+	if _, ok := req.Data["domain_url"]; ok {
+		config.DomainUrl = data.Get("domain_url").(string)
 	}
+	if _, ok := req.Data["client_id"]; ok {
+		config.ClientID = data.Get("client_id").(string)
+	}
+	if _, ok := req.Data["client_secret"]; ok {
+		config.ClientSecret = data.Get("client_secret").(string)
+	}
+	if _, ok := req.Data["default_ttl"]; ok {
+		config.DefaultTTL = data.Get("default_ttl").(int)
+	}
+	if _, ok := req.Data["max_ttl"]; ok {
+		config.MaxTTL = data.Get("max_ttl").(int)
+	}
+	if _, ok := req.Data["strict_role_name_match"]; ok {
+		config.StrictRoleNameMatch = data.Get("strict_role_name_match").(bool)
+	}
+	if _, ok := req.Data["subject_token_self_mint_enabled"]; ok {
+		config.SubjectTokenSelfMintEnabled = data.Get("subject_token_self_mint_enabled").(bool)
+	}
+	if _, ok := req.Data["subject_token_self_mint_issuer"]; ok {
+		config.SubjectTokenSelfMintIssuer = data.Get("subject_token_self_mint_issuer").(string)
+	}
+	if _, ok := req.Data["subject_token_self_mint_audience"]; ok {
+		config.SubjectTokenSelfMintAudience = data.Get("subject_token_self_mint_audience").(string)
+	}
+	if _, ok := req.Data["subject_token_allowed_audiences"]; ok {
+		config.SubjectTokenAllowedAudiences = data.Get("subject_token_allowed_audiences").([]string)
+	}
+	if _, ok := req.Data["subject_token_self_mint_ttl_seconds"]; ok {
+		config.SubjectTokenSelfMintTTLSeconds = data.Get("subject_token_self_mint_ttl_seconds").(int)
+	}
+	if _, ok := req.Data["subject_token_self_mint_private_key"]; ok {
+		config.SubjectTokenSelfMintPrivateKey = data.Get("subject_token_self_mint_private_key").(string)
+	}
+	if _, ok := req.Data["debug_return_resolved_subject_token_claims"]; ok {
+		config.DebugReturnResolvedSubjectTokenClaims = data.Get("debug_return_resolved_subject_token_claims").(bool)
+	}
+	if _, ok := req.Data["enable_plugin_issued_subject_token"]; ok {
+		enablePluginIssuedSubjectToken := data.Get("enable_plugin_issued_subject_token").(bool)
+		config.EnablePluginIssuedSubjectToken = &enablePluginIssuedSubjectToken
+	}
+	if _, ok := req.Data["subject_token_role_mappings"]; ok {
+		mappings, mappingErr := decodeSubjectTokenRoleMappings(data.Get("subject_token_role_mappings").(string))
+		if mappingErr != nil {
+			return logical.ErrorResponse("invalid subject_token_role_mappings: %v", mappingErr), nil
+		}
+		config.SubjectTokenRoleMappings = mappings
+	}
+
+	if config.DomainUrl == "" {
+		return logical.ErrorResponse("missing 'domain_url'"), nil
+	}
+	if config.ClientID == "" {
+		return logical.ErrorResponse("missing 'client_id'"), nil
+	}
+	if config.ClientSecret == "" {
+		return logical.ErrorResponse("missing 'client_secret'"), nil
+	}
+
 	if config.StrictRoleNameMatch {
-		for _, mapping := range mappings {
+		for _, mapping := range config.SubjectTokenRoleMappings {
 			if !isStrictRoleNameValid(mapping.Role) {
 				return logical.ErrorResponse("invalid mapped role '%s': strict_role_name_match requires pattern [A-Za-z0-9._:-]+", mapping.Role), nil
 			}
 		}
-	}
-	config.SubjectTokenRoleMappings = mappings
-
-	// Preserve previously stored signing key unless caller explicitly sets a replacement.
-	if _, keyProvided := req.Data["subject_token_self_mint_private_key"]; !keyProvided && existingConfig != nil {
-		config.SubjectTokenSelfMintPrivateKey = existingConfig.SubjectTokenSelfMintPrivateKey
 	}
 	if config.SubjectTokenSelfMintEnabled {
 		if config.SubjectTokenSelfMintIssuer == "" {
@@ -272,7 +293,7 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		}
 	}
 
-	if !strings.HasPrefix(domainUrl, "https://") {
+	if !strings.HasPrefix(config.DomainUrl, "https://") {
 		return logical.ErrorResponse("invalid domain_url format, must start with https://"), nil
 	}
 

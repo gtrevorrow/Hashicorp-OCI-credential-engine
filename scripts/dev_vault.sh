@@ -6,6 +6,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEV_ENV_FILE="$REPO_ROOT/.env.local"
 
+reset_dev_oci_env() {
+    unset OCI_DOMAIN_URL
+    unset OCI_CLIENT_ID
+    unset OCI_CLIENT_SECRET
+    unset OCI_DEFAULT_TTL
+    unset OCI_MAX_TTL
+    unset OCI_ENABLE_PLUGIN_ISSUED_SUBJECT_TOKEN
+    unset OCI_STRICT_ROLE_NAME_MATCH
+    unset OCI_SUBJECT_TOKEN_ROLE_MAPPINGS
+    unset OCI_SUBJECT_TOKEN_ALLOWED_AUDIENCES
+    unset OCI_SUBJECT_TOKEN_SELF_MINT_ENABLED
+    unset OCI_SUBJECT_TOKEN_SELF_MINT_ISSUER
+    unset OCI_SUBJECT_TOKEN_SELF_MINT_AUDIENCE
+    unset OCI_SUBJECT_TOKEN_SELF_MINT_TTL_SECONDS
+    unset OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY
+    unset OCI_DEBUG_RETURN_RESOLVED_SUBJECT_TOKEN_CLAIMS
+}
+
 if [ "$ACTION" == "start" ]; then
     echo "Starting Vault in dev mode..."
 
@@ -33,6 +51,7 @@ if [ "$ACTION" == "start" ]; then
     export VAULT_ADDR=${VAULT_ADDR:-"http://127.0.0.1:8200"}
     export VAULT_TOKEN=${VAULT_TOKEN:-"root"}
 
+    reset_dev_oci_env
     if [ -f "$DEV_ENV_FILE" ]; then
         echo "Loading local dev settings from $DEV_ENV_FILE..."
         # shellcheck disable=SC1090

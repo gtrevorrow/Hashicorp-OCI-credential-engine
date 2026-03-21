@@ -51,6 +51,18 @@ func (b *backend) getSubjectTokenCallback() SubjectTokenCallback {
 	return b.subjectTokenCallback
 }
 
+func (b *backend) setTokenExchanger(exchanger func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error)) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	b.tokenExchanger = exchanger
+}
+
+func (b *backend) getTokenExchanger() func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+	b.lock.RLock()
+	defer b.lock.RUnlock()
+	return b.tokenExchanger
+}
+
 // Factory returns a configured logical.Factory
 func Factory(version string) logical.Factory {
 	return func(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
@@ -86,7 +98,7 @@ func Factory(version string) logical.Factory {
 			return nil, err
 		}
 		b.RegisterSubjectTokenCallback(b.defaultSubjectTokenCallback)
-		b.tokenExchanger = b.exchangeTokenForOCI
+		b.setTokenExchanger(b.exchangeTokenForOCI)
 
 		return &b, nil
 	}

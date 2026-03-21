@@ -227,7 +227,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 
 	// Perform the token exchange
-	exchanger := b.tokenExchanger
+	exchanger := b.getTokenExchanger()
 	if exchanger == nil {
 		exchanger = b.exchangeTokenForOCI
 	}

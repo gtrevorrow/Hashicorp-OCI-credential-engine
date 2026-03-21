@@ -308,6 +308,19 @@ vault write oci/config \
 
 Then `vault write -force -format=json oci/exchange` will include `data.resolved_subject_token_claims` even when OCI rejects the exchange. This flag is intended only for development and troubleshooting.
 
+### Multiple OCI Accounts or Identity Domains
+
+This backend is designed around one OCI trust/config boundary per mount. A single mount has one `oci/config` entry, so it represents one OCI Identity Domain and one confidential application configuration at a time.
+
+If you need to work with multiple OCI accounts, identity domains, or separate trust boundaries, mount the plugin multiple times at different paths. For example:
+
+```bash
+vault secrets enable -path=oci-dev -plugin-name=oci plugin
+vault secrets enable -path=oci-prod -plugin-name=oci plugin
+```
+
+Then configure each mount separately with its own `oci/config` and roles.
+
 ### Roles
 
 Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exchange does not currently let the client request token lifetime through the token-exchange call, so these TTL settings only directly shape the OCI request for RPST. For UPST, they mainly affect Vault-side lease metadata today.

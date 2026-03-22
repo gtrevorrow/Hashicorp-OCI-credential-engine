@@ -2,6 +2,7 @@ package ocibackend
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"time"
 
@@ -24,20 +25,20 @@ func (b *backend) pathExchange() []*framework.Path {
 						Sensitive: true,
 					},
 				},
-				"subject_token_type": {
-					Type:        framework.TypeString,
-					Description: "Type of the subject token (urn:ietf:params:oauth:token-type:jwt)",
-					Default:     "urn:ietf:params:oauth:token-type:jwt",
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Subject Token Type",
-					},
-				},
 				"requested_token_type": {
 					Type:        framework.TypeString,
 					Description: "OCI token type to request (urn:oci:token-type:oci-upst or urn:oci:token-type:oci-rpst)",
 					Default:     ociRequestedTokenTypeUPST,
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name: "Requested Token Type",
+					},
+				},
+				"subject_token_audience": {
+					Type:        framework.TypeString,
+					Description: "Optional audience override for callback-resolved subject tokens; must be allowed by backend config",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Subject Token Audience",
 					},
 				},
 				"res_type": {
@@ -107,18 +108,20 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 
 	subjectToken := ""
+	subjectTokenProvided := false
 	if raw, ok := data.GetOk("subject_token"); ok {
 		subjectToken = raw.(string)
-	}
-
-	subjectTokenType := "urn:ietf:params:oauth:token-type:jwt"
-	if raw, ok := data.GetOk("subject_token_type"); ok && raw.(string) != "" {
-		subjectTokenType = raw.(string)
+		subjectTokenProvided = subjectToken != ""
 	}
 
 	requestedTokenType := ociRequestedTokenTypeUPST
 	if raw, ok := data.GetOk("requested_token_type"); ok && raw.(string) != "" {
 		requestedTokenType = raw.(string)
+	}
+
+	requestedSubjectTokenAudience := ""
+	if raw, ok := data.GetOk("subject_token_audience"); ok && raw.(string) != "" {
+		requestedSubjectTokenAudience = raw.(string)
 	}
 
 	if !isSupportedRequestedTokenType(requestedTokenType) {
@@ -141,8 +144,11 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 
 	// Resolve missing subject token through registered callback flow.
 	if subjectToken == "" {
-		if !configAllowPluginIdentityFallback(config) {
-			return logical.ErrorResponse("missing 'subject_token' and plugin identity fallback is disabled"), nil
+		if !configEnablePluginIssuedSubjectToken(config) {
+			return logical.ErrorResponse("missing 'subject_token' and plugin-issued subject token mode is disabled"), nil
+		}
+		if _, audienceErr := resolveSubjectTokenAudience(data, config); audienceErr != nil {
+			return logical.ErrorResponse("%v", audienceErr), nil
 		}
 		callback := b.getSubjectTokenCallback()
 		if callback == nil {
@@ -156,12 +162,36 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 			return logical.ErrorResponse("missing 'subject_token' and callback returned empty token"), nil
 		}
 		subjectToken = fallbackToken
+	} else if requestedSubjectTokenAudience != "" {
+		return logical.ErrorResponse("subject_token_audience is only supported when subject_token is omitted"), nil
+	}
+
+	var resolvedSubjectTokenClaims map[string]interface{}
+	if config.DebugReturnResolvedSubjectTokenClaims {
+		claims, claimsErr := decodeJWTClaimsMap(subjectToken)
+		if claimsErr != nil {
+			resolvedSubjectTokenClaims = map[string]interface{}{
+				"_decode_error": claimsErr.Error(),
+			}
+		} else {
+			resolvedSubjectTokenClaims = claims
+		}
 	}
 
 	// Get role if specified
 	roleName := ""
 	if raw, ok := data.GetOk("role"); ok {
 		roleName = raw.(string)
+	}
+	if subjectTokenProvided && len(config.SubjectTokenRoleMappings) > 0 {
+		if roleName != "" {
+			return logical.ErrorResponse("role must be omitted when subject_token_role_mappings are configured"), nil
+		}
+		derivedRoleName, derivedRoleErr := resolveRoleFromSubjectToken(subjectToken, config.SubjectTokenRoleMappings)
+		if derivedRoleErr != nil {
+			return logical.ErrorResponse("unable to derive role from subject_token: %v", derivedRoleErr), nil
+		}
+		roleName = derivedRoleName
 	}
 	if roleName != "" && config.StrictRoleNameMatch && !isStrictRoleNameValid(roleName) {
 		return logical.ErrorResponse("invalid role '%s': strict_role_name_match requires pattern [A-Za-z0-9._:-]+", roleName), nil
@@ -174,22 +204,6 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 		if role == nil {
 			return logical.ErrorResponse("role '%s' not found", roleName), nil
-		}
-	}
-
-	if config.EnforceRoleClaimMatch {
-		if roleName == "" {
-			return logical.ErrorResponse("missing 'role' while enforce_role_claim_match is enabled"), nil
-		}
-
-		claimKey := configRoleClaimKey(config)
-		roleMatched, claimValue, claimErr := jwtClaimContainsRole(subjectToken, claimKey, roleName)
-		if claimErr != nil {
-			return logical.ErrorResponse("unable to enforce role claim match: %v", claimErr), nil
-		}
-
-		if !roleMatched {
-			return logical.ErrorResponse("role claim mismatch: claim '%s' value '%s' does not match requested role '%s'", claimKey, claimValue, roleName), nil
 		}
 	}
 
@@ -213,8 +227,17 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 
 	// Perform the token exchange
-	exchangeResult, err := b.exchangeTokenForOCI(ctx, subjectToken, subjectTokenType, requestedTokenType, resType, publicKey, config)
+	exchanger := b.getTokenExchanger()
+	if exchanger == nil {
+		exchanger = b.exchangeTokenForOCI
+	}
+	exchangeResult, err := exchanger(ctx, subjectToken, requestedTokenType, resType, publicKey, config)
 	if err != nil {
+		if resolvedSubjectTokenClaims != nil {
+			return logical.ErrorResponseWithData(map[string]interface{}{
+				"resolved_subject_token_claims": resolvedSubjectTokenClaims,
+			}, "token exchange failed: %v", err), nil
+		}
 		return logical.ErrorResponse("token exchange failed: %v", err), nil
 	}
 
@@ -225,8 +248,9 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		"requested_token_type": exchangeResult.RequestedTokenType,
 		"expires_in":           int(ttl.Seconds()),
 		"expires_at":           time.Now().Add(ttl).Format(time.RFC3339),
-		"region":               config.Region,
-		"tenancy_ocid":         config.TenancyOCID,
+	}
+	if resolvedSubjectTokenClaims != nil {
+		respData["resolved_subject_token_claims"] = resolvedSubjectTokenClaims
 	}
 
 	// If OCI returns a session token specifically
@@ -251,6 +275,33 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	resp.Secret.MaxTTL = maxTTL
 
 	return resp, nil
+}
+
+type fieldDataGetter interface {
+	GetOk(string) (interface{}, bool)
+}
+
+func resolveSubjectTokenAudience(data fieldDataGetter, config *federatedConfig) (string, error) {
+	audience := configSubjectTokenSelfMintAudience(config)
+	if data == nil {
+		return audience, nil
+	}
+
+	raw, ok := data.GetOk("subject_token_audience")
+	if !ok || raw.(string) == "" {
+		return audience, nil
+	}
+	requestedAudience := raw.(string)
+	allowed := configSubjectTokenAllowedAudiences(config)
+	for _, allowedAudience := range allowed {
+		if requestedAudience == allowedAudience {
+			return requestedAudience, nil
+		}
+	}
+	if len(allowed) == 0 {
+		return "", fmt.Errorf("subject_token_audience override is not enabled for this backend")
+	}
+	return "", fmt.Errorf("subject_token_audience '%s' is not in subject_token_allowed_audiences", requestedAudience)
 }
 
 // ociTokenSecret returns the secret type for OCI tokens
@@ -286,14 +337,6 @@ func (b *backend) ociTokenSecret() *framework.Secret {
 				Type:        framework.TypeString,
 				Description: "OCI token type returned by token exchange",
 			},
-			"region": {
-				Type:        framework.TypeString,
-				Description: "OCI region",
-			},
-			"tenancy_ocid": {
-				Type:        framework.TypeString,
-				Description: "OCI tenancy OCID",
-			},
 		},
 		Revoke: b.tokenRevoke,
 	}
@@ -315,14 +358,13 @@ This endpoint accepts a JWT subject token from a configured external Identity Pr
 and exchanges it for an OCI session token via the OCI IAM token exchange API.
 
 Subject token behavior:
-  - subject_token is required when allow_plugin_identity_fallback=false
-  - subject_token is optional when allow_plugin_identity_fallback=true and callback fallback is configured
+  - subject_token is required when enable_plugin_issued_subject_token=false
+  - subject_token is optional when enable_plugin_issued_subject_token=true and callback fallback is configured
 
 Optional parameters:
-  - subject_token_type: Token type (default: urn:ietf:params:oauth:token-type:jwt)
 	- requested_token_type: OCI token type (default: urn:oci:token-type:oci-upst)
 	- res_type: OCI resource type (required for urn:oci:token-type:oci-rpst)
-	- public_key: Optional PEM public key included in the exchange request
+	- public_key: Optional PEM public key included in the exchange request; if omitted, the plugin generates a fresh RSA key pair for the exchange
   - role: Role defining TTL constraints
   - ttl: Requested TTL for the OCI session token
 
@@ -340,6 +382,4 @@ The response includes:
 	- requested_token_type: The OCI token type requested/returned
   - token_type: Bearer
   - expires_in: Token lifetime in seconds
-  - region: The configured OCI region
-  - tenancy_ocid: The OCI tenancy OCID
 `

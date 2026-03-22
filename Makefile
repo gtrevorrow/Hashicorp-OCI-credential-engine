@@ -47,4 +47,4 @@ enable:
 # Register the plugin with Vault (requires SHA256)
 register:
 	@echo "Calculate SHA256 and register:"
-	@echo "vault write sys/plugins/catalog/secrets/oci sha_256=\\$$(sha256sum bin/$(BINARY_NAME) | cut -d' ' -f1) command=$(BINARY_NAME)"
+	@echo "vault write sys/plugins/catalog/secret/oci sha_256=\\$$(sha256sum bin/$(BINARY_NAME) | cut -d' ' -f1) command=$(BINARY_NAME)"

@@ -1,0 +1,23 @@
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Credential Engine
+    participant S as Vault Storage
+    participant SV as Vault System View
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` without `subject_token`
+    V->>S: Read backend config and optional plugin role
+    S-->>V: Config and role constraints
+    V->>V: Check `enable_plugin_issued_subject_token=true`
+    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>SV: `GenerateIdentityToken(audience)`
+    SV-->>V: Vault-issued identity token
+    alt Caller supplies `public_key`
+        V->>V: Use caller public key for OCI exchange
+    else `public_key` omitted
+        V->>V: Generate exchange RSA keypair
+    end
+    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    O-->>V: OCI UPST or RPST
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated

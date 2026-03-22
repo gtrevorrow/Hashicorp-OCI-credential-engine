@@ -141,11 +141,9 @@ func TestPathRoles_StrictRoleNameMatch(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":           "ocid1.tenancy.oc1..test",
 			"domain_url":             "https://idcs-test.identity.oraclecloud.com",
 			"client_id":              "test-client-id",
 			"client_secret":          "test-client-secret",
-			"region":                 "us-ashburn-1",
 			"strict_role_name_match": true,
 		},
 	}

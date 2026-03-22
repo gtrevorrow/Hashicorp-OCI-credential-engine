@@ -19,11 +19,9 @@ func TestPathConfig_Updates(t *testing.T) {
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"tenancy_ocid":  "ocid1.tenancy.oc1..test",
 				"domain_url":    "https://idcs-test.identity.oraclecloud.com",
 				"client_id":     "test-client-id",
 				"client_secret": "test-client-secret",
-				"region":        "us-ashburn-1",
 				"jwks_url":      "https://example.com/jwks",
 			},
 		}
@@ -35,18 +33,37 @@ func TestPathConfig_Updates(t *testing.T) {
 
 	// Covers CFG-03.
 	t.Run("Create Config Missing Variables", func(t *testing.T) {
+		b, storage := getTestBackend(t)
+
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"region": "us-ashburn-1",
+				"client_id": "test-client-id",
 			},
 		}
 
 		resp, err := b.HandleRequest(context.Background(), req)
 		assert.NoError(t, err) // Validation errors are returned in resp.Error, not err
 		assert.True(t, resp.IsError())
+	})
+
+	t.Run("Create Config", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+				"client_id":     "test-client-id",
+				"client_secret": "test-client-secret",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		assert.False(t, resp != nil && resp.IsError(), "expected no error, got: %v", resp)
 	})
 }
 
@@ -59,11 +76,9 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":  "ocid1.tenancy.oc1..test",
 			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
 			"client_id":     "test-client-id",
 			"client_secret": "test-client-secret",
-			"region":        "us-ashburn-1",
 			"jwks_url":      "https://example.com/jwks",
 		},
 	}
@@ -82,17 +97,15 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 
-		assert.Equal(t, "ocid1.tenancy.oc1..test", resp.Data["tenancy_ocid"])
 		assert.Equal(t, "https://idcs-test.identity.oraclecloud.com", resp.Data["domain_url"])
 		assert.Equal(t, "test-client-id", resp.Data["client_id"])
 		assert.Nil(t, resp.Data["client_secret"])
-		assert.Equal(t, "us-ashburn-1", resp.Data["region"])
-		assert.Equal(t, false, resp.Data["enforce_role_claim_match"])
-		assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
-		assert.Equal(t, true, resp.Data["allow_plugin_identity_fallback"])
+		assert.Nil(t, resp.Data["subject_token_role_mappings"])
+		assert.Equal(t, true, resp.Data["enable_plugin_issued_subject_token"])
 		assert.Equal(t, false, resp.Data["strict_role_name_match"])
 		assert.Equal(t, false, resp.Data["subject_token_self_mint_enabled"])
 		assert.Equal(t, "urn:mace:oci:idcs", resp.Data["subject_token_self_mint_audience"])
+		assert.Nil(t, resp.Data["subject_token_allowed_audiences"])
 		assert.Equal(t, 600, resp.Data["subject_token_self_mint_ttl_seconds"])
 	})
 
@@ -120,7 +133,7 @@ func TestPathConfig_ReadDelete(t *testing.T) {
 	})
 }
 
-func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
+func TestPathConfig_SubjectTokenRoleMappings(t *testing.T) {
 	b, storage := getTestBackend(t)
 	testKey := generateTestRSAPrivateKeyPEM(t)
 	// Covers CFG-02 and exercises CFG-09/CFG-10 with non-default settings.
@@ -130,18 +143,16 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                        "ocid1.tenancy.oc1..test",
+			"subject_token_role_mappings":         `[{"claim":"vault_role","op":"eq","value":"dev","role":"dev"}]`,
 			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                           "test-client-id",
 			"client_secret":                       "test-client-secret",
-			"region":                              "us-ashburn-1",
-			"enforce_role_claim_match":            true,
-			"role_claim_key":                      "vault_role",
-			"allow_plugin_identity_fallback":      false,
+			"enable_plugin_issued_subject_token":  false,
 			"strict_role_name_match":              true,
 			"subject_token_self_mint_enabled":     true,
 			"subject_token_self_mint_issuer":      "https://vault.example.com",
 			"subject_token_self_mint_audience":    "urn:mace:oci:idcs",
+			"subject_token_allowed_audiences":     []string{"urn:oci:test", "urn:oci:prod"},
 			"subject_token_self_mint_ttl_seconds": 900,
 			"subject_token_self_mint_private_key": testKey,
 		},
@@ -158,32 +169,31 @@ func TestPathConfig_RoleClaimMatchSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
-	assert.Equal(t, true, resp.Data["enforce_role_claim_match"])
-	assert.Equal(t, "vault_role", resp.Data["role_claim_key"])
-	assert.Equal(t, false, resp.Data["allow_plugin_identity_fallback"])
+	require.Equal(t, []subjectTokenRoleMapping{
+		{Claim: "vault_role", Op: "eq", Value: "dev", Role: "dev"},
+	}, resp.Data["subject_token_role_mappings"])
+	assert.Equal(t, false, resp.Data["enable_plugin_issued_subject_token"])
 	assert.Equal(t, true, resp.Data["strict_role_name_match"])
 	assert.Equal(t, true, resp.Data["subject_token_self_mint_enabled"])
 	assert.Equal(t, "https://vault.example.com", resp.Data["subject_token_self_mint_issuer"])
 	assert.Equal(t, "urn:mace:oci:idcs", resp.Data["subject_token_self_mint_audience"])
+	assert.Equal(t, []string{"urn:oci:test", "urn:oci:prod"}, resp.Data["subject_token_allowed_audiences"])
 	assert.Equal(t, 900, resp.Data["subject_token_self_mint_ttl_seconds"])
 }
 
-func TestPathConfig_RoleClaimKeyRequiresEnforcement(t *testing.T) {
+func TestPathConfig_SubjectTokenRoleMappingsValidation(t *testing.T) {
 	b, storage := getTestBackend(t)
 
-	// Covers CFG-08.
-	t.Run("Rejects role_claim_key without enforcement", func(t *testing.T) {
+	t.Run("Rejects invalid JSON", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"tenancy_ocid":   "ocid1.tenancy.oc1..test",
-				"domain_url":     "https://idcs-test.identity.oraclecloud.com",
-				"client_id":      "test-client-id",
-				"client_secret":  "test-client-secret",
-				"region":         "us-ashburn-1",
-				"role_claim_key": "vault_role",
+				"domain_url":                  "https://idcs-test.identity.oraclecloud.com",
+				"client_id":                   "test-client-id",
+				"client_secret":               "test-client-secret",
+				"subject_token_role_mappings": `{not-json}`,
 			},
 		}
 
@@ -191,29 +201,48 @@ func TestPathConfig_RoleClaimKeyRequiresEnforcement(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "role_claim_key requires enforce_role_claim_match=true")
+		require.Contains(t, resp.Error().Error(), "invalid subject_token_role_mappings")
 	})
 
-	// Covers CFG-02 for enforced role-claim config.
-	t.Run("Accepts role_claim_key with enforcement", func(t *testing.T) {
+	t.Run("Rejects unsupported operator", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
 			Path:      "config",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"tenancy_ocid":             "ocid1.tenancy.oc1..test",
-				"domain_url":               "https://idcs-test.identity.oraclecloud.com",
-				"client_id":                "test-client-id",
-				"client_secret":            "test-client-secret",
-				"region":                   "us-ashburn-1",
-				"enforce_role_claim_match": true,
-				"role_claim_key":           "vault_role",
+				"domain_url":                  "https://idcs-test.identity.oraclecloud.com",
+				"client_id":                   "test-client-id",
+				"client_secret":               "test-client-secret",
+				"subject_token_role_mappings": `[{"claim":"vault_role","op":"ne","value":"dev","role":"dev"}]`,
 			},
 		}
 
 		resp, err := b.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
-		assert.False(t, resp != nil && resp.IsError())
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "unsupported op")
+	})
+
+	t.Run("Rejects invalid mapped role in strict mode", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"domain_url":                  "https://idcs-test.identity.oraclecloud.com",
+				"client_id":                   "test-client-id",
+				"client_secret":               "test-client-secret",
+				"strict_role_name_match":      true,
+				"subject_token_role_mappings": `[{"claim":"groups","op":"co","value":"team","role":"dev@team"}]`,
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "invalid mapped role")
 	})
 }
 
@@ -227,11 +256,9 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                        "ocid1.tenancy.oc1..test",
 			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                           "test-client-id",
 			"client_secret":                       "test-client-secret",
-			"region":                              "us-ashburn-1",
 			"subject_token_self_mint_enabled":     true,
 			"subject_token_self_mint_private_key": testKey,
 		},
@@ -247,11 +274,9 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                    "ocid1.tenancy.oc1..test",
 			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                       "test-client-id",
 			"client_secret":                   "test-client-secret",
-			"region":                          "us-ashburn-1",
 			"subject_token_self_mint_enabled": true,
 			"subject_token_self_mint_issuer":  "https://vault.example.com",
 		},
@@ -267,6 +292,148 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 	require.Contains(t, config.SubjectTokenSelfMintPrivateKey, "BEGIN RSA PRIVATE KEY")
 }
 
+func TestPathConfig_PartialUpdates(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqCreate := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), reqCreate)
+	require.NoError(t, err)
+	require.False(t, resp != nil && resp.IsError())
+
+	t.Run("Toggle debug flag without rewriting base config", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"debug_return_resolved_subject_token_claims": true,
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.False(t, resp != nil && resp.IsError())
+
+		readReq := &logical.Request{
+			Operation: logical.ReadOperation,
+			Path:      "config",
+			Storage:   storage,
+		}
+		readResp, err := b.HandleRequest(context.Background(), readReq)
+		require.NoError(t, err)
+		require.NotNil(t, readResp)
+
+		assert.Equal(t, "https://idcs-test.identity.oraclecloud.com", readResp.Data["domain_url"])
+		assert.Equal(t, "test-client-id", readResp.Data["client_id"])
+		assert.Equal(t, true, readResp.Data["debug_return_resolved_subject_token_claims"])
+	})
+
+	t.Run("Enable self-mint incrementally with issuer", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"subject_token_self_mint_enabled": true,
+				"subject_token_self_mint_issuer":  "https://vault.example.com",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.False(t, resp != nil && resp.IsError())
+
+		readReq := &logical.Request{
+			Operation: logical.ReadOperation,
+			Path:      "config",
+			Storage:   storage,
+		}
+		readResp, err := b.HandleRequest(context.Background(), readReq)
+		require.NoError(t, err)
+		require.NotNil(t, readResp)
+
+		assert.Equal(t, true, readResp.Data["subject_token_self_mint_enabled"])
+		assert.Equal(t, "https://vault.example.com", readResp.Data["subject_token_self_mint_issuer"])
+	})
+
+	t.Run("Reject enabling self-mint without issuer on partial update", func(t *testing.T) {
+		b, storage := getTestBackend(t)
+		reqCreate := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+				"client_id":     "test-client-id",
+				"client_secret": "test-client-secret",
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), reqCreate)
+		require.NoError(t, err)
+		require.False(t, resp != nil && resp.IsError())
+
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"subject_token_self_mint_enabled": true,
+			},
+		}
+
+		resp, err = b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "subject_token_self_mint_issuer is required")
+	})
+}
+
+func TestPathConfig_CreateAppliesDefaults(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqCreate := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), reqCreate)
+	require.NoError(t, err)
+	require.False(t, resp != nil && resp.IsError())
+
+	reqRead := &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	}
+
+	readResp, err := b.HandleRequest(context.Background(), reqRead)
+	require.NoError(t, err)
+	require.NotNil(t, readResp)
+	assert.Equal(t, 3600, readResp.Data["default_ttl"])
+	assert.Equal(t, 86400, readResp.Data["max_ttl"])
+	assert.Equal(t, true, readResp.Data["enable_plugin_issued_subject_token"])
+	assert.Equal(t, false, readResp.Data["subject_token_self_mint_enabled"])
+	assert.Equal(t, "urn:mace:oci:idcs", readResp.Data["subject_token_self_mint_audience"])
+	assert.Equal(t, 600, readResp.Data["subject_token_self_mint_ttl_seconds"])
+}
+
 func TestPathConfig_SelfMintGeneratedKeyIsReused(t *testing.T) {
 	b, storage := getTestBackend(t)
 	// Covers the persistence aspect of CFG-11 across config updates.
@@ -276,11 +443,9 @@ func TestPathConfig_SelfMintGeneratedKeyIsReused(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                    "ocid1.tenancy.oc1..test",
 			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                       "test-client-id",
 			"client_secret":                   "test-client-secret",
-			"region":                          "us-ashburn-1",
 			"subject_token_self_mint_enabled": true,
 			"subject_token_self_mint_issuer":  "https://vault.example.com",
 		},
@@ -300,11 +465,9 @@ func TestPathConfig_SelfMintGeneratedKeyIsReused(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"tenancy_ocid":                    "ocid1.tenancy.oc1..test",
 			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
 			"client_id":                       "test-client-id",
 			"client_secret":                   "test-client-secret",
-			"region":                          "us-ashburn-1",
 			"subject_token_self_mint_enabled": true,
 			"subject_token_self_mint_issuer":  "https://vault.example.com",
 		},

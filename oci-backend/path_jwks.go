@@ -5,10 +5,11 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
+	"crypto/x509/pkix"
 	"fmt"
 	"math/big"
 	"path"
+	"time"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -50,7 +51,7 @@ func (b *backend) pathJWKSRead(ctx context.Context, req *logical.Request, _ *fra
 		return logical.ErrorResponse("invalid subject_token_self_mint_private_key: %v", err), nil
 	}
 
-	jwk, err := buildRSAJWK(&privateKey.PublicKey)
+	jwk, err := buildRSAJWK(privateKey)
 	if err != nil {
 		return logical.ErrorResponse("failed to build jwk: %v", err), nil
 	}
@@ -62,30 +63,65 @@ func (b *backend) pathJWKSRead(ctx context.Context, req *logical.Request, _ *fra
 	}, nil
 }
 
-func buildRSAJWK(publicKey *rsa.PublicKey) (map[string]interface{}, error) {
-	n := publicKey.N
-	if n == nil || publicKey.E <= 0 {
+func buildRSAJWK(privateKey *rsa.PrivateKey) (map[string]interface{}, error) {
+	if privateKey == nil {
+		return nil, fmt.Errorf("invalid RSA private key")
+	}
+	publicKey := &privateKey.PublicKey
+	if publicKey.N == nil || publicKey.E <= 0 {
 		return nil, fmt.Errorf("invalid RSA public key")
 	}
 
-	modulus := base64.RawURLEncoding.EncodeToString(n.Bytes())
-	exponent := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(publicKey.E)).Bytes())
-
-	pubDER, err := x509.MarshalPKIXPublicKey(publicKey)
+	jwk, err := buildSelfMintSigningJWK(privateKey)
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(pubDER)
-	kid := base64.RawURLEncoding.EncodeToString(sum[:])
+	jwk.Key = publicKey
 
-	return map[string]interface{}{
-		"kty": "RSA",
-		"use": "sig",
-		"alg": "RS256",
-		"kid": kid,
-		"n":   modulus,
-		"e":   exponent,
-	}, nil
+	leafCertDER, err := buildSelfSignedJWTCertificate(privateKey, jwk.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	jwk.Certificates, err = parseSingleCertificate(leafCertDER)
+	if err != nil {
+		return nil, err
+	}
+
+	return jsonWebKeyMap(jwk)
+}
+
+func buildSelfSignedJWTCertificate(privateKey *rsa.PrivateKey, kid string) ([]byte, error) {
+	notBefore := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	notAfter := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	serialNumber := deterministicJWKSCertificateSerial(privateKey, kid)
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName: "vault-plugin-secrets-oci " + kid,
+		},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+	}
+
+	return x509.CreateCertificate(nil, template, template, &privateKey.PublicKey, privateKey)
+}
+
+func deterministicJWKSCertificateSerial(privateKey *rsa.PrivateKey, kid string) *big.Int {
+	hashInput := kid
+	if privateKey != nil && privateKey.PublicKey.N != nil {
+		hashInput = kid + ":" + privateKey.PublicKey.N.Text(16)
+	}
+	sum := sha256.Sum256([]byte(hashInput))
+	serial := new(big.Int).SetBytes(sum[:16])
+	if serial.Sign() <= 0 {
+		return big.NewInt(1)
+	}
+	return serial
 }
 
 const pathJWKSHelpSyn = `

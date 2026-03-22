@@ -13,29 +13,132 @@ These diagrams describe the implemented request flows in the plugin.
 Actor definitions used in diagrams:
 
 - **Client/Workload**: The caller (app, CI job, script, or human) that invokes `vault write oci/exchange`.
-- **Vault OCI Plugin**: This secrets-engine plugin instance mounted in Vault.
+- **Vault OCI Credential Engine**: This secrets-engine plugin instance mounted in Vault.
 - **Vault Storage**: Plugin storage view used for reading config and role entries.
 - **Vault System View**: Vault runtime interface available to plugins; used by the default subject-token callback to call `GenerateIdentityToken` when available.
-- **Subject Token Callback**: Plugin hook used when `subject_token` is omitted and `allow_plugin_identity_fallback=true`. The default callback tries Vault identity-token generation first, then optional self-mint.
+- **Subject Token Callback**: Plugin hook used when `subject_token` is omitted and `enable_plugin_issued_subject_token=true`. This is the plugin-issued subject-token mode. The default callback tries Vault identity-token generation first, then self-mints only if needed and configured.
 - **OCI Token Endpoint**: OCI Identity Domain OAuth token exchange endpoint (`/oauth2/v1/token`).
 
-#### 1) Standard Exchange (Caller Provides `subject_token`)
+#### 1) Subject Token Exchange (Caller Provides `subject_token`)
 
-![Standard Exchange Diagram](./assets/diagram-1.svg)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Credential Engine
+    participant S as Vault Storage
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` with `subject_token`
+    V->>S: Read backend config and optional plugin role
+    S-->>V: Config and role constraints
+    V->>V: Validate request fields and TTL
+    V->>V: If `subject_token_role_mappings` exist, derive Vault role from caller JWT
+    alt Caller supplies `public_key`
+        V->>V: Use caller public key for OCI exchange
+    else `public_key` omitted
+        V->>V: Generate exchange RSA keypair
+    end
+    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    O-->>V: OCI UPST or RPST
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
+```
 
 Client sends `subject_token`; plugin validates role constraints/guardrails and performs token exchange against OCI.
 
-#### 2) Exchange Without `subject_token` (Callback Fallback)
+#### 1.1) Caller JWT Role Mapping Variant
 
-![Exchange Without subject_token (Callback Fallback)](./assets/diagram-2.svg)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Credential Engine
+    participant S as Vault Storage
+    participant O as OCI Token Endpoint
 
-Client omits `subject_token`; plugin uses registered callback when fallback is enabled. Default callback behavior is: `GenerateIdentityToken` first, then optional self-mint JWT if configured.
+    C->>V: `vault write oci/exchange` with caller JWT
+    V->>S: Read backend config and role policy
+    S-->>V: `subject_token_role_mappings`, role entries
+    V->>V: Parse caller JWT payload only
+    V->>V: Evaluate ordered role-mapping rules
+    V->>V: First matching rule selects Vault role
+    V->>S: Read derived Vault role entry
+    S-->>V: Role TTL and local policy constraints
 
-#### 3) Role-Claim Guardrail and Strict Role Name Validation
+    alt Mapping rule matches
+        V->>O: POST `/oauth2/v1/token`
+        O-->>V: OCI session token
+        V-->>C: Success response
+    else No rule matches
+        V-->>C: Error response before OCI call
+    end
+```
 
-![Role-Claim Guardrail and Strict Role Name Validation](./assets/diagram-3.svg)
+This is a caller-supplied `subject_token` variant of flow 1. When `subject_token_role_mappings` are configured, the engine derives the effective Vault role from trusted JWT claims before OCI exchange instead of relying on a caller-supplied `role`.
 
-Plugin enforces role-name validation and optional claim-to-role matching before OCI exchange.
+#### 2) Exchange Without `subject_token` (Plugin-Issued Subject Token Mode)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Credential Engine
+    participant S as Vault Storage
+    participant SV as Vault System View
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` without `subject_token`
+    V->>S: Read backend config and optional plugin role
+    S-->>V: Config and role constraints
+    V->>V: Check `enable_plugin_issued_subject_token=true`
+    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>SV: `GenerateIdentityToken(audience)`
+    SV-->>V: Vault-issued identity token
+    alt Caller supplies `public_key`
+        V->>V: Use caller public key for OCI exchange
+    else `public_key` omitted
+        V->>V: Generate exchange RSA keypair
+    end
+    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    O-->>V: OCI UPST or RPST
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
+```
+
+Client omits `subject_token`; plugin uses its plugin-issued subject-token mode when enabled. Default callback behavior is: `GenerateIdentityToken` first, then self-mint JWT only if needed and configured.
+
+#### 2.1) Plugin-Issued Self-Mint Variant
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Credential Engine
+    participant S as Vault Storage
+    participant SV as Vault System View
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` without `subject_token`
+    V->>S: Read backend config and self-mint key
+    S-->>V: Config, role constraints, signing key
+    V->>V: Check plugin-issued mode is enabled
+    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>SV: `GenerateIdentityToken(audience)`
+    SV-->>V: Identity token unavailable
+    V->>SV: Read trusted Vault request and identity context
+    SV-->>V: Entity, alias, group, mount metadata
+    V->>V: Build JWT with Vault-derived claims
+    V->>V: Sign self-minted JWT with plugin signing key
+    alt Caller supplies `public_key`
+        V->>V: Use caller public key for OCI exchange
+    else `public_key` omitted
+        V->>V: Generate exchange RSA keypair
+    end
+    V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    O-->>V: OCI UPST or RPST
+    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
+```
+
+Client omits `subject_token`; Vault identity-token generation is unavailable, so the plugin self-mints the subject token from trusted Vault context and then exchanges it with OCI.
 
 ### Terminology
 When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC 8693) and OCI Identity nomenclature:
@@ -48,12 +151,11 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
 - **UPST and RPST Support**: Request either `urn:oci:token-type:oci-upst` or `urn:oci:token-type:oci-rpst`
-- **Returned OCI Key Pair**: Exchange responses include PEM-encoded `private_key` and `public_key` for request-signing workflows
-- **Callback-based Subject Token Fallback**: If `subject_token` is omitted and `allow_plugin_identity_fallback=true`, the plugin resolves a token via callback (default callback: Vault identity token first, optional self-mint fallback)
-- **Federated Identity**: Leverage OCI IAM Identity Domains with external IdPs
+- **Returned OCI Key Pair**: Exchange responses can include Credential Engine generated PEM-encoded `private_key` and `public_key` for request-signing workflows
+- **Plugin-Issued Subject Token Mode**: If `subject_token` is omitted and `enable_plugin_issued_subject_token=true`, the plugin resolves a token itself (default callback: Vault identity token first if availble in the version of vualt, self-mint if configured)
 - **Role-based TTL Policies**: Define roles with default and maximum TTL constraints
 - **Lease Management**: OCI tokens are issued as Vault secrets with TTL-based lease handling
-- **Multi-tenant Support**: Support for multiple OCI Identity Domains and regions
+
 
 ## Prerequisites
 
@@ -83,6 +185,32 @@ make build-all
 
 ### Register the Plugin with Vault
 
+For local development, `./scripts/dev_vault.sh start` now runs `make build`, starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are still useful for non-dev setups and for understanding the underlying Vault operations.
+
+If you want dev startup to reapply backend config automatically, create `.env.local` in the repo root with at least:
+
+```bash
+OCI_DOMAIN_URL="https://idcs-xxxxx.identity.oraclecloud.com:443"
+OCI_CLIENT_ID="..."
+OCI_CLIENT_SECRET="..."
+```
+
+Optional `.env.local` settings also map directly to `oci/config`, including:
+- `OCI_DEFAULT_TTL`
+- `OCI_MAX_TTL`
+- `OCI_ENABLE_PLUGIN_ISSUED_SUBJECT_TOKEN`
+- `OCI_STRICT_ROLE_NAME_MATCH`
+- `OCI_SUBJECT_TOKEN_ROLE_MAPPINGS`
+- `OCI_SUBJECT_TOKEN_ALLOWED_AUDIENCES`
+- `OCI_SUBJECT_TOKEN_SELF_MINT_ENABLED`
+- `OCI_SUBJECT_TOKEN_SELF_MINT_ISSUER`
+- `OCI_SUBJECT_TOKEN_SELF_MINT_AUDIENCE`
+- `OCI_SUBJECT_TOKEN_SELF_MINT_TTL_SECONDS`
+- `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY`
+- `OCI_DEBUG_RETURN_RESOLVED_SUBJECT_TOKEN_CLAIMS`
+
+If self-mint is enabled in `.env.local` and `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY` is not set, `./scripts/dev_vault.sh start` will create and reuse a local ignored PEM file at `.vault-dev-self-mint-key.pem`. That keeps the self-mint JWKS stable across dev restarts.
+
 1. Calculate the SHA256 checksum of the plugin binary:
 ```bash
 sha256sum bin/vault-plugin-secrets-oci
@@ -93,15 +221,35 @@ sha256sum bin/vault-plugin-secrets-oci
 # If using a local dev server, ensure VAULT_ADDR is set to http
 export VAULT_ADDR='http://127.0.0.1:8200'
 
-vault write sys/plugins/catalog/secrets/oci \
+vault write sys/plugins/catalog/secret/oci \
     sha_256="<SHA256_CHECKSUM>" \
     command="vault-plugin-secrets-oci"
 ```
 
 3. Enable the secrets engine:
 ```bash
-vault secrets enable -path=oci oci
+vault secrets enable -path=oci -plugin-name=oci plugin
 ```
+
+### Self-Mint JWKS Publication Workflow
+
+If you enable built-in self-minting, the plugin can expose the signing public key as JWKS at `oci/jwks`. That Vault path is intended as an operator export point, not as the final OCI discovery URL.
+
+Recommended workflow:
+
+1. Configure self-mint on the plugin.
+2. Read the JWKS from Vault:
+
+```bash
+vault read -format=json oci/jwks
+```
+
+3. Publish that JWKS document to an HTTPS location OCI Identity Domains can reach, for example:
+   - GitHub Pages
+   - OCI Object Storage static website hosting
+   - another normal HTTPS-hosted file
+4. Configure OCI token exchange trust to use that published JWKS URL.
+5. If the self-mint signing key changes, publish the updated JWKS before relying on newly minted tokens.
 
 ## Configuration
 
@@ -111,41 +259,71 @@ Before using the plugin, configure it with your OCI Identity Domain details:
 
 ```bash
 vault write oci/config \
-    tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \
     domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
     client_id="ocid1.oauth2client.oc1..xxxxx" \
     client_secret="<oauth-client-secret>" \
-    region="us-ashburn-1" \
     default_ttl=3600 \
     max_ttl=28800 \
-    enforce_role_claim_match=false \
-    role_claim_key="vault_role" \
-    allow_plugin_identity_fallback=true \
+    subject_token_role_mappings='[{"claim":"vault_role","op":"eq","value":"developer","role":"developer"}]' \
+    enable_plugin_issued_subject_token=true \
     strict_role_name_match=false \
-    subject_token_self_mint_enabled=false
+    subject_token_self_mint_enabled=false \
+    subject_token_allowed_audiences="urn:oci:test,urn:oci:prod"
 ```
 
 **Parameters:**
-- `tenancy_ocid`: The OCID of your OCI tenancy
 - `domain_url`: OCI Identity Domain URL (for example: `https://idcs-xxxxx.identity.oraclecloud.com`)
 - `client_id`: OAuth Confidential Application client ID in the OCI Identity Domain
 - `client_secret`: OAuth Confidential Application client secret in the OCI Identity Domain
-- `region`: The OCI region (e.g., `us-ashburn-1`, `eu-frankfurt-1`)
-- `default_ttl`: Default TTL for OCI session tokens in seconds (default: 3600)
-- `max_ttl`: Maximum TTL for OCI session tokens in seconds (default: 86400)
-- `enforce_role_claim_match`: When true, requires the effective subject token claim (provided or callback-resolved) to match the requested plugin role (default: `false`)
-- `role_claim_key`: JWT claim key used for role matching when enforcement is enabled (default: `vault_role`)
-- `allow_plugin_identity_fallback`: When true, plugin may resolve subject token via callback if caller omits `subject_token` (default: `true`)
+- `default_ttl`: Default Vault lease TTL for exchanged credentials, and the default requested TTL for RPST exchanges when a request TTL is not supplied (default: 3600)
+- `max_ttl`: Maximum Vault lease TTL for exchanged credentials, and the maximum requested TTL allowed for RPST exchanges (default: 86400)
+- `subject_token_role_mappings`: Optional JSON array of ordered rules used to derive a Vault role from a caller-supplied `subject_token`
+  Each rule has:
+  `claim`: JWT claim name to inspect
+  `op`: match operator, one of `eq`, `co`, `sw`
+  `value`: string to compare against the claim value
+  `role`: Vault role name to apply when the rule matches
+- `enable_plugin_issued_subject_token`: When true, plugin-issued subject-token mode is enabled when the caller omits `subject_token` (default: `true`)
 - `strict_role_name_match`: When true, requires role names to match `[A-Za-z0-9._:-]+` (default: `false`)
-- `subject_token_self_mint_enabled`: Enables built-in self-mint fallback in default callback when Vault identity-token generation is unavailable (default: `false`)
+- `subject_token_self_mint_enabled`: Enables built-in self-mint in plugin-issued subject-token mode when Vault identity-token generation is unavailable (default: `false`)
 - `subject_token_self_mint_issuer`: Required when self-mint is enabled
 - `subject_token_self_mint_audience`: Audience for self-minted token (default: `urn:mace:oci:idcs`)
+- `subject_token_allowed_audiences`: Optional allowlist for request-level audience override in plugin-issued subject-token mode via `subject_token_audience`
 - `subject_token_self_mint_ttl_seconds`: TTL for self-minted token in seconds (default: `600`)
 - `subject_token_self_mint_private_key`: Optional PEM RSA private key. If omitted while self-mint is enabled, the plugin generates one and stores it in Vault plugin storage
+- `debug_return_resolved_subject_token_claims`: Development-only flag that includes decoded claims from the resolved subject token in `oci/exchange` responses, including error responses
+
+`oci/config` supports incremental updates. After the initial configuration is created, later `vault write oci/config ...` calls may update only the fields you want to change.
+
+If `subject_token_self_mint_enabled=true`, OCI must be able to discover the published JWKS for the self-mint signing key. See [Self-Mint JWKS Publication Workflow](#self-mint-jwks-publication-workflow).
+
+The plugin keeps the private signing key in Vault plugin storage. The published JWKS contains only the public key material.
+
+For local debugging of plugin-issued subject tokens, you can temporarily enable:
+
+```bash
+vault write oci/config \
+    debug_return_resolved_subject_token_claims=true
+```
+
+Then `vault write -force -format=json oci/exchange` will include `data.resolved_subject_token_claims` even when OCI rejects the exchange. This flag is intended only for development and troubleshooting.
+
+### Multiple OCI Accounts or Identity Domains
+
+This backend is designed around one OCI trust/config boundary per mount. A single mount has one `oci/config` entry, so it represents one OCI Identity Domain and one confidential application configuration at a time.
+
+If you need to work with multiple OCI accounts, identity domains, or separate trust boundaries, mount the plugin multiple times at different paths. For example:
+
+```bash
+vault secrets enable -path=oci-dev -plugin-name=oci plugin
+vault secrets enable -path=oci-prod -plugin-name=oci plugin
+```
+
+Then configure each mount separately with its own `oci/config` and roles.
 
 ### Roles
 
-Create roles to define token TTL constraints:
+Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exchange does not currently let the client request token lifetime through the token-exchange call, so these TTL settings only directly shape the OCI request for RPST. For UPST, they mainly affect Vault-side lease metadata today.
 
 ```bash
 # Create a development role
@@ -165,6 +343,8 @@ vault write oci/roles/prod \
 ```
 
 **Role Parameters:**
+- `default_ttl`: Default Vault lease TTL for credentials issued under the role. Intended to also be the default requested TTL for RPST exchanges when a request TTL is not supplied.
+- `max_ttl`: Maximum Vault lease TTL for credentials issued under the role. Intended to also be the maximum requested TTL allowed for RPST exchanges.
 - `allowed_groups`: Stored role metadata for future claim filtering
 - `allowed_subjects`: Stored role metadata for future subject filtering
 
@@ -175,13 +355,16 @@ vault write oci/roles/prod \
 ```bash
 vault write oci/exchange \
     subject_token="eyJhbGciOiJSUzI1NiIs..." \
-    subject_token_type="urn:ietf:params:oauth:token-type:jwt" \
     requested_token_type="urn:oci:token-type:oci-upst" \
-    role="developer" \
     ttl=3600
 ```
 
-*Note: Omitting `subject_token` requires `allow_plugin_identity_fallback=true`. The default callback first attempts Vault identity-token generation; if unavailable, it can self-mint only when `subject_token_self_mint_enabled=true` and self-mint config is set.*
+Notes:
+
+- Omit `subject_token` and set `enable_plugin_issued_subject_token=true` if you want the credential engine to obtain one on the caller's behalf. On Vault Enterprise, the engine first tries Vault identity-token generation. On Vault Open Source, or if Vault cannot generate an identity token for the request, the engine can fall back to self-mint when `subject_token_self_mint_enabled=true` and the required self-mint settings are configured.
+- If the credential engine obtains a subject token on the caller's behalf, the caller may optionally provide `subject_token_audience`. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
+- If the caller supplies `subject_token`, the caller may provide `role` only when `subject_token_role_mappings` are not configured. When mappings are configured, the engine derives the effective Vault role from JWT claims and rejects caller-supplied `role`.
+- If `public_key` is not supplied, the engine generates a fresh RSA key pair for the exchange.
 
 *Reference: Oracle JWT-to-UPST flow and request parameters are documented in [Token Exchange Grant Type: Exchanging a JSON Web Token for a UPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm#jwt_token_exchange__get-oci-upst).*
 
@@ -191,14 +374,12 @@ vault write oci/exchange \
   "data": {
     "access_token": "eyJ...",
     "session_token": "Atbv...",
-        "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE...",
-        "public_key": "-----BEGIN PUBLIC KEY-----\\nMIIB...",
+    "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE...",
+    "public_key": "-----BEGIN PUBLIC KEY-----\\nMIIB...",
     "requested_token_type": "urn:oci:token-type:oci-upst",
     "token_type": "Bearer",
     "expires_in": 3600,
-    "expires_at": "2024-01-15T10:30:00Z",
-    "region": "us-ashburn-1",
-    "tenancy_ocid": "ocid1.tenancy.oc1..xxxxx"
+    "expires_at": "2024-01-15T10:30:00Z"
   },
   "lease_id": "oci/exchange/...",
   "lease_duration": 3600,
@@ -207,29 +388,60 @@ vault write oci/exchange \
 ```
 
 If `public_key` is provided in the request, the plugin will not return `private_key` or `public_key` in the response.
+This applies to both caller-supplied `subject_token` mode and plugin-issued self-mint mode: if the caller supplies `public_key`, the plugin uses that key in the OCI token exchange payload and does not generate or return an exchange key pair.
 
-### Vault-Issued Subject Token Flow (Role to OCI Principal Mapping)
+### Caller-Supplied Subject Token Flow (JWT Claim to Vault Role Mapping)
 
-Use this flow when OCI trust rules should map Vault-issued token claims (for example `vault_role` or `oci_target`) to OCI Domain Service Users.
+Use this flow when callers supply their own JWTs and the plugin should derive the effective Vault role from trusted JWT claims before applying local Vault constraints.
 
-1. Configure plugin role-claim guardrail (optional but recommended):
+1. Configure ordered subject-token role mappings:
 
 ```bash
 vault write oci/config \
-    tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \
     domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
     client_id="ocid1.oauth2client.oc1..xxxxx" \
     client_secret="<oauth-client-secret>" \
-    region="us-ashburn-1" \
     default_ttl=3600 \
     max_ttl=28800 \
-    enforce_role_claim_match=true \
-    role_claim_key="vault_role"
+    subject_token_role_mappings='[
+      {"claim":"vault_role","op":"eq","value":"developer","role":"developer"},
+      {"claim":"groups","op":"co","value":"ops","role":"operations"}
+    ]'
 ```
 
-2. In Vault Identity/OIDC, define a token role that emits a mapping claim (example: `vault_role=developer`) and allow workloads to mint from it.
+2. Ensure the upstream JWT issuer emits the claim values you want to match.
 
-Example Vault setup:
+Rule semantics:
+- Rules are evaluated in order.
+- The first matching rule wins.
+- Supported operators are `eq` (equals), `co` (contains), and `sw` (starts with).
+- Matching works with string claims and array-of-string claims.
+- When `subject_token_role_mappings` is configured, callers must omit the request `role`; the plugin derives it from the JWT instead.
+- If no rule matches, the exchange is rejected.
+
+Example mapping behavior:
+
+```json
+[
+  {"claim":"vault_role","op":"eq","value":"developer","role":"developer"},
+  {"claim":"groups","op":"co","value":"ops","role":"operations"},
+  {"claim":"sub","op":"sw","value":"svc:","role":"service"}
+]
+```
+
+If the caller-supplied JWT contains:
+
+```json
+{
+  "vault_role": "developer",
+  "groups": ["team-ops", "team-dev"],
+  "sub": "svc:deploy"
+}
+```
+
+then the effective Vault role is `developer`, because the first rule already matches and later rules are not evaluated.
+
+Example Vault-issued JWT setup:
 
 ```bash
 # Set issuer used in OIDC discovery/JWKS
@@ -274,7 +486,6 @@ SUBJECT_TOKEN="$(vault read -field=token identity/oidc/token/oci-developer)"
 ```bash
 vault write oci/exchange \
     subject_token="$SUBJECT_TOKEN" \
-    subject_token_type="urn:ietf:params:oauth:token-type:jwt" \
     requested_token_type="urn:oci:token-type:oci-upst" \
     role="developer"
 ```
@@ -283,7 +494,43 @@ vault write oci/exchange \
 
 See [DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md](DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md) for full architecture and implementation details.
 
-*Important: No-`subject_token` flow depends on callback fallback being enabled. With default callback, Vault identity-token generation is attempted first; if unavailable, self-mint is used only when explicitly configured.*
+*Important: No-`subject_token` flow uses plugin-issued subject-token mode and depends on `enable_plugin_issued_subject_token=true`. With the default callback, Vault identity-token generation is attempted first; if unavailable, self-mint is used only when explicitly configured. Self-minted tokens use Vault-derived identity claims, not the request `role`.*
+
+### Default Self-Mint Claim Set
+
+When plugin-issued subject-token mode uses in-plugin self-minting, the emitted JWT uses a fixed, opinionated claim set derived from trusted Vault runtime context.
+
+Standard JWT claims:
+- `iss`
+- `sub`
+- `aud`
+- `iat`
+- `exp`
+- `jti`
+
+Vault-derived claims included when available:
+- `vault_entity_id`
+- `vault_entity_name`
+- `vault_namespace_id`
+- `vault_entity_metadata`
+- `vault_display_name`
+- `vault_mount_accessor`
+- `vault_mount_type`
+- `vault_client_token_accessor`
+- `vault_alias_name`
+- `vault_alias_mount_accessor`
+- `vault_alias_mount_type`
+- `vault_alias_metadata`
+- `vault_alias_custom_metadata`
+- `vault_group_names`
+
+Design notes:
+- The request `role` is not copied into the self-minted JWT.
+- `aud` defaults to plugin config (`subject_token_self_mint_audience`) and may be overridden per request only through allowlisted `subject_token_audience` values.
+- OCI trust rules should use the Vault-derived claims above rather than caller-supplied parameters.
+- When the caller request is backed by a Vault Identity entity, `vault_entity_id` is the preferred stable trust-mapping claim.
+- When the caller is using a token flow without an attached entity, the self-minted JWT still includes token-context claims such as `vault_display_name`, `vault_mount_accessor`, `vault_mount_type`, and `vault_client_token_accessor`, and OCI trust can map on those if needed.
+- Claims like `vault_display_name` and `vault_client_token_accessor` are a weaker trust anchor than `vault_entity_id` because they identify token context rather than a durable Vault identity. Prefer `vault_entity_id` whenever it is available.
 
 ### Using with OCI CLI
 
@@ -294,7 +541,6 @@ CREDS=$(vault write -format=json oci/exchange subject_token="$JWT" role="develop
 # Extract the session token
 export OCI_CLI_AUTH=security_token
 export OCI_CLI_SECURITY_TOKEN=$(echo $CREDS | jq -r '.data.session_token')
-export OCI_CLI_REGION=$(echo $CREDS | jq -r '.data.region')
 
 # Persist key material returned by the plugin
 mkdir -p ~/.oci
@@ -315,36 +561,12 @@ Use RPST when you need resource-principal style token exchange behavior supporte
 ```bash
 vault write oci/exchange \
     subject_token="eyJhbGciOiJSUzI1NiIs..." \
-    subject_token_type="urn:ietf:params:oauth:token-type:jwt" \
     requested_token_type="urn:oci:token-type:oci-rpst" \
     res_type="resource_principal" \
     role="developer"
 ```
 
 For RPST requests, `res_type` is required and the response will include `rpst_token`.
-
-### Using with OCI SDK (Go)
-
-```go
-import (
-    "github.com/oracle/oci-go-sdk/v65/common"
-    "github.com/oracle/oci-go-sdk/v65/identity"
-)
-
-// Exchange token via Vault API
-// Then use the returned session token
-configProvider := common.NewRawConfigurationProvider(
-    tenancyOCID,
-    "", // user OCID not needed for session token
-    region,
-    "", // fingerprint not needed
-    "", // private key not needed
-    nil,
-)
-
-// Set up authentication with session token
-// (Implementation depends on OCI SDK version)
-```
 
 ## API Reference
 
@@ -378,19 +600,23 @@ vault read oci/jwks
 ```json
 {
   "subject_token": "eyJhbGciOiJSUzI1NiIs...",
-  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
-    "requested_token_type": "urn:oci:token-type:oci-upst",
-    "res_type": "resource_principal",
-    "public_key": "-----BEGIN PUBLIC KEY-----...",
+  "subject_token_audience": "urn:oci:test",
+  "requested_token_type": "urn:oci:token-type:oci-upst",
+  "res_type": "resource_principal",
+  "public_key": "-----BEGIN PUBLIC KEY-----...",
   "role": "developer",
   "ttl": 3600
 }
 ```
-*(Note: `subject_token` is optional when `allow_plugin_identity_fallback=true` and a callback can resolve a token.)*
+*(Note: `subject_token` is optional when `enable_plugin_issued_subject_token=true` and the plugin-issued subject-token mode can resolve a token. `subject_token_audience` is only used for plugin-issued subject tokens. The plugin always sends `subject_token_type=jwt` to OCI.)*
 
 `requested_token_type` defaults to `urn:oci:token-type:oci-upst`. Supported values:
 - `urn:oci:token-type:oci-upst`
 - `urn:oci:token-type:oci-rpst` (requires `res_type`)
+
+TTL note:
+- For RPST, the plugin uses config and role TTL policy to bound the requested lifetime sent to OCI.
+- For UPST, OCI determines the token lifetime; plugin TTL settings affect Vault lease metadata, not OCI-side UPST expiration.
 
 ### Roles Path
 
@@ -415,7 +641,7 @@ vault read oci/jwks
 ### Security Considerations
 
 - **Token Validation**: Subject token validation is performed by OCI IAM during token exchange
-- **Short-lived Tokens**: OCI exchanged tokens have configurable TTL (default 1 hour)
+- **TTL Semantics**: RPST requests can be bounded by plugin TTL policy. UPST lifetime is determined by OCI; plugin TTL settings mainly control Vault lease metadata for UPST responses.
 - **Lease Management**: Vault lease lifecycle is applied to issued secrets, but OCI exchanged tokens cannot be actively revoked server-side before expiration. Vault simply drops the lease locally.
 - **Audit Logging**: All token exchanges are logged to Vault audit log
 - **Self-Mint Key Handling**: When `subject_token_self_mint_enabled=true` and no private key is supplied, the plugin generates an RSA key pair and persists the private key in plugin storage. The key is never returned by `read oci/config`.
@@ -426,12 +652,16 @@ Use Vault policy boundaries as the primary control plane:
 
 1. Grant `update` on `oci/exchange` only to trusted workloads.
 2. Restrict role usage with path-based ACLs so each workload can only call specific role paths or namespaces.
-3. Keep `allow_plugin_identity_fallback=false` by default for general clients, and enable it only for tightly scoped policies.
-4. Enable `enforce_role_claim_match=true` with a dedicated claim key (for example `vault_role`) so fallback or caller-provided tokens cannot request arbitrary plugin roles.
-5. Enable `strict_role_name_match=true` to prevent malformed role values.
-6. Limit token lifetime with conservative `default_ttl`, `max_ttl`, and per-role TTL caps.
-7. Protect `oci/config` write access so only operators can rotate/replace self-mint settings and keys.
-8. Expose `oci/jwks` as read-only to systems that need trust bootstrap; do not grant broader plugin capabilities with it.
+3. Keep `enable_plugin_issued_subject_token=false` by default for general clients, and enable plugin-issued subject-token mode only for tightly scoped policies.
+4. Use `subject_token_role_mappings` when callers provide their own JWTs and you want Vault role selection to come from trusted JWT claims rather than a caller-supplied `role` parameter.
+5. Treat plugin-issued self-mint as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the request `role`.
+6. Enable `strict_role_name_match=true` to prevent malformed role values.
+7. Protect `oci/config` write access so only operators can rotate or replace self-mint settings and signing keys.
+8. Treat `oci/exchange` as a privileged identity-issuance path when plugin-issued subject-token mode is enabled; do not grant it broadly just because OCI permissions are controlled later by service-user policy.
+9. Expose `oci/jwks` as read-only to systems that need trust bootstrap; do not grant broader plugin capabilities with it.
+
+Highly visible operator note:
+- Vault policy on `oci/config` and `oci/exchange` is part of the security boundary for the self-minted flow. If those paths are too broadly accessible, callers may be able to mint Vault-backed subject tokens or alter the signing/trust configuration.
 
 ## Development
 
@@ -463,21 +693,12 @@ Please refer to the [Contributing Guide](CONTRIBUTING.md#testing-locally-with-va
 
 ## TODO / Future Enhancements
 
-### Current Scope (OCI Identity Domain is the JWT validation authority)
+The maintained project backlog lives in [TODO.md](/Users/gordon/Documents/projects/Hashicorp-OCI-credential-engine/TODO.md).
 
-- [x] Complete OCI IAM token exchange API integration
-- [x] Callback-based fallback when `subject_token` is omitted (`GenerateIdentityToken` first, optional self-mint)
-- [ ] Add metrics and telemetry (token exchange rate, latency)
-- [ ] Build integration tests with OCI sandbox
-
-### Optional Future Mode (Plugin-issued subject tokens, WIF-style)
-
-- [ ] Add optional mode where the plugin issues subject tokens trusted by OCI Identity Domains
-- [x] Publish JWKS endpoint for OCI trust configuration (single active RSA key)
-- [ ] Add JWKS key rotation/multi-key publication strategy
-- [ ] Add support for multiple issuers/IdPs per backend in plugin-issued token mode
-- [ ] Implement claims mapping/policy translation for plugin-issued tokens
-- [ ] Evaluate OCI Cloud Shell integration for plugin-issued token workflows
+Current highlights:
+- metrics and telemetry
+- OCI sandbox end-to-end integration tests
+- self-mint key rotation and multi-key JWKS publication
 
 ## References
 

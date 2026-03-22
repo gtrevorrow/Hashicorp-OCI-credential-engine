@@ -7,20 +7,43 @@ This document is written as implementation context for LLM-assisted development.
 
 ## Design Decision
 - Keep this plugin focused on token exchange.
-- Keep plugin-issued JWT behavior as optional fallback mode, not the primary design.
+- Treat caller-supplied subject tokens and plugin-issued subject tokens as two supported operating modes.
 - Use Vault Identity Tokens (`identity/oidc/token/<role>`) as the subject token source when role/claim-based mapping is needed.
 - Let OCI Identity Domains remain the JWT validation authority (issuer trust, JWKS, claim evaluation).
 
 ## Current State (in this repo)
 - `oci/exchange` supports:
   - caller-supplied `subject_token`
-  - callback fallback when `subject_token` is omitted:
+  - plugin-issued subject-token mode when `subject_token` is omitted:
     - tries Vault `GenerateIdentityToken` first
-    - optional plugin self-mint fallback (RSA-signed JWT) when configured
+    - plugin self-mint (RSA-signed JWT) only if needed and configured
   - plugin `role` for local TTL/policy behavior only
-- In self-mint fallback mode, plugin can inject configured role claim into fallback JWT when request includes `role`.
+- In plugin self-mint mode, plugin emits Vault-derived identity claims and does not copy request `role` into trusted JWT claims.
 - No local JWT signature validation is performed by this plugin.
 - `oci/jwks` endpoint exposes JWKS derived from self-mint signing key for OCI trust bootstrap.
+
+Current self-mint claim set includes:
+- standard JWT claims: `iss`, `sub`, `aud`, `iat`, `exp`, `jti`
+- Vault request/identity claims when available:
+  - `vault_entity_id`
+  - `vault_entity_name`
+  - `vault_namespace_id`
+  - `vault_entity_metadata`
+  - `vault_display_name`
+  - `vault_mount_accessor`
+  - `vault_mount_type`
+  - `vault_client_token_accessor`
+  - `vault_alias_name`
+  - `vault_alias_mount_accessor`
+  - `vault_alias_mount_type`
+  - `vault_alias_metadata`
+  - `vault_alias_custom_metadata`
+  - `vault_group_names`
+
+Audience behavior:
+- self-mint and plugin-issued identity-token mode default to configured `subject_token_self_mint_audience`
+- callers may request an alternate plugin-issued audience only through `subject_token_audience`
+- request-level audience override is accepted only when the value is present in `subject_token_allowed_audiences`
 
 ## Target End-to-End Flow
 1. Workload authenticates to Vault (Kubernetes/JWT/AppRole/etc.).
@@ -81,7 +104,7 @@ Then attach OCI IAM policies to that Service User.
 - Optional guardrail: enforce that plugin request `role` is consistent with a claim value in the supplied JWT (string match only).
   - This is a consistency control, not signature validation.
   - If implemented, parse JWT payload only and compare claim to requested role.
-- Optional self-mint fallback controls:
+- Optional plugin-issued/self-mint controls:
   - auto-generate RSA signing key if missing
   - expose public key as JWKS for OCI trust
 
@@ -116,7 +139,7 @@ Then attach OCI IAM policies to that Service User.
   - `enforce_role_claim_match` (bool)
   - `role_claim_key` (default `vault_role` or `oci_target`)
 - In `path_exchange.go`:
-  - if enabled, compare claim vs request `role` using the effective subject token (caller-provided or fallback-generated).
+  - if enabled, compare claim vs request `role` only for caller-provided subject tokens.
   - fail with clear error on mismatch.
 
 3. Callback and JWKS operational controls

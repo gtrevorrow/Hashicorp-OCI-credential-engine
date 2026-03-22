@@ -3,6 +3,7 @@
 ## Repository Workflow Guardrails
 
 - Before creating branches, committing, opening PRs, or preparing releases, read and follow [CONTRIBUTING.md](CONTRIBUTING.md).
+- Follow explicit user instructions exactly. Do not substitute a different implementation approach unless the user asks for options or a concrete blocker makes the requested approach infeasible; in that case, stop and explain the blocker before proceeding.
 - Treat `CONTRIBUTING.md` as the source of truth for:
   - Branching strategy (`development` integration branch, `master` stable branch, feature/fix/docs branches)
   - Commit message format (Conventional Commits)
@@ -25,3 +26,8 @@
   - `git fetch --all --prune`
   - `git pull --ff-only`
 - If local branch is behind, integrate remote changes before push (fast-forward/rebase/merge as appropriate).
+
+## Documentation Maintenance
+
+- When changing exchange flows, auth behavior, trust assumptions, or other use cases that affect request/response sequencing, review the Mermaid sources under `docs/sequence-diagrams/` and update them if needed.
+- Treat the Mermaid sequence-diagram sources as maintainable design artifacts separate from the README SVGs.

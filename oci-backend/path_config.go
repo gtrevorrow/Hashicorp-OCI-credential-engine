@@ -20,14 +20,6 @@ func (b *backend) pathConfig() []*framework.Path {
 		{
 			Pattern: path.Join("config"),
 			Fields: map[string]*framework.FieldSchema{
-				"tenancy_ocid": {
-					Type:        framework.TypeString,
-					Description: "OCID of the OCI tenancy",
-					Required:    true,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Tenancy OCID",
-					},
-				},
 				"domain_url": {
 					Type:        framework.TypeString,
 					Description: "URL of the OCI Identity Domain (e.g. https://idcs-xxxx.identity.oraclecloud.com)",
@@ -53,15 +45,6 @@ func (b *backend) pathConfig() []*framework.Path {
 						Sensitive: true,
 					},
 				},
-				"region": {
-					Type:        framework.TypeString,
-					Description: "OCI region identifier (e.g., us-ashburn-1)",
-					Required:    true,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "OCI Region",
-					},
-				},
-
 				"default_ttl": {
 					Type:        framework.TypeDurationSecond,
 					Description: "Default TTL for OCI session tokens (seconds)",
@@ -78,28 +61,19 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Maximum TTL",
 					},
 				},
-				"enforce_role_claim_match": {
-					Type:        framework.TypeBool,
-					Description: "When true, require effective subject_token claim (provided or callback-resolved) to match request role",
-					Default:     false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Enforce Role Claim Match",
-					},
-				},
-				"role_claim_key": {
+				"subject_token_role_mappings": {
 					Type:        framework.TypeString,
-					Description: "JWT claim key used for role matching when enforce_role_claim_match is true",
-					Default:     "vault_role",
+					Description: "JSON array of ordered role-mapping rules for caller-supplied subject_token values",
 					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Role Claim Key",
+						Name: "Subject Token Role Mappings",
 					},
 				},
-				"allow_plugin_identity_fallback": {
+				"enable_plugin_issued_subject_token": {
 					Type:        framework.TypeBool,
-					Description: "When true, allow callback fallback if subject_token is omitted",
+					Description: "When true, allow the plugin to resolve or mint a subject_token when the caller omits one",
 					Default:     true,
 					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Allow Plugin Identity Fallback",
+						Name: "Enable Plugin-Issued Subject Token",
 					},
 				},
 				"strict_role_name_match": {
@@ -134,6 +108,14 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Subject Token Self Mint Audience",
 					},
 				},
+				"subject_token_allowed_audiences": {
+					Type:        framework.TypeCommaStringSlice,
+					Description: "Optional allowlist of per-request fallback audiences; subject_token_audience must match one of these values when supplied",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Subject Token Allowed Audiences",
+					},
+				},
 				"subject_token_self_mint_ttl_seconds": {
 					Type:        framework.TypeDurationSecond,
 					Description: "TTL in seconds for built-in self-minted subject_token",
@@ -149,6 +131,14 @@ func (b *backend) pathConfig() []*framework.Path {
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name:      "Subject Token Self Mint Private Key",
 						Sensitive: true,
+					},
+				},
+				"debug_return_resolved_subject_token_claims": {
+					Type:        framework.TypeBool,
+					Description: "Development-only flag to include resolved subject token claims in exchange responses",
+					Default:     false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Debug Resolved Subject Token Claims",
 					},
 				},
 			},
@@ -190,91 +180,114 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 		return nil, nil
 	}
 
-	return &logical.Response{
-		Data: map[string]interface{}{
-			"tenancy_ocid": config.TenancyOCID,
-			"domain_url":   config.DomainUrl,
-			"client_id":    config.ClientID,
-			"region":       config.Region,
-			// Client Secret is intentionally omitted from read
+	respData := map[string]interface{}{
+		"domain_url": config.DomainUrl,
+		"client_id":  config.ClientID,
+		// Client Secret is intentionally omitted from read
 
-			"default_ttl":                         config.DefaultTTL,
-			"max_ttl":                             config.MaxTTL,
-			"enforce_role_claim_match":            config.EnforceRoleClaimMatch,
-			"role_claim_key":                      configRoleClaimKey(config),
-			"allow_plugin_identity_fallback":      configAllowPluginIdentityFallback(config),
-			"strict_role_name_match":              config.StrictRoleNameMatch,
-			"subject_token_self_mint_enabled":     config.SubjectTokenSelfMintEnabled,
-			"subject_token_self_mint_issuer":      config.SubjectTokenSelfMintIssuer,
-			"subject_token_self_mint_audience":    configSubjectTokenSelfMintAudience(config),
-			"subject_token_self_mint_ttl_seconds": configSubjectTokenSelfMintTTLSeconds(config),
-		},
-	}, nil
+		"default_ttl":                                config.DefaultTTL,
+		"max_ttl":                                    config.MaxTTL,
+		"subject_token_role_mappings":                config.SubjectTokenRoleMappings,
+		"enable_plugin_issued_subject_token":         configEnablePluginIssuedSubjectToken(config),
+		"strict_role_name_match":                     config.StrictRoleNameMatch,
+		"subject_token_self_mint_enabled":            config.SubjectTokenSelfMintEnabled,
+		"subject_token_self_mint_issuer":             config.SubjectTokenSelfMintIssuer,
+		"subject_token_self_mint_audience":           configSubjectTokenSelfMintAudience(config),
+		"subject_token_allowed_audiences":            configSubjectTokenAllowedAudiences(config),
+		"subject_token_self_mint_ttl_seconds":        configSubjectTokenSelfMintTTLSeconds(config),
+		"debug_return_resolved_subject_token_claims": config.DebugReturnResolvedSubjectTokenClaims,
+	}
+	return &logical.Response{Data: respData}, nil
 }
 
 // pathConfigWrite creates or updates the configuration
 func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	tenancyOCID := data.Get("tenancy_ocid").(string)
-	if tenancyOCID == "" {
-		return logical.ErrorResponse("missing 'tenancy_ocid'"), nil
-	}
-
-	domainUrl := data.Get("domain_url").(string)
-	if domainUrl == "" {
-		return logical.ErrorResponse("missing 'domain_url'"), nil
-	}
-
-	clientID := data.Get("client_id").(string)
-	if clientID == "" {
-		return logical.ErrorResponse("missing 'client_id'"), nil
-	}
-
-	clientSecret := data.Get("client_secret").(string)
-	if clientSecret == "" {
-		return logical.ErrorResponse("missing 'client_secret'"), nil
-	}
-
-	region := data.Get("region").(string)
-	if region == "" {
-		return logical.ErrorResponse("missing 'region'"), nil
-	}
-
 	existingConfig, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
 		return nil, err
 	}
 
-	config := &federatedConfig{
-		TenancyOCID:  tenancyOCID,
-		DomainUrl:    domainUrl,
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Region:       region,
-
-		DefaultTTL: data.Get("default_ttl").(int),
-		MaxTTL:     data.Get("max_ttl").(int),
-
-		EnforceRoleClaimMatch:          data.Get("enforce_role_claim_match").(bool),
-		RoleClaimKey:                   data.Get("role_claim_key").(string),
-		StrictRoleNameMatch:            data.Get("strict_role_name_match").(bool),
-		SubjectTokenSelfMintEnabled:    data.Get("subject_token_self_mint_enabled").(bool),
-		SubjectTokenSelfMintIssuer:     data.Get("subject_token_self_mint_issuer").(string),
-		SubjectTokenSelfMintAudience:   data.Get("subject_token_self_mint_audience").(string),
-		SubjectTokenSelfMintTTLSeconds: data.Get("subject_token_self_mint_ttl_seconds").(int),
-		SubjectTokenSelfMintPrivateKey: data.Get("subject_token_self_mint_private_key").(string),
-	}
-	allowPluginIdentityFallback := data.Get("allow_plugin_identity_fallback").(bool)
-	config.AllowPluginIdentityFallback = &allowPluginIdentityFallback
-
-	// Preserve previously stored signing key unless caller explicitly sets a replacement.
-	if _, keyProvided := req.Data["subject_token_self_mint_private_key"]; !keyProvided && existingConfig != nil {
-		config.SubjectTokenSelfMintPrivateKey = existingConfig.SubjectTokenSelfMintPrivateKey
+	config := &federatedConfig{}
+	if existingConfig != nil {
+		*config = *existingConfig
+	} else {
+		config.DefaultTTL = data.Get("default_ttl").(int)
+		config.MaxTTL = data.Get("max_ttl").(int)
+		config.StrictRoleNameMatch = data.Get("strict_role_name_match").(bool)
+		config.SubjectTokenSelfMintEnabled = data.Get("subject_token_self_mint_enabled").(bool)
+		config.SubjectTokenSelfMintAudience = data.Get("subject_token_self_mint_audience").(string)
+		config.SubjectTokenAllowedAudiences = data.Get("subject_token_allowed_audiences").([]string)
+		config.SubjectTokenSelfMintTTLSeconds = data.Get("subject_token_self_mint_ttl_seconds").(int)
+		config.DebugReturnResolvedSubjectTokenClaims = data.Get("debug_return_resolved_subject_token_claims").(bool)
+		enablePluginIssuedSubjectToken := data.Get("enable_plugin_issued_subject_token").(bool)
+		config.EnablePluginIssuedSubjectToken = &enablePluginIssuedSubjectToken
 	}
 
-	if !config.EnforceRoleClaimMatch {
-		if rawRoleClaimKey, ok := req.Data["role_claim_key"]; ok {
-			if roleClaimKey, keyIsString := rawRoleClaimKey.(string); keyIsString && roleClaimKey != "" {
-				return logical.ErrorResponse("role_claim_key requires enforce_role_claim_match=true"), nil
+	if _, ok := req.Data["domain_url"]; ok {
+		config.DomainUrl = data.Get("domain_url").(string)
+	}
+	if _, ok := req.Data["client_id"]; ok {
+		config.ClientID = data.Get("client_id").(string)
+	}
+	if _, ok := req.Data["client_secret"]; ok {
+		config.ClientSecret = data.Get("client_secret").(string)
+	}
+	if _, ok := req.Data["default_ttl"]; ok {
+		config.DefaultTTL = data.Get("default_ttl").(int)
+	}
+	if _, ok := req.Data["max_ttl"]; ok {
+		config.MaxTTL = data.Get("max_ttl").(int)
+	}
+	if _, ok := req.Data["strict_role_name_match"]; ok {
+		config.StrictRoleNameMatch = data.Get("strict_role_name_match").(bool)
+	}
+	if _, ok := req.Data["subject_token_self_mint_enabled"]; ok {
+		config.SubjectTokenSelfMintEnabled = data.Get("subject_token_self_mint_enabled").(bool)
+	}
+	if _, ok := req.Data["subject_token_self_mint_issuer"]; ok {
+		config.SubjectTokenSelfMintIssuer = data.Get("subject_token_self_mint_issuer").(string)
+	}
+	if _, ok := req.Data["subject_token_self_mint_audience"]; ok {
+		config.SubjectTokenSelfMintAudience = data.Get("subject_token_self_mint_audience").(string)
+	}
+	if _, ok := req.Data["subject_token_allowed_audiences"]; ok {
+		config.SubjectTokenAllowedAudiences = data.Get("subject_token_allowed_audiences").([]string)
+	}
+	if _, ok := req.Data["subject_token_self_mint_ttl_seconds"]; ok {
+		config.SubjectTokenSelfMintTTLSeconds = data.Get("subject_token_self_mint_ttl_seconds").(int)
+	}
+	if _, ok := req.Data["subject_token_self_mint_private_key"]; ok {
+		config.SubjectTokenSelfMintPrivateKey = data.Get("subject_token_self_mint_private_key").(string)
+	}
+	if _, ok := req.Data["debug_return_resolved_subject_token_claims"]; ok {
+		config.DebugReturnResolvedSubjectTokenClaims = data.Get("debug_return_resolved_subject_token_claims").(bool)
+	}
+	if _, ok := req.Data["enable_plugin_issued_subject_token"]; ok {
+		enablePluginIssuedSubjectToken := data.Get("enable_plugin_issued_subject_token").(bool)
+		config.EnablePluginIssuedSubjectToken = &enablePluginIssuedSubjectToken
+	}
+	if _, ok := req.Data["subject_token_role_mappings"]; ok {
+		mappings, mappingErr := decodeSubjectTokenRoleMappings(data.Get("subject_token_role_mappings").(string))
+		if mappingErr != nil {
+			return logical.ErrorResponse("invalid subject_token_role_mappings: %v", mappingErr), nil
+		}
+		config.SubjectTokenRoleMappings = mappings
+	}
+
+	if config.DomainUrl == "" {
+		return logical.ErrorResponse("missing 'domain_url'"), nil
+	}
+	if config.ClientID == "" {
+		return logical.ErrorResponse("missing 'client_id'"), nil
+	}
+	if config.ClientSecret == "" {
+		return logical.ErrorResponse("missing 'client_secret'"), nil
+	}
+
+	if config.StrictRoleNameMatch {
+		for _, mapping := range config.SubjectTokenRoleMappings {
+			if !isStrictRoleNameValid(mapping.Role) {
+				return logical.ErrorResponse("invalid mapped role '%s': strict_role_name_match requires pattern [A-Za-z0-9._:-]+", mapping.Role), nil
 			}
 		}
 	}
@@ -291,11 +304,7 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		}
 	}
 
-	// Validate basic OCI OCID formats
-	if !strings.HasPrefix(tenancyOCID, "ocid1.tenancy.") {
-		return logical.ErrorResponse("invalid tenancy_ocid format"), nil
-	}
-	if !strings.HasPrefix(domainUrl, "https://") {
+	if !strings.HasPrefix(config.DomainUrl, "https://") {
 		return logical.ErrorResponse("invalid domain_url format, must start with https://"), nil
 	}
 
@@ -341,19 +350,12 @@ const pathConfigHelpSyn = `
 Configure the OCI federated identity backend.
 `
 
-func configRoleClaimKey(config *federatedConfig) string {
-	if config != nil && config.RoleClaimKey != "" {
-		return config.RoleClaimKey
-	}
-	return "vault_role"
-}
-
-func configAllowPluginIdentityFallback(config *federatedConfig) bool {
+func configEnablePluginIssuedSubjectToken(config *federatedConfig) bool {
 	// Preserve backward compatibility for older stored configs that lack this field.
-	if config == nil || config.AllowPluginIdentityFallback == nil {
+	if config == nil || config.EnablePluginIssuedSubjectToken == nil {
 		return true
 	}
-	return *config.AllowPluginIdentityFallback
+	return *config.EnablePluginIssuedSubjectToken
 }
 
 func configSubjectTokenSelfMintAudience(config *federatedConfig) string {
@@ -370,34 +372,54 @@ func configSubjectTokenSelfMintTTLSeconds(config *federatedConfig) int {
 	return config.SubjectTokenSelfMintTTLSeconds
 }
 
+func configSubjectTokenAllowedAudiences(config *federatedConfig) []string {
+	if config == nil || len(config.SubjectTokenAllowedAudiences) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(config.SubjectTokenAllowedAudiences))
+	seen := make(map[string]struct{}, len(config.SubjectTokenAllowedAudiences))
+	for _, audience := range config.SubjectTokenAllowedAudiences {
+		audience = strings.TrimSpace(audience)
+		if audience == "" {
+			continue
+		}
+		if _, ok := seen[audience]; ok {
+			continue
+		}
+		seen[audience] = struct{}{}
+		out = append(out, audience)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 const pathConfigHelpDesc = `
 The OCI secrets engine exchanges 3rd party OIDC/OAuth JWT tokens for OCI session tokens.
 
 You must configure:
-  - tenancy_ocid: The OCID of your OCI tenancy
   - domain_url: The URL of your OCI Identity Domain
   - client_id: The Client ID of the OAuth Confidential Application
   - client_secret: The Client Secret of the OAuth Confidential Application
-  - region: The OCI region (e.g., us-ashburn-1)
 
 Optional:
   - default_ttl: Default session token TTL (default: 3600s)
   - max_ttl: Maximum session token TTL (default: 86400s)
-  - enforce_role_claim_match: Require effective subject_token claim to match request role (default: false)
-  - role_claim_key: Claim key used for role matching (default: vault_role)
-  - allow_plugin_identity_fallback: Allow callback fallback when subject_token is omitted (default: true)
+  - subject_token_role_mappings: JSON array of ordered rules used to derive a Vault role from a caller-supplied subject_token
+  - enable_plugin_issued_subject_token: Allow the plugin to resolve or mint subject_token when omitted by the caller (default: true)
   - strict_role_name_match: Require role names to match [A-Za-z0-9._:-]+ (default: false)
   - subject_token_self_mint_enabled: Enable built-in callback self-mint fallback (default: false)
   - subject_token_self_mint_issuer: Required when self-mint is enabled
   - subject_token_self_mint_audience: Audience for self-minted token (default: urn:mace:oci:idcs)
+  - subject_token_allowed_audiences: Optional allowlist for per-request fallback audience override
   - subject_token_self_mint_ttl_seconds: TTL for self-minted token (default: 600)
   - subject_token_self_mint_private_key: Optional PEM RSA private key; auto-generated and stored if omitted when self-mint is enabled
+  - debug_return_resolved_subject_token_claims: Development-only flag to include resolved subject token claims in exchange responses
 
 Example:
   $ vault write oci/config \
-      tenancy_ocid="ocid1.tenancy.oc1..xxxxx" \
       domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
       client_id="my-client-id" \
-      client_secret="my-client-secret" \
-      region="us-ashburn-1"
+      client_secret="my-client-secret"
 `

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/sdk/framework"
@@ -13,6 +14,10 @@ import (
 )
 
 const (
+	// defaultHTTPClientTimeout is the maximum time allowed for an outbound HTTP
+	// request (e.g., OCI token exchange) to complete before being cancelled.
+	defaultHTTPClientTimeout = 30 * time.Second
+
 	backendHelp = `
 The OCI secrets engine dynamically generates OCI session tokens
 by exchanging 3rd party OIDC/OAuth JWT subject tokens.
@@ -71,8 +76,10 @@ func Factory(version string) logical.Factory {
 		}
 
 		b := backend{
-			logger:     conf.Logger,
-			httpClient: &http.Client{},
+			logger: conf.Logger,
+			httpClient: &http.Client{
+				Timeout: defaultHTTPClientTimeout,
+			},
 		}
 		b.Backend = &framework.Backend{
 			Help: backendHelp,

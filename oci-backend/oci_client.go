@@ -167,6 +167,7 @@ func resolveExchangePublicKey(publicKey string) (string, string, string, error) 
 	return encodedPublicKey, "", "", nil
 }
 
+// Encode the public key as Base64 encoded DER format as required by the OCI token exchange endpoint. If the public key is invalid, an error is returned.
 func publicKeyPEMToOCIValue(publicKeyPEM string) (string, error) {
 	block, _ := pem.Decode([]byte(publicKeyPEM))
 	if block == nil {

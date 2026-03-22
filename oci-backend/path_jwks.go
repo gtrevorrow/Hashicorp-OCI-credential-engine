@@ -2,8 +2,8 @@ package ocibackend
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
@@ -91,27 +91,37 @@ func buildRSAJWK(privateKey *rsa.PrivateKey) (map[string]interface{}, error) {
 }
 
 func buildSelfSignedJWTCertificate(privateKey *rsa.PrivateKey, kid string) ([]byte, error) {
-	now := time.Now().UTC()
-	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serialNumber, err := rand.Int(rand.Reader, serialLimit)
-	if err != nil {
-		return nil, err
-	}
+	notBefore := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	notAfter := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	serialNumber := deterministicJWKSCertificateSerial(privateKey, kid)
 
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			CommonName: "vault-plugin-secrets-oci " + kid,
 		},
-		NotBefore:             now.Add(-5 * time.Minute),
-		NotAfter:              now.Add(3650 * 24 * time.Hour),
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		IsCA:                  false,
 	}
 
-	return x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	return x509.CreateCertificate(nil, template, template, &privateKey.PublicKey, privateKey)
+}
+
+func deterministicJWKSCertificateSerial(privateKey *rsa.PrivateKey, kid string) *big.Int {
+	hashInput := kid
+	if privateKey != nil && privateKey.PublicKey.N != nil {
+		hashInput = kid + ":" + privateKey.PublicKey.N.Text(16)
+	}
+	sum := sha256.Sum256([]byte(hashInput))
+	serial := new(big.Int).SetBytes(sum[:16])
+	if serial.Sign() <= 0 {
+		return big.NewInt(1)
+	}
+	return serial
 }
 
 const pathJWKSHelpSyn = `

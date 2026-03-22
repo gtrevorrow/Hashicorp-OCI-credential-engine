@@ -181,6 +181,52 @@ func TestSelfMintedTokenValidatesAgainstJWKS(t *testing.T) {
 	verifyJWTSignatureWithRSAKey(t, token, certPublicKey)
 }
 
+func TestPathJWKSRead_X5CIsStableAcrossReads(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                       "test-client-id",
+			"client_secret":                   "test-client-secret",
+			"subject_token_self_mint_enabled": true,
+			"subject_token_self_mint_issuer":  "https://vault.example.com",
+		},
+	}
+	resp, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+	require.False(t, resp != nil && resp.IsError())
+
+	reqJWKS := &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "jwks",
+		Storage:   storage,
+	}
+
+	firstResp, err := b.HandleRequest(context.Background(), reqJWKS)
+	require.NoError(t, err)
+	require.NotNil(t, firstResp)
+	require.False(t, firstResp.IsError())
+
+	secondResp, err := b.HandleRequest(context.Background(), reqJWKS)
+	require.NoError(t, err)
+	require.NotNil(t, secondResp)
+	require.False(t, secondResp.IsError())
+
+	firstKeys := mustExtractJWKSKeys(t, firstResp.Data["keys"])
+	secondKeys := mustExtractJWKSKeys(t, secondResp.Data["keys"])
+	require.Len(t, firstKeys, 1)
+	require.Len(t, secondKeys, 1)
+
+	firstX5C := mustExtractStringSlice(t, firstKeys[0]["x5c"])
+	secondX5C := mustExtractStringSlice(t, secondKeys[0]["x5c"])
+	require.Equal(t, firstX5C, secondX5C)
+	require.Equal(t, firstKeys[0]["kid"], secondKeys[0]["kid"])
+}
+
 func mustExtractStringSlice(t *testing.T, raw interface{}) []string {
 	t.Helper()
 

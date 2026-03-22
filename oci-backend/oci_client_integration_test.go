@@ -190,6 +190,34 @@ func TestIntegrationExchangeTokenForOCI_Timeout(t *testing.T) {
 	require.Contains(t, err.Error(), "Client.Timeout")
 }
 
+func TestIntegrationExchangeTokenForOCI_ErrorPayloadWithHTTP200(t *testing.T) {
+	server := newIntegrationServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"error":"invalid_request","error_description":"subject token rejected"}`))
+	}))
+	defer server.Close()
+
+	b := &backend{}
+	config := &federatedConfig{
+		DomainUrl:    server.URL,
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		DefaultTTL:   3600,
+	}
+
+	_, err := b.exchangeTokenForOCI(
+		context.Background(),
+		mockSubjectToken,
+		ociRequestedTokenTypeUPST,
+		"",
+		"",
+		config,
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_request")
+	require.Contains(t, err.Error(), "subject token rejected")
+}
+
 func makeMockSecurityJWT(t *testing.T) string {
 	t.Helper()
 

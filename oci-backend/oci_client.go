@@ -34,11 +34,12 @@ type tokenExchangeResult struct {
 }
 
 type ociTokenExchangeResponse struct {
-	AccessToken string `json:"access_token"`
-	Token       string `json:"token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
-	Error       string `json:"error"`
+	AccessToken      string `json:"access_token"`
+	Token            string `json:"token"`
+	TokenType        string `json:"token_type"`
+	ExpiresIn        int    `json:"expires_in"`
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
 }
 
 func isSupportedRequestedTokenType(requestedTokenType string) bool {
@@ -104,6 +105,12 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 	var tokenResp ociTokenExchangeResponse
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return nil, fmt.Errorf("unable to decode OCI token exchange response: %w", err)
+	}
+	if tokenResp.Error != "" {
+		if tokenResp.ErrorDescription != "" {
+			return nil, fmt.Errorf("OCI token exchange returned error '%s': %s", tokenResp.Error, tokenResp.ErrorDescription)
+		}
+		return nil, fmt.Errorf("OCI token exchange returned error '%s'", tokenResp.Error)
 	}
 
 	token := tokenResp.AccessToken

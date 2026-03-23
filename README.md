@@ -39,7 +39,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
-    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
     V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
 ```
@@ -99,7 +99,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
-    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
     V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
 ```
@@ -133,7 +133,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
-    V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
     V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
 ```
@@ -275,8 +275,8 @@ vault write oci/config \
 - `domain_url`: OCI Identity Domain URL (for example: `https://idcs-xxxxx.identity.oraclecloud.com`)
 - `client_id`: OAuth Confidential Application client ID in the OCI Identity Domain
 - `client_secret`: OAuth Confidential Application client secret in the OCI Identity Domain
-- `default_ttl`: Default Vault lease TTL for exchanged credentials, and the default requested TTL for RPST exchanges when a request TTL is not supplied (default: 3600)
-- `max_ttl`: Maximum Vault lease TTL for exchanged credentials, and the maximum requested TTL allowed for RPST exchanges (default: 86400)
+- `default_ttl`: Default Vault lease TTL for exchanged credentials, and the default `rpst_exp` requested from OCI for RPST exchanges when a request TTL is not supplied (default: 3600)
+- `max_ttl`: Maximum Vault lease TTL for exchanged credentials, and the maximum `rpst_exp` value allowed for RPST exchanges (default: 86400)
 - `subject_token_role_mappings`: Optional JSON array of ordered rules used to derive a Vault role from a caller-supplied `subject_token`
   Each rule has:
   `claim`: JWT claim name to inspect
@@ -323,7 +323,7 @@ Then configure each mount separately with its own `oci/config` and roles.
 
 ### Roles
 
-Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exchange does not currently let the client request token lifetime through the token-exchange call, so these TTL settings only directly shape the OCI request for RPST. For UPST, they mainly affect Vault-side lease metadata today.
+Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exchange does not currently let the client request token lifetime through the token-exchange call, so these TTL settings only directly shape the OCI request for RPST via `rpst_exp`. For UPST, they mainly affect Vault-side lease metadata today.
 
 ```bash
 # Create a development role
@@ -343,8 +343,8 @@ vault write oci/roles/prod \
 ```
 
 **Role Parameters:**
-- `default_ttl`: Default Vault lease TTL for credentials issued under the role. Intended to also be the default requested TTL for RPST exchanges when a request TTL is not supplied.
-- `max_ttl`: Maximum Vault lease TTL for credentials issued under the role. Intended to also be the maximum requested TTL allowed for RPST exchanges.
+- `default_ttl`: Default Vault lease TTL for credentials issued under the role. Also used as the default `rpst_exp` requested from OCI for RPST exchanges when a request TTL is not supplied.
+- `max_ttl`: Maximum Vault lease TTL for credentials issued under the role. Also used as the maximum `rpst_exp` value allowed for RPST exchanges.
 - `allowed_groups`: Stored role metadata for future claim filtering
 - `allowed_subjects`: Stored role metadata for future subject filtering
 
@@ -566,7 +566,7 @@ vault write oci/exchange \
     role="developer"
 ```
 
-For RPST requests, `res_type` is required and the response will include `rpst_token`.
+For RPST requests, `res_type` is required and the response will include `rpst_token`. The plugin also sends `rpst_exp` to OCI based on the effective TTL after applying request, role, and backend limits.
 
 ## API Reference
 
@@ -615,7 +615,7 @@ vault read oci/jwks
 - `urn:oci:token-type:oci-rpst` (requires `res_type`)
 
 TTL note:
-- For RPST, the plugin uses config and role TTL policy to bound the requested lifetime sent to OCI.
+- For RPST, the plugin uses config and role TTL policy to bound the `rpst_exp` value sent to OCI.
 - For UPST, OCI determines the token lifetime; plugin TTL settings affect Vault lease metadata, not OCI-side UPST expiration.
 
 ### Roles Path

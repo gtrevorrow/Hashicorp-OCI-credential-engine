@@ -35,7 +35,7 @@ func (m *mockSystemView) GenerateIdentityToken(ctx context.Context, req *pluginu
 }
 
 func installFailingTokenExchanger(b *backend) {
-	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
 		return nil, fmt.Errorf("stub exchange failure")
 	})
 }
@@ -649,7 +649,7 @@ func TestPathExchange_DefaultCallbackSelfMintUsesCallerPublicKey(t *testing.T) {
 	backend := b.(*backend)
 	storage := &logical.InmemStorage{}
 
-	backend.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+	backend.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
 		require.NotEmpty(t, subjectToken)
 		require.Equal(t, suppliedPublicKey, publicKey)
 		return &tokenExchangeResult{
@@ -703,7 +703,7 @@ func TestPathExchange_CallerSuppliedSubjectTokenUsesCallerPublicKey(t *testing.T
 
 	b, storage := getTestBackend(t)
 
-	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
 		require.Equal(t, "caller-jwt-token", subjectToken)
 		require.Equal(t, suppliedPublicKey, publicKey)
 		return &tokenExchangeResult{
@@ -752,7 +752,7 @@ func TestPathExchange_CallerSuppliedSubjectTokenUsesCallerPublicKey(t *testing.T
 func TestPathExchange_DebugClaimsDoNotSuppressErrorResponse(t *testing.T) {
 	b, storage := getTestBackend(t)
 
-	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
 		return nil, fmt.Errorf("upstream exchange failure")
 	})
 

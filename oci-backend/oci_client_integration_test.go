@@ -63,6 +63,7 @@ func TestIntegrationExchangeTokenForOCI_UPST(t *testing.T) {
 		ociRequestedTokenTypeUPST,
 		"",
 		"",
+		0,
 		config,
 	)
 	require.NoError(t, err)
@@ -87,6 +88,7 @@ func TestIntegrationExchangeTokenForOCI_RPSTWithPublicKey(t *testing.T) {
 		require.Equal(t, ociRequestedTokenTypeRPST, r.PostForm.Get("requested_token_type"))
 		require.Equal(t, "resource_principal", r.PostForm.Get("res_type"))
 		require.NotEmpty(t, r.PostForm.Get("public_key"))
+		require.Equal(t, "3600", r.PostForm.Get("rpst_exp"))
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"%s","token_type":"Bearer"}`, mockToken)))
@@ -115,6 +117,7 @@ func TestIntegrationExchangeTokenForOCI_RPSTWithPublicKey(t *testing.T) {
 		ociRequestedTokenTypeRPST,
 		"resource_principal",
 		publicKeyPEM,
+		time.Hour,
 		config,
 	)
 	require.NoError(t, err)
@@ -150,6 +153,7 @@ func TestIntegrationExchangeTokenForOCI_AuthFailure(t *testing.T) {
 		ociRequestedTokenTypeUPST,
 		"",
 		"",
+		0,
 		config,
 	)
 	require.Error(t, err)
@@ -183,6 +187,7 @@ func TestIntegrationExchangeTokenForOCI_Timeout(t *testing.T) {
 		ociRequestedTokenTypeUPST,
 		"",
 		"",
+		0,
 		config,
 	)
 	require.Error(t, err)
@@ -211,6 +216,7 @@ func TestIntegrationExchangeTokenForOCI_ErrorPayloadWithHTTP200(t *testing.T) {
 		ociRequestedTokenTypeUPST,
 		"",
 		"",
+		0,
 		config,
 	)
 	require.Error(t, err)

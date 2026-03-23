@@ -35,7 +35,7 @@ type backend struct {
 	logger               hclog.Logger
 	httpClient           *http.Client
 	subjectTokenCallback SubjectTokenCallback
-	tokenExchanger       func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error)
+	tokenExchanger       func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error)
 }
 
 // SubjectTokenCallback mints a JWT subject token for fallback flows when callers
@@ -56,13 +56,13 @@ func (b *backend) getSubjectTokenCallback() SubjectTokenCallback {
 	return b.subjectTokenCallback
 }
 
-func (b *backend) setTokenExchanger(exchanger func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error)) {
+func (b *backend) setTokenExchanger(exchanger func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error)) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	b.tokenExchanger = exchanger
 }
 
-func (b *backend) getTokenExchanger() func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+func (b *backend) getTokenExchanger() func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
 	b.lock.RLock()
 	defer b.lock.RUnlock()
 	return b.tokenExchanger

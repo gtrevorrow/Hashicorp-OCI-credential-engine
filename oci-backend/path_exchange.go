@@ -234,7 +234,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if exchanger == nil {
 		exchanger = b.exchangeTokenForOCI
 	}
-	exchangeResult, err := exchanger(ctx, subjectToken, requestedTokenType, resType, publicKey, config)
+	exchangeResult, err := exchanger(ctx, subjectToken, requestedTokenType, resType, publicKey, ttl, config)
 	if err != nil {
 		if resolvedSubjectTokenClaims != nil {
 			return logical.ErrorResponseWithData(map[string]interface{}{

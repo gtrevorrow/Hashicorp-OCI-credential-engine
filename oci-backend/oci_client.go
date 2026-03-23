@@ -12,7 +12,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -50,7 +52,7 @@ func shouldReturnGeneratedKeyPair(publicKey string) bool {
 	return publicKey == ""
 }
 
-func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, config *federatedConfig) (*tokenExchangeResult, error) {
+func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
 	if requestedTokenType == "" {
 		requestedTokenType = ociRequestedTokenTypeUPST
 	}
@@ -68,6 +70,9 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 	form.Set("public_key", requestPublicKey)
 	if resType != "" {
 		form.Set("res_type", resType)
+	}
+	if requestedTokenType == ociRequestedTokenTypeRPST && ttl > 0 {
+		form.Set("rpst_exp", strconv.Itoa(int(ttl.Seconds())))
 	}
 
 	tokenURL, err := tokenExchangeEndpoint(config.DomainUrl)

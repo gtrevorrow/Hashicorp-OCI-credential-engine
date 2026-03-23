@@ -81,8 +81,8 @@ Current automated coverage is limited to TTL selection and clamping during excha
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
-| TTL-01 | Default TTL applied | No TTL specified | Uses role.default_ttl |
-| TTL-02 | Request TTL clamped to max | Request TTL > role.max_ttl | Clamped to max |
+| TTL-01 | Default TTL applied | No TTL specified | Uses role.default_ttl; RPST sends matching `rpst_exp` |
+| TTL-02 | Request TTL clamped to max | Request TTL > role.max_ttl | Clamped to max; RPST sends clamped `rpst_exp` |
 | TTL-03 | Lease renewal | Renew valid lease | Deferred: handler behavior not yet covered by automated tests |
 | TTL-04 | Lease revocation | Revoke lease | Deferred: local lease cleanup behavior not yet covered by automated tests |
 | TTL-05 | Lease expiration | Wait for TTL | Deferred: time-based expiry behavior not yet covered by automated tests |

@@ -111,7 +111,10 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	subjectTokenProvided := false
 	if raw, ok := data.GetOk("subject_token"); ok {
 		subjectToken = raw.(string)
-		subjectTokenProvided = subjectToken != ""
+		if subjectToken == "" {
+			return logical.ErrorResponse("subject_token was provided but is empty"), nil
+		}
+		subjectTokenProvided = true
 	}
 
 	requestedTokenType := ociRequestedTokenTypeUPST

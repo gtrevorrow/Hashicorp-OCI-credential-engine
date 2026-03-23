@@ -411,6 +411,38 @@ func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
 	require.Contains(t, resp.Error().Error(), "missing 'subject_token' and plugin-issued subject token mode is disabled")
 }
 
+func TestPathExchange_EmptySubjectTokenIsRejected(t *testing.T) {
+	b, storage := getTestBackend(t)
+	installFailingTokenExchanger(b)
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token": "",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.Contains(t, resp.Error().Error(), "subject_token was provided but is empty")
+}
+
 func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
 	b, storage := getTestBackend(t)
 	installFailingTokenExchanger(b)

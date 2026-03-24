@@ -12,7 +12,7 @@ These diagrams describe the implemented request flows in the plugin.
 
 Actor definitions used in diagrams:
 
-- **Client/Workload**: The caller (app, CI job, script, or human) that invokes `vault write oci/exchange`.
+- **Client/Workload**: The caller (app, CI job, script, or human) that invokes `vault write oci/exchange` or `vault write oci/exchange/<role>`.
 - **Vault OCI Credential Engine**: This secrets-engine plugin instance mounted in Vault.
 - **Vault Storage**: Plugin storage view used for reading config and role entries.
 - **Vault System View**: Vault runtime interface available to plugins; used by the default subject-token callback to call `GenerateIdentityToken` when available.
@@ -29,7 +29,7 @@ sequenceDiagram
     participant S as Vault Storage
     participant O as OCI Token Endpoint
 
-    C->>V: `vault write oci/exchange` with `subject_token`
+    C->>V: `vault write oci/exchange/<role>` with `subject_token`
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Validate request fields and TTL
@@ -44,7 +44,7 @@ sequenceDiagram
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
-Client sends `subject_token`; plugin validates role constraints/guardrails and performs token exchange against OCI.
+Client sends `subject_token`; when a role-specific route is used, the plugin loads that role's constraints before performing token exchange against OCI.
 
 #### 1.1) Caller JWT Role Mapping Variant
 
@@ -74,7 +74,7 @@ sequenceDiagram
     end
 ```
 
-This is a caller-supplied `subject_token` variant of flow 1. When `subject_token_role_mappings` are configured, the engine derives the effective Vault role from trusted JWT claims before OCI exchange instead of relying on a caller-supplied `role`.
+This is a caller-supplied `subject_token` variant of flow 1. When `subject_token_role_mappings` are configured, the engine derives the effective Vault role from trusted JWT claims before OCI exchange instead of relying on an explicit role path.
 
 #### 2) Exchange Without `subject_token` (Plugin-Issued Subject Token Mode)
 
@@ -87,7 +87,7 @@ sequenceDiagram
     participant SV as Vault System View
     participant O as OCI Token Endpoint
 
-    C->>V: `vault write oci/exchange` without `subject_token`
+    C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Check `enable_plugin_issued_subject_token=true`
@@ -117,7 +117,7 @@ sequenceDiagram
     participant SV as Vault System View
     participant O as OCI Token Endpoint
 
-    C->>V: `vault write oci/exchange` without `subject_token`
+    C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
     V->>S: Read backend config and self-mint key
     S-->>V: Config, role constraints, signing key
     V->>V: Check plugin-issued mode is enabled
@@ -355,7 +355,7 @@ vault write oci/roles/prod \
 ### Exchange a JWT for OCI Credentials
 
 ```bash
-vault write oci/exchange \
+vault write oci/exchange/developer \
     subject_token="eyJhbGciOiJSUzI1NiIs..." \
     requested_token_type="urn:oci:token-type:oci-upst" \
     ttl=3600
@@ -365,7 +365,8 @@ Notes:
 
 - Omit `subject_token` and set `enable_plugin_issued_subject_token=true` if you want the credential engine to obtain one on the caller's behalf. On Vault Enterprise, the engine first tries Vault identity-token generation. On Vault Open Source, or if Vault cannot generate an identity token for the request, the engine can fall back to self-mint when `subject_token_self_mint_enabled=true` and the required self-mint settings are configured.
 - If the credential engine obtains a subject token on the caller's behalf, the caller may optionally provide `subject_token_audience`. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
-- If the caller supplies `subject_token`, the caller may provide `role` only when `subject_token_role_mappings` are not configured. When mappings are configured, the engine derives the effective Vault role from JWT claims and rejects caller-supplied `role`.
+- Use `oci/exchange/<role>` when you want Vault policy to control which plugin role may be used for the exchange.
+- Use bare `oci/exchange` when `subject_token_role_mappings` are configured and the engine should derive the effective Vault role from trusted JWT claims.
 - If `public_key` is not supplied, the engine generates a fresh RSA key pair for the exchange and returns only the generated `private_key`.
 
 *Reference: Oracle JWT-to-UPST flow and request parameters are documented in [Token Exchange Grant Type: Exchanging a JSON Web Token for a UPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm#jwt_token_exchange__get-oci-upst).*
@@ -417,7 +418,7 @@ Rule semantics:
 - The first matching rule wins.
 - Supported operators are `eq` (equals), `co` (contains), and `sw` (starts with).
 - Matching works with string claims and array-of-string claims.
-- When `subject_token_role_mappings` is configured, callers must omit the request `role`; the plugin derives it from the JWT instead.
+- When `subject_token_role_mappings` is configured, callers should use bare `oci/exchange`; the plugin derives the effective role from the JWT instead of accepting a role-specific exchange path.
 - If no rule matches, the exchange is rejected.
 
 Example mapping behavior:
@@ -487,15 +488,14 @@ SUBJECT_TOKEN="$(vault read -field=token identity/oidc/token/oci-developer)"
 ```bash
 vault write oci/exchange \
     subject_token="$SUBJECT_TOKEN" \
-    requested_token_type="urn:oci:token-type:oci-upst" \
-    role="developer"
+    requested_token_type="urn:oci:token-type:oci-upst"
 ```
 
 5. OCI Identity Domain token exchange trust evaluates issuer/audience/claims and maps to the target OCI Domain Service User. OCI IAM policies on that service user determine final permissions.
 
 See [DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md](DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md) for full architecture and implementation details.
 
-*Important: No-`subject_token` flow uses plugin-issued subject-token mode and depends on `enable_plugin_issued_subject_token=true`. With the default callback, Vault identity-token generation is attempted first; if unavailable, self-mint is used only when explicitly configured. Self-minted tokens use Vault-derived identity claims, not the request `role`.*
+*Important: No-`subject_token` flow uses plugin-issued subject-token mode and depends on `enable_plugin_issued_subject_token=true`. With the default callback, Vault identity-token generation is attempted first; if unavailable, self-mint is used only when explicitly configured. Self-minted tokens use Vault-derived identity claims, not the selected exchange role path.*
 
 ### Default Self-Mint Claim Set
 
@@ -526,7 +526,7 @@ Vault-derived claims included when available:
 - `vault_group_names`
 
 Design notes:
-- The request `role` is not copied into the self-minted JWT.
+- The selected exchange role is not copied into the self-minted JWT.
 - `aud` defaults to plugin config (`subject_token_self_mint_audience`) and may be overridden per request only through allowlisted `subject_token_audience` values.
 - OCI trust rules should use the Vault-derived claims above rather than caller-supplied parameters.
 - When the caller request is backed by a Vault Identity entity, `vault_entity_id` is the preferred stable trust-mapping claim.
@@ -537,7 +537,7 @@ Design notes:
 
 ```bash
 # Get credentials from Vault
-CREDS=$(vault write -format=json oci/exchange subject_token="$JWT" role="developer")
+CREDS=$(vault write -format=json oci/exchange/developer subject_token="$JWT")
 
 # Extract the session token
 export OCI_CLI_AUTH=security_token
@@ -559,11 +559,10 @@ The returned `private_key` is PEM-encoded and can be used by tools or SDK wrappe
 Use RPST when you need resource-principal style token exchange behavior supported by OCI Identity Domains.
 
 ```bash
-vault write oci/exchange \
+vault write oci/exchange/developer \
     subject_token="eyJhbGciOiJSUzI1NiIs..." \
     requested_token_type="urn:oci:token-type:oci-rpst" \
-    res_type="resource_principal" \
-    role="developer"
+    res_type="resource_principal"
 ```
 
 For RPST requests, `res_type` is required and the response will include `rpst_token`. The plugin also sends `rpst_exp` to OCI based on the effective TTL after applying request, role, and backend limits.
@@ -582,7 +581,8 @@ For RPST requests, `res_type` is required and the response will include `rpst_to
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST/PUT` | `/oci/exchange` | Exchange JWT subject token for OCI credentials |
+| `POST/PUT` | `/oci/exchange` | Exchange JWT subject token for OCI credentials; also used when the engine derives role from `subject_token_role_mappings` |
+| `POST/PUT` | `/oci/exchange/:role` | Exchange JWT subject token for OCI credentials using an explicit plugin role selected from the path |
 
 ### JWKS Path
 
@@ -604,11 +604,10 @@ vault read oci/jwks
   "requested_token_type": "urn:oci:token-type:oci-upst",
   "res_type": "resource_principal",
   "public_key": "-----BEGIN PUBLIC KEY-----...",
-  "role": "developer",
   "ttl": 3600
 }
 ```
-*(Note: `subject_token` is optional when `enable_plugin_issued_subject_token=true` and the plugin-issued subject-token mode can resolve a token. `subject_token_audience` is only used for plugin-issued subject tokens. The plugin always sends `subject_token_type=jwt` to OCI.)*
+*(Note: `subject_token` is optional when `enable_plugin_issued_subject_token=true` and the plugin-issued subject-token mode can resolve a token. `subject_token_audience` is only used for plugin-issued subject tokens. The plugin always sends `subject_token_type=jwt` to OCI. Select an explicit role through `/oci/exchange/:role`, not a request body field.)*
 
 `requested_token_type` defaults to `urn:oci:token-type:oci-upst`. Supported values:
 - `urn:oci:token-type:oci-upst`
@@ -650,11 +649,11 @@ TTL note:
 
 Use Vault policy boundaries as the primary control plane:
 
-1. Grant `update` on `oci/exchange` only to trusted workloads.
+1. Grant `update` on `oci/exchange` only to trusted workloads that should use no-role or JWT-derived-role exchange, and grant `update` on specific `oci/exchange/<role>` paths when workloads should be limited to specific plugin roles.
 2. Restrict role usage with path-based ACLs so each workload can only call specific role paths or namespaces.
 3. Keep `enable_plugin_issued_subject_token=false` by default for general clients, and enable plugin-issued subject-token mode only for tightly scoped policies.
-4. Use `subject_token_role_mappings` when callers provide their own JWTs and you want Vault role selection to come from trusted JWT claims rather than a caller-supplied `role` parameter.
-5. Treat plugin-issued self-mint as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the request `role`.
+4. Use `subject_token_role_mappings` when callers provide their own JWTs and you want Vault role selection to come from trusted JWT claims rather than an explicit role path.
+5. Treat plugin-issued self-mint as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the selected exchange role path.
 6. Enable `strict_role_name_match=true` to prevent malformed role values.
 7. Protect `oci/config` write access so only operators can rotate or replace self-mint settings and signing keys.
 8. Treat `oci/exchange` as a privileged identity-issuance path when plugin-issued subject-token mode is enabled; do not grant it broadly just because OCI permissions are controlled later by service-user policy.
@@ -666,12 +665,16 @@ Highly visible operator note:
 Vault enforces this with its normal path-based ACL policies. A common split is:
 
 - operator/admin policy: can manage `oci/config` and `oci/roles/*`
-- workload policy: can call `oci/exchange` but cannot read or write `oci/config`
+- workload policy: can call `oci/exchange` or selected `oci/exchange/<role>` paths but cannot read or write `oci/config`
 
 Example workload policy:
 
 ```hcl
 path "oci/exchange" {
+  capabilities = ["create", "update"]
+}
+
+path "oci/exchange/developer" {
   capabilities = ["create", "update"]
 }
 ```

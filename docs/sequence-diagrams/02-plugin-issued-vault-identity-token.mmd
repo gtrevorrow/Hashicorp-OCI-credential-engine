@@ -6,7 +6,7 @@ sequenceDiagram
     participant SV as Vault System View
     participant O as OCI Token Endpoint
 
-    C->>V: `vault write oci/exchange` without `subject_token`
+    C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Check `enable_plugin_issued_subject_token=true`

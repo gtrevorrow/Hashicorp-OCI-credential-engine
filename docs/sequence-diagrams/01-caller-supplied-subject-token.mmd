@@ -5,7 +5,7 @@ sequenceDiagram
     participant S as Vault Storage
     participant O as OCI Token Endpoint
 
-    C->>V: `vault write oci/exchange` with `subject_token`
+    C->>V: `vault write oci/exchange/<role>` with `subject_token`
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Validate request fields and TTL

@@ -45,8 +45,8 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-05 | Exchange with TTL override | ttl < role.default_ttl | Custom TTL applied |
 | EXC-06 | Exchange with public_key provided | public_key in request | No generated key material in response |
 | EXC-07 | Exchange without subject_token (plugin-issued mode disabled) | omit subject_token, enable_plugin_issued_subject_token=false | Error: missing subject_token and plugin-issued mode disabled |
-| EXC-08 | Exchange with caller-supplied JWT and derived role mapping | subject_token provided, subject_token_role_mappings configured, omit role | First matching mapping selects Vault role and exchange proceeds |
-| EXC-09 | Exchange with caller-supplied JWT and explicit role while mappings enabled | subject_token provided, role set, subject_token_role_mappings configured | Error: role must be omitted |
+| EXC-08 | Exchange with caller-supplied JWT and derived role mapping | subject_token provided, subject_token_role_mappings configured, use bare `/exchange` | First matching mapping selects Vault role and exchange proceeds |
+| EXC-09 | Exchange with caller-supplied JWT and explicit role path while mappings enabled | subject_token provided, call `/exchange/:role`, subject_token_role_mappings configured | Error: role-specific exchange paths cannot be used |
 | EXC-10 | Exchange without subject_token (allowlisted audience override) | omit subject_token, set subject_token_audience to allowed value | Plugin-issued token uses requested audience |
 | EXC-11 | Exchange with disallowed audience override | omit subject_token, set subject_token_audience to unlisted value | Error: audience override not allowed |
 | EXC-12 | Exchange with subject_token_audience and caller-provided JWT | subject_token and subject_token_audience set | Error: audience override only applies to plugin-issued tokens |
@@ -72,7 +72,7 @@ These cases are primarily OCI-behavior or end-to-end validation scenarios unless
 | RCM-03 | Starts-with match | mapping op=`sw`, JWT claim starts with rule value | First matching rule selects role |
 | RCM-04 | No mapping match | JWT does not match any configured rule | Error: no subject_token_role_mappings matched |
 | RCM-05 | String array claim matching | claim value is array containing an element that matches a rule | Matching rule selects role |
-| RCM-06 | Caller-supplied role rejected when mappings enabled | subject_token and request role both supplied | Error: role must be omitted |
+| RCM-06 | Explicit role path rejected when mappings enabled | subject_token provided and `/exchange/:role` used while mappings are configured | Error: role-specific exchange paths cannot be used |
 | RCM-07 | Strict role name match in config | strict_role_name_match=true, mapped role contains invalid chars | Error |
 
 ## 6. Lease & TTL Management
@@ -99,9 +99,9 @@ Current automated coverage is limited to TTL selection and clamping during excha
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
-| CLM-01 | Self-mint uses Vault-derived subject | plugin-issued self-mint with `EntityID` present | `sub` is derived from Vault identity, not request `role` |
+| CLM-01 | Self-mint uses Vault-derived subject | plugin-issued self-mint with `EntityID` present | `sub` is derived from Vault identity, not the selected exchange role |
 | CLM-02 | Self-mint includes entity and alias claims | plugin-issued self-mint with entity/alias metadata available | JWT contains stable Vault-derived identity claims |
-| CLM-03 | Self-mint excludes caller role selector | request includes `role` during plugin-issued self-mint | JWT does not contain `vault_role` or request `role` claim |
+| CLM-03 | Self-mint excludes exchange role selector | plugin-issued self-mint invoked through `/exchange/:role` | JWT does not contain `vault_role` or the selected exchange role |
 
 ## 9. OCI API Integration (Mock/Real)
 
@@ -207,7 +207,7 @@ Future additions:
 
 - OCI IAM tokens cannot be actively revoked server-side; Vault lease revocation only drops local tracking
 - `client_secret` is write-only and never returned on read
-- `subject_token_role_mappings` applies only to caller-provided `subject_token` values; plugin-issued tokens continue to use the request `role` when one is supplied
+- `subject_token_role_mappings` applies only to caller-provided `subject_token` values; plugin-issued tokens may still use an explicit `/exchange/:role` path when one is selected
 - `subject_token_role_mappings` uses first-match-wins semantics, so rule order matters
 - `subject_token_audience` is accepted only when `subject_token` is omitted and the requested audience is present in `subject_token_allowed_audiences`
 - If `enable_plugin_issued_subject_token=false`, callers must supply `subject_token`

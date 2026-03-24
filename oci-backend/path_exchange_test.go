@@ -60,10 +60,9 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 	t.Run("Missing Config", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
-			Path:      "exchange",
+			Path:      "exchange/dev",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"role":          "dev",
 				"subject_token": "token123",
 			},
 		}
@@ -103,11 +102,8 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 	t.Run("Missing Subject Token Unconfigured Identity", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
-			Path:      "exchange",
+			Path:      "exchange/dev",
 			Storage:   storage,
-			Data: map[string]interface{}{
-				"role": "dev",
-			},
 		}
 
 		resp, err := backend.HandleRequest(context.Background(), req)
@@ -117,13 +113,12 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 	})
 
 	// Baseline role lookup validation; not tied to a named plan ID.
-	t.Run("Missing Role", func(t *testing.T) {
+	t.Run("Missing Role Path", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
-			Path:      "exchange",
+			Path:      "exchange/nonexistent",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"role":          "nonexistent",
 				"subject_token": "token123",
 			},
 		}
@@ -177,12 +172,8 @@ func TestPathExchange_WIFEnterprise(t *testing.T) {
 	t.Run("Enterprise Token Generation Bypass", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
-			Path:      "exchange",
+			Path:      "exchange/dev",
 			Storage:   storage,
-			Data: map[string]interface{}{
-				"role": "dev",
-				// subject_token intentionally omitted!
-			},
 		}
 
 		// Because we're mocking Enterprise but OCI calls will fail (no real endpoint),
@@ -323,22 +314,21 @@ func TestPathExchange_SubjectTokenRoleMappings(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "token exchange failed")
 	})
 
-	t.Run("Rejects Caller Supplied Role When Mappings Configured", func(t *testing.T) {
+	t.Run("Rejects Role Path When Mappings Configured", func(t *testing.T) {
 		subjectToken := makeTestJWT(t, map[string]interface{}{"vault_role": "dev"})
 		req := &logical.Request{
 			Operation: logical.CreateOperation,
-			Path:      "exchange",
+			Path:      "exchange/dev",
 			Storage:   storage,
 			Data: map[string]interface{}{
 				"subject_token": subjectToken,
-				"role":          "dev",
 			},
 		}
 
 		resp, err := b.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "role must be omitted when subject_token_role_mappings are configured")
+		require.Contains(t, resp.Error().Error(), "role-specific exchange paths cannot be used when subject_token_role_mappings are configured")
 	})
 
 	t.Run("Rejects No Match", func(t *testing.T) {
@@ -398,11 +388,8 @@ func TestPathExchange_PluginIdentityFallbackDisabled(t *testing.T) {
 
 	req := &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "exchange",
+		Path:      "exchange/dev",
 		Storage:   storage,
-		Data: map[string]interface{}{
-			"role": "dev",
-		},
 	}
 
 	resp, err := b.HandleRequest(context.Background(), req)
@@ -441,6 +428,39 @@ func TestPathExchange_EmptySubjectTokenIsRejected(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.IsError())
 	require.Contains(t, resp.Error().Error(), "subject_token was provided but is empty")
+}
+
+func TestPathExchange_RequestBodyRoleIsRejected(t *testing.T) {
+	b, storage := getTestBackend(t)
+	installFailingTokenExchanger(b)
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token": "token123",
+			"role":          "dev",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.Contains(t, resp.Error().Error(), "role must be selected through the exchange path")
 }
 
 func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
@@ -511,11 +531,8 @@ func TestPathExchange_SubjectTokenCallbackFallback(t *testing.T) {
 
 	req := &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "exchange",
+		Path:      "exchange/dev",
 		Storage:   storage,
-		Data: map[string]interface{}{
-			"role": "dev",
-		},
 	}
 
 	resp, err := backend.HandleRequest(context.Background(), req)
@@ -618,11 +635,8 @@ func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
 
 	req := &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "exchange",
+		Path:      "exchange/dev",
 		Storage:   storage,
-		Data: map[string]interface{}{
-			"role": "dev",
-		},
 	}
 
 	resp, err := backend.HandleRequest(context.Background(), req)
@@ -1066,9 +1080,6 @@ func TestDefaultCallbackSelfMintUsesTrustedVaultIdentityClaims(t *testing.T) {
 		MountAccessor:       "auth_kubernetes_123",
 		MountType:           "kubernetes",
 		ClientTokenAccessor: "hmac-token-accessor",
-		Data: map[string]interface{}{
-			"role": "dev",
-		},
 	}
 
 	token, err := backend.defaultSubjectTokenCallback(context.Background(), req, config)

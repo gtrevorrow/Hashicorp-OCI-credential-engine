@@ -13,86 +13,95 @@ import (
 // pathExchange returns the token exchange path
 func (b *backend) pathExchange() []*framework.Path {
 	return []*framework.Path{
-		{
-			Pattern: path.Join("exchange"),
-			Fields: map[string]*framework.FieldSchema{
-				"subject_token": {
-					Type:        framework.TypeString,
-					Description: "The 3rd party OIDC/OAuth JWT subject token to exchange (optional when callback fallback is enabled)",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name:      "Subject Token",
-						Sensitive: true,
-					},
-				},
-				"requested_token_type": {
-					Type:        framework.TypeString,
-					Description: "OCI token type to request (urn:oci:token-type:oci-upst or urn:oci:token-type:oci-rpst)",
-					Default:     ociRequestedTokenTypeUPST,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Requested Token Type",
-					},
-				},
-				"subject_token_audience": {
-					Type:        framework.TypeString,
-					Description: "Optional audience override for callback-resolved subject tokens; must be allowed by backend config",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Subject Token Audience",
-					},
-				},
-				"res_type": {
-					Type:        framework.TypeString,
-					Description: "OCI resource type. Required when requested_token_type is urn:oci:token-type:oci-rpst",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Resource Type",
-					},
-				},
-				"public_key": {
-					Type:        framework.TypeString,
-					Description: "Optional PEM-encoded public key to include in OCI token exchange",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Public Key",
-					},
-				},
-				"role": {
-					Type:        framework.TypeString,
-					Description: "Role to use for token exchange constraints",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "Role",
-					},
-				},
-				"ttl": {
-					Type:        framework.TypeDurationSecond,
-					Description: "Requested TTL for the OCI session token",
-					Required:    false,
-					DisplayAttrs: &framework.DisplayAttributes{
-						Name: "TTL",
-					},
-				},
-			},
+		b.buildExchangePath(path.Join("exchange"), false),
+		b.buildExchangePath(path.Join("exchange", framework.GenericNameRegex("role")), true),
+	}
+}
 
-			ExistenceCheck: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
-				return false, nil // Always false, exchange paths overwrite/create
+func (b *backend) buildExchangePath(pattern string, includeRole bool) *framework.Path {
+	fields := map[string]*framework.FieldSchema{
+		"subject_token": {
+			Type:        framework.TypeString,
+			Description: "The 3rd party OIDC/OAuth JWT subject token to exchange (optional when callback fallback is enabled)",
+			Required:    false,
+			DisplayAttrs: &framework.DisplayAttributes{
+				Name:      "Subject Token",
+				Sensitive: true,
 			},
-
-			Operations: map[logical.Operation]framework.OperationHandler{
-				logical.CreateOperation: &framework.PathOperation{
-					Callback: b.pathExchangeWrite,
-					Summary:  "Exchange a 3rd party JWT for an OCI session token",
-				},
-				logical.UpdateOperation: &framework.PathOperation{
-					Callback: b.pathExchangeWrite,
-					Summary:  "Exchange a 3rd party JWT for an OCI session token",
-				},
-			},
-
-			HelpSynopsis:    pathExchangeHelpSyn,
-			HelpDescription: pathExchangeHelpDesc,
 		},
+		"requested_token_type": {
+			Type:        framework.TypeString,
+			Description: "OCI token type to request (urn:oci:token-type:oci-upst or urn:oci:token-type:oci-rpst)",
+			Default:     ociRequestedTokenTypeUPST,
+			DisplayAttrs: &framework.DisplayAttributes{
+				Name: "Requested Token Type",
+			},
+		},
+		"subject_token_audience": {
+			Type:        framework.TypeString,
+			Description: "Optional audience override for callback-resolved subject tokens; must be allowed by backend config",
+			Required:    false,
+			DisplayAttrs: &framework.DisplayAttributes{
+				Name: "Subject Token Audience",
+			},
+		},
+		"res_type": {
+			Type:        framework.TypeString,
+			Description: "OCI resource type. Required when requested_token_type is urn:oci:token-type:oci-rpst",
+			Required:    false,
+			DisplayAttrs: &framework.DisplayAttributes{
+				Name: "Resource Type",
+			},
+		},
+		"public_key": {
+			Type:        framework.TypeString,
+			Description: "Optional PEM-encoded public key to include in OCI token exchange",
+			Required:    false,
+			DisplayAttrs: &framework.DisplayAttributes{
+				Name: "Public Key",
+			},
+		},
+		"ttl": {
+			Type:        framework.TypeDurationSecond,
+			Description: "Requested TTL for the OCI session token",
+			Required:    false,
+			DisplayAttrs: &framework.DisplayAttributes{
+				Name: "TTL",
+			},
+		},
+	}
+	if includeRole {
+		fields["role"] = &framework.FieldSchema{
+			Type:        framework.TypeString,
+			Description: "Role name selected from the exchange path",
+			Required:    true,
+			DisplayAttrs: &framework.DisplayAttributes{
+				Name: "Role",
+			},
+		}
+	}
+
+	return &framework.Path{
+		Pattern: pattern,
+		Fields:  fields,
+
+		ExistenceCheck: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+			return false, nil // Always false, exchange paths overwrite/create
+		},
+
+		Operations: map[logical.Operation]framework.OperationHandler{
+			logical.CreateOperation: &framework.PathOperation{
+				Callback: b.pathExchangeWrite,
+				Summary:  "Exchange a 3rd party JWT for an OCI session token",
+			},
+			logical.UpdateOperation: &framework.PathOperation{
+				Callback: b.pathExchangeWrite,
+				Summary:  "Exchange a 3rd party JWT for an OCI session token",
+			},
+		},
+
+		HelpSynopsis:    pathExchangeHelpSyn,
+		HelpDescription: pathExchangeHelpDesc,
 	}
 }
 
@@ -181,14 +190,16 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 	}
 
-	// Get role if specified
 	roleName := ""
 	if raw, ok := data.GetOk("role"); ok {
 		roleName = raw.(string)
 	}
+	if _, ok := req.Data["role"]; ok && roleName == "" {
+		return logical.ErrorResponse("role must be selected through the exchange path; use /exchange/:role"), nil
+	}
 	if subjectTokenProvided && len(config.SubjectTokenRoleMappings) > 0 {
 		if roleName != "" {
-			return logical.ErrorResponse("role must be omitted when subject_token_role_mappings are configured"), nil
+			return logical.ErrorResponse("role-specific exchange paths cannot be used when subject_token_role_mappings are configured"), nil
 		}
 		derivedRoleName, derivedRoleErr := resolveRoleFromSubjectToken(subjectToken, config.SubjectTokenRoleMappings)
 		if derivedRoleErr != nil {
@@ -364,13 +375,12 @@ Optional parameters:
 	- requested_token_type: OCI token type (default: urn:oci:token-type:oci-upst)
 	- res_type: OCI resource type (required for urn:oci:token-type:oci-rpst)
 	- public_key: Optional PEM public key included in the exchange request; if omitted, the plugin generates a fresh RSA key pair for the exchange
-  - role: Role defining TTL constraints
   - ttl: Requested TTL for the OCI session token
 
 Example:
-  $ vault write oci/exchange \\
+  $ vault write oci/exchange/developer \\
       subject_token="eyJhbGciOiJSUzI1NiIs..." \\
-      role="developer"
+      ttl=3600
 
 The response includes:
   - access_token: The OCI access token

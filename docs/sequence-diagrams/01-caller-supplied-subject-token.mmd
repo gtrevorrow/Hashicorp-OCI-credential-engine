@@ -17,4 +17,4 @@ sequenceDiagram
     end
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
+    V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair

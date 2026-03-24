@@ -43,7 +43,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-03 | Exchange with explicit UPST type | requested_token_type=oci-upst | UPST token returned |
 | EXC-04 | Exchange without subject_token (plugin-issued mode enabled) | role only, omit subject_token, enforce=false, enable_plugin_issued_subject_token=true | Uses plugin-issued subject-token mode (Vault identity token first; self-mint if configured) |
 | EXC-05 | Exchange with TTL override | ttl < role.default_ttl | Custom TTL applied |
-| EXC-06 | Exchange with public_key provided | public_key in request | No private_key in response |
+| EXC-06 | Exchange with public_key provided | public_key in request | No generated key material in response |
 | EXC-07 | Exchange without subject_token (plugin-issued mode disabled) | omit subject_token, enable_plugin_issued_subject_token=false | Error: missing subject_token and plugin-issued mode disabled |
 | EXC-08 | Exchange with caller-supplied JWT and derived role mapping | subject_token provided, subject_token_role_mappings configured, omit role | First matching mapping selects Vault role and exchange proceeds |
 | EXC-09 | Exchange with caller-supplied JWT and explicit role while mappings enabled | subject_token provided, role set, subject_token_role_mappings configured | Error: role must be omitted |

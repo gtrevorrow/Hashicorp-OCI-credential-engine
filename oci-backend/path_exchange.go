@@ -266,10 +266,6 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if publicKey == "" && exchangeResult.PrivateKey != "" {
 		respData["private_key"] = exchangeResult.PrivateKey
 	}
-	if publicKey == "" && exchangeResult.PublicKey != "" {
-		respData["public_key"] = exchangeResult.PublicKey
-	}
-
 	resp := b.Secret("oci_token").Response(respData, map[string]interface{}{
 		"role": roleName,
 	})
@@ -381,7 +377,6 @@ The response includes:
   - session_token: The OCI session token (for CLI/SDK use)
 	- rpst_token: OCI RPST token when requested_token_type is urn:oci:token-type:oci-rpst
 	- private_key: PEM-encoded private key for OCI request signing (omitted when public_key is provided)
-	- public_key: PEM-encoded public key for OCI request signing (omitted when public_key is provided)
 	- requested_token_type: The OCI token type requested/returned
   - token_type: Bearer
   - expires_in: Token lifetime in seconds

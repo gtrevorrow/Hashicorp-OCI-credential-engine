@@ -41,7 +41,7 @@ sequenceDiagram
     end
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
+    V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
 Client sends `subject_token`; plugin validates role constraints/guardrails and performs token exchange against OCI.
@@ -101,7 +101,7 @@ sequenceDiagram
     end
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
+    V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
 Client omits `subject_token`; plugin uses its plugin-issued subject-token mode when enabled. Default callback behavior is: `GenerateIdentityToken` first, then self-mint JWT only if needed and configured.
@@ -135,7 +135,7 @@ sequenceDiagram
     end
     V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
+    V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
 Client omits `subject_token`; Vault identity-token generation is unavailable, so the plugin self-mints the subject token from trusted Vault context and then exchanges it with OCI.
@@ -151,7 +151,7 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
 - **UPST and RPST Support**: Request either `urn:oci:token-type:oci-upst` or `urn:oci:token-type:oci-rpst`
-- **Returned OCI Key Pair**: Exchange responses can include Credential Engine generated PEM-encoded `private_key` and `public_key` for request-signing workflows
+- **Returned OCI Key Material**: When the engine generates the exchange RSA key pair, responses include the generated PEM-encoded `private_key` for request-signing workflows
 - **Plugin-Issued Subject Token Mode**: If `subject_token` is omitted and `enable_plugin_issued_subject_token=true`, the plugin resolves a token itself (default callback: Vault identity token first if availble in the version of vualt, self-mint if configured)
 - **Role-based TTL Policies**: Define roles with default and maximum TTL constraints
 - **Lease Management**: OCI tokens are issued as Vault secrets with TTL-based lease handling
@@ -364,7 +364,7 @@ Notes:
 - Omit `subject_token` and set `enable_plugin_issued_subject_token=true` if you want the credential engine to obtain one on the caller's behalf. On Vault Enterprise, the engine first tries Vault identity-token generation. On Vault Open Source, or if Vault cannot generate an identity token for the request, the engine can fall back to self-mint when `subject_token_self_mint_enabled=true` and the required self-mint settings are configured.
 - If the credential engine obtains a subject token on the caller's behalf, the caller may optionally provide `subject_token_audience`. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
 - If the caller supplies `subject_token`, the caller may provide `role` only when `subject_token_role_mappings` are not configured. When mappings are configured, the engine derives the effective Vault role from JWT claims and rejects caller-supplied `role`.
-- If `public_key` is not supplied, the engine generates a fresh RSA key pair for the exchange.
+- If `public_key` is not supplied, the engine generates a fresh RSA key pair for the exchange and returns only the generated `private_key`.
 
 *Reference: Oracle JWT-to-UPST flow and request parameters are documented in [Token Exchange Grant Type: Exchanging a JSON Web Token for a UPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm#jwt_token_exchange__get-oci-upst).*
 
@@ -375,7 +375,6 @@ Notes:
     "access_token": "eyJ...",
     "session_token": "Atbv...",
     "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE...",
-    "public_key": "-----BEGIN PUBLIC KEY-----\\nMIIB...",
     "requested_token_type": "urn:oci:token-type:oci-upst",
     "token_type": "Bearer",
     "expires_in": 3600,
@@ -388,7 +387,7 @@ Notes:
 ```
 
 If `public_key` is provided in the request, the plugin will not return `private_key` or `public_key` in the response.
-This applies to both caller-supplied `subject_token` mode and plugin-issued self-mint mode: if the caller supplies `public_key`, the plugin uses that key in the OCI token exchange payload and does not generate or return an exchange key pair.
+This applies to both caller-supplied `subject_token` mode and plugin-issued self-mint mode: if the caller supplies `public_key`, the plugin uses that key in the OCI token exchange payload and does not generate or return exchange key material.
 
 ### Caller-Supplied Subject Token Flow (JWT Claim to Vault Role Mapping)
 
@@ -545,14 +544,13 @@ export OCI_CLI_SECURITY_TOKEN=$(echo $CREDS | jq -r '.data.session_token')
 # Persist key material returned by the plugin
 mkdir -p ~/.oci
 echo "$CREDS" | jq -r '.data.private_key' > ~/.oci/key.pem
-echo "$CREDS" | jq -r '.data.public_key' > ~/.oci/key_public.pem
 chmod 600 ~/.oci/key.pem
 
 # Use OCI CLI
 oci iam user list
 ```
 
-The `private_key` and `public_key` fields are PEM-encoded and can be used by tools or SDK wrappers that require explicit key material for OCI request signing, which aligns with OCI's UPST public-key workflow. Treat `private_key` as sensitive secret material.
+The returned `private_key` is PEM-encoded and can be used by tools or SDK wrappers that require explicit key material for OCI request signing, which aligns with OCI's UPST public-key workflow. Treat `private_key` as sensitive secret material.
 
 ### Exchange a JWT for OCI RPST
 

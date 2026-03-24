@@ -749,6 +749,54 @@ func TestPathExchange_CallerSuppliedSubjectTokenUsesCallerPublicKey(t *testing.T
 	require.Nil(t, resp.Data["public_key"])
 }
 
+func TestPathExchange_GeneratedKeyResponseOmitsPublicKey(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
+		require.Equal(t, "caller-jwt-token", subjectToken)
+		require.Empty(t, publicKey)
+		return &tokenExchangeResult{
+			AccessToken:        "access-token",
+			SessionToken:       "session-token",
+			TokenType:          "Bearer",
+			RequestedTokenType: ociRequestedTokenTypeUPST,
+			PrivateKey:         "generated-private-key",
+			PublicKey:          "generated-public-key",
+		}, nil
+	})
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token": "caller-jwt-token",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.False(t, resp.IsError())
+	require.Equal(t, "access-token", resp.Data["access_token"])
+	require.Equal(t, "session-token", resp.Data["session_token"])
+	require.Equal(t, "generated-private-key", resp.Data["private_key"])
+	require.Nil(t, resp.Data["public_key"])
+}
+
 func TestPathExchange_DebugClaimsDoNotSuppressErrorResponse(t *testing.T) {
 	b, storage := getTestBackend(t)
 
@@ -761,9 +809,9 @@ func TestPathExchange_DebugClaimsDoNotSuppressErrorResponse(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"domain_url":                          "https://idcs-test.identity.oraclecloud.com",
-			"client_id":                           "test-client-id",
-			"client_secret":                       "test-client-secret",
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
 			"debug_return_resolved_subject_token_claims": true,
 		},
 	}

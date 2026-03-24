@@ -661,6 +661,31 @@ Use Vault policy boundaries as the primary control plane:
 Highly visible operator note:
 - Vault policy on `oci/config` and `oci/exchange` is part of the security boundary for the self-minted flow. If those paths are too broadly accessible, callers may be able to mint Vault-backed subject tokens or alter the signing/trust configuration.
 
+Vault enforces this with its normal path-based ACL policies. A common split is:
+
+- operator/admin policy: can manage `oci/config` and `oci/roles/*`
+- workload policy: can call `oci/exchange` but cannot read or write `oci/config`
+
+Example workload policy:
+
+```hcl
+path "oci/exchange" {
+  capabilities = ["create", "update"]
+}
+```
+
+Example operator policy:
+
+```hcl
+path "oci/config" {
+  capabilities = ["create", "read", "update", "delete"]
+}
+
+path "oci/roles/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+```
+
 ## Development
 
 ### Project Structure

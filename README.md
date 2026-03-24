@@ -185,9 +185,9 @@ make build-all
 
 ### Register the Plugin with Vault
 
-For local development, `./scripts/dev_vault.sh start` now runs `make build`, starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are still useful for non-dev setups and for understanding the underlying Vault operations.
+For local development, use the  `./scripts/dev_vault.sh start` script that runs `make build`, starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are for non-dev setups.
 
-If you want dev startup to reapply backend config automatically, create `.env.local` in the repo root with at least:
+Dev Note: If you want dev startup to reapply backend config automatically, create `.env.local` in the repo root with at least:
 
 ```bash
 OCI_DOMAIN_URL="https://idcs-xxxxx.identity.oraclecloud.com:443"
@@ -209,7 +209,7 @@ Optional `.env.local` settings also map directly to `oci/config`, including:
 - `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY`
 - `OCI_DEBUG_RETURN_RESOLVED_SUBJECT_TOKEN_CLAIMS`
 
-If self-mint is enabled in `.env.local` and `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY` is not set, `./scripts/dev_vault.sh start` will create and reuse a local ignored PEM file at `.vault-dev-self-mint-key.pem`. That keeps the self-mint JWKS stable across dev restarts.
+Dev Note: If JWT self-mint is enabled in `.env.local` and `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY` is not set, `./scripts/dev_vault.sh start` will create and reuse a local ignored PEM file at `.vault-dev-self-mint-key.pem`. That keeps the self-mint JWKS stable across dev restarts.
 
 1. Calculate the SHA256 checksum of the plugin binary:
 ```bash
@@ -250,6 +250,8 @@ vault read -format=json oci/jwks
    - another normal HTTPS-hosted file
 4. Configure OCI token exchange trust to use that published JWKS URL.
 5. If the self-mint signing key changes, publish the updated JWKS before relying on newly minted tokens.
+
+Security Note: It is important to strictly control who is allowed to update the JWKS since that is part of the trust boundary 
 
 ## Configuration
 

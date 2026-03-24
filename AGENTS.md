@@ -31,3 +31,8 @@
 
 - When changing exchange flows, auth behavior, trust assumptions, or other use cases that affect request/response sequencing, review the Mermaid sources under `docs/sequence-diagrams/` and update them if needed.
 - Treat the Mermaid sequence-diagram sources as maintainable design artifacts separate from the README SVGs.
+
+## Test Naming
+
+- Name tests for the behavior or contract being verified, not for the refactor that introduced the behavior.
+- Avoid test names that describe implementation history, migration context, or "before/after refactor" framing.

@@ -39,9 +39,9 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
-    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
+    V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
 Client sends `subject_token`; plugin validates role constraints/guardrails and performs token exchange against OCI.
@@ -99,9 +99,9 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
-    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
+    V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
 Client omits `subject_token`; plugin uses its plugin-issued subject-token mode when enabled. Default callback behavior is: `GenerateIdentityToken` first, then self-mint JWT only if needed and configured.
@@ -133,9 +133,9 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
-    V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`
+    V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
-    V-->>C: Vault secret response with OCI token, lease, and exchange keypair only when generated
+    V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
 Client omits `subject_token`; Vault identity-token generation is unavailable, so the plugin self-mints the subject token from trusted Vault context and then exchanges it with OCI.
@@ -151,7 +151,7 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 
 - **JWT Token Exchange**: Exchange OIDC/OAuth tokens for OCI session tokens
 - **UPST and RPST Support**: Request either `urn:oci:token-type:oci-upst` or `urn:oci:token-type:oci-rpst`
-- **Returned OCI Key Pair**: Exchange responses can include Credential Engine generated PEM-encoded `private_key` and `public_key` for request-signing workflows
+- **Returned OCI Key Material**: When the engine generates the exchange RSA key pair, responses include the generated PEM-encoded `private_key` for request-signing workflows
 - **Plugin-Issued Subject Token Mode**: If `subject_token` is omitted and `enable_plugin_issued_subject_token=true`, the plugin resolves a token itself (default callback: Vault identity token first if availble in the version of vualt, self-mint if configured)
 - **Role-based TTL Policies**: Define roles with default and maximum TTL constraints
 - **Lease Management**: OCI tokens are issued as Vault secrets with TTL-based lease handling
@@ -185,9 +185,9 @@ make build-all
 
 ### Register the Plugin with Vault
 
-For local development, `./scripts/dev_vault.sh start` now runs `make build`, starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are still useful for non-dev setups and for understanding the underlying Vault operations.
+For local development, use the  `./scripts/dev_vault.sh start` script that runs `make build`, starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are for non-dev setups.
 
-If you want dev startup to reapply backend config automatically, create `.env.local` in the repo root with at least:
+Dev Note: If you want dev startup to reapply backend config automatically, create `.env.local` in the repo root with at least:
 
 ```bash
 OCI_DOMAIN_URL="https://idcs-xxxxx.identity.oraclecloud.com:443"
@@ -209,7 +209,7 @@ Optional `.env.local` settings also map directly to `oci/config`, including:
 - `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY`
 - `OCI_DEBUG_RETURN_RESOLVED_SUBJECT_TOKEN_CLAIMS`
 
-If self-mint is enabled in `.env.local` and `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY` is not set, `./scripts/dev_vault.sh start` will create and reuse a local ignored PEM file at `.vault-dev-self-mint-key.pem`. That keeps the self-mint JWKS stable across dev restarts.
+Dev Note: If JWT self-mint is enabled in `.env.local` and `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY` is not set, `./scripts/dev_vault.sh start` will create and reuse a local ignored PEM file at `.vault-dev-self-mint-key.pem`. That keeps the self-mint JWKS stable across dev restarts.
 
 1. Calculate the SHA256 checksum of the plugin binary:
 ```bash
@@ -251,6 +251,8 @@ vault read -format=json oci/jwks
 4. Configure OCI token exchange trust to use that published JWKS URL.
 5. If the self-mint signing key changes, publish the updated JWKS before relying on newly minted tokens.
 
+Security Note: It is important to strictly control who is allowed to update the JWKS since that is part of the trust boundary 
+
 ## Configuration
 
 ### OCI Federated Identity Setup
@@ -275,8 +277,8 @@ vault write oci/config \
 - `domain_url`: OCI Identity Domain URL (for example: `https://idcs-xxxxx.identity.oraclecloud.com`)
 - `client_id`: OAuth Confidential Application client ID in the OCI Identity Domain
 - `client_secret`: OAuth Confidential Application client secret in the OCI Identity Domain
-- `default_ttl`: Default Vault lease TTL for exchanged credentials, and the default requested TTL for RPST exchanges when a request TTL is not supplied (default: 3600)
-- `max_ttl`: Maximum Vault lease TTL for exchanged credentials, and the maximum requested TTL allowed for RPST exchanges (default: 86400)
+- `default_ttl`: Default Vault lease TTL for exchanged credentials, and the default `rpst_exp` requested from OCI for RPST exchanges when a request TTL is not supplied (default: 3600)
+- `max_ttl`: Maximum Vault lease TTL for exchanged credentials, and the maximum `rpst_exp` value allowed for RPST exchanges (default: 86400)
 - `subject_token_role_mappings`: Optional JSON array of ordered rules used to derive a Vault role from a caller-supplied `subject_token`
   Each rule has:
   `claim`: JWT claim name to inspect
@@ -323,7 +325,7 @@ Then configure each mount separately with its own `oci/config` and roles.
 
 ### Roles
 
-Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exchange does not currently let the client request token lifetime through the token-exchange call, so these TTL settings only directly shape the OCI request for RPST. For UPST, they mainly affect Vault-side lease metadata today.
+Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exchange does not currently let the client request token lifetime through the token-exchange call, so these TTL settings only directly shape the OCI request for RPST via `rpst_exp`. For UPST, they mainly affect Vault-side lease metadata today.
 
 ```bash
 # Create a development role
@@ -343,8 +345,8 @@ vault write oci/roles/prod \
 ```
 
 **Role Parameters:**
-- `default_ttl`: Default Vault lease TTL for credentials issued under the role. Intended to also be the default requested TTL for RPST exchanges when a request TTL is not supplied.
-- `max_ttl`: Maximum Vault lease TTL for credentials issued under the role. Intended to also be the maximum requested TTL allowed for RPST exchanges.
+- `default_ttl`: Default Vault lease TTL for credentials issued under the role. Also used as the default `rpst_exp` requested from OCI for RPST exchanges when a request TTL is not supplied.
+- `max_ttl`: Maximum Vault lease TTL for credentials issued under the role. Also used as the maximum `rpst_exp` value allowed for RPST exchanges.
 - `allowed_groups`: Stored role metadata for future claim filtering
 - `allowed_subjects`: Stored role metadata for future subject filtering
 
@@ -364,7 +366,7 @@ Notes:
 - Omit `subject_token` and set `enable_plugin_issued_subject_token=true` if you want the credential engine to obtain one on the caller's behalf. On Vault Enterprise, the engine first tries Vault identity-token generation. On Vault Open Source, or if Vault cannot generate an identity token for the request, the engine can fall back to self-mint when `subject_token_self_mint_enabled=true` and the required self-mint settings are configured.
 - If the credential engine obtains a subject token on the caller's behalf, the caller may optionally provide `subject_token_audience`. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
 - If the caller supplies `subject_token`, the caller may provide `role` only when `subject_token_role_mappings` are not configured. When mappings are configured, the engine derives the effective Vault role from JWT claims and rejects caller-supplied `role`.
-- If `public_key` is not supplied, the engine generates a fresh RSA key pair for the exchange.
+- If `public_key` is not supplied, the engine generates a fresh RSA key pair for the exchange and returns only the generated `private_key`.
 
 *Reference: Oracle JWT-to-UPST flow and request parameters are documented in [Token Exchange Grant Type: Exchanging a JSON Web Token for a UPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm#jwt_token_exchange__get-oci-upst).*
 
@@ -375,7 +377,6 @@ Notes:
     "access_token": "eyJ...",
     "session_token": "Atbv...",
     "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE...",
-    "public_key": "-----BEGIN PUBLIC KEY-----\\nMIIB...",
     "requested_token_type": "urn:oci:token-type:oci-upst",
     "token_type": "Bearer",
     "expires_in": 3600,
@@ -388,7 +389,7 @@ Notes:
 ```
 
 If `public_key` is provided in the request, the plugin will not return `private_key` or `public_key` in the response.
-This applies to both caller-supplied `subject_token` mode and plugin-issued self-mint mode: if the caller supplies `public_key`, the plugin uses that key in the OCI token exchange payload and does not generate or return an exchange key pair.
+This applies to both caller-supplied `subject_token` mode and plugin-issued self-mint mode: if the caller supplies `public_key`, the plugin uses that key in the OCI token exchange payload and does not generate or return exchange key material.
 
 ### Caller-Supplied Subject Token Flow (JWT Claim to Vault Role Mapping)
 
@@ -545,14 +546,13 @@ export OCI_CLI_SECURITY_TOKEN=$(echo $CREDS | jq -r '.data.session_token')
 # Persist key material returned by the plugin
 mkdir -p ~/.oci
 echo "$CREDS" | jq -r '.data.private_key' > ~/.oci/key.pem
-echo "$CREDS" | jq -r '.data.public_key' > ~/.oci/key_public.pem
 chmod 600 ~/.oci/key.pem
 
 # Use OCI CLI
 oci iam user list
 ```
 
-The `private_key` and `public_key` fields are PEM-encoded and can be used by tools or SDK wrappers that require explicit key material for OCI request signing, which aligns with OCI's UPST public-key workflow. Treat `private_key` as sensitive secret material.
+The returned `private_key` is PEM-encoded and can be used by tools or SDK wrappers that require explicit key material for OCI request signing, which aligns with OCI's UPST public-key workflow. Treat `private_key` as sensitive secret material.
 
 ### Exchange a JWT for OCI RPST
 
@@ -566,7 +566,7 @@ vault write oci/exchange \
     role="developer"
 ```
 
-For RPST requests, `res_type` is required and the response will include `rpst_token`.
+For RPST requests, `res_type` is required and the response will include `rpst_token`. The plugin also sends `rpst_exp` to OCI based on the effective TTL after applying request, role, and backend limits.
 
 ## API Reference
 
@@ -615,7 +615,7 @@ vault read oci/jwks
 - `urn:oci:token-type:oci-rpst` (requires `res_type`)
 
 TTL note:
-- For RPST, the plugin uses config and role TTL policy to bound the requested lifetime sent to OCI.
+- For RPST, the plugin uses config and role TTL policy to bound the `rpst_exp` value sent to OCI.
 - For UPST, OCI determines the token lifetime; plugin TTL settings affect Vault lease metadata, not OCI-side UPST expiration.
 
 ### Roles Path
@@ -662,6 +662,31 @@ Use Vault policy boundaries as the primary control plane:
 
 Highly visible operator note:
 - Vault policy on `oci/config` and `oci/exchange` is part of the security boundary for the self-minted flow. If those paths are too broadly accessible, callers may be able to mint Vault-backed subject tokens or alter the signing/trust configuration.
+
+Vault enforces this with its normal path-based ACL policies. A common split is:
+
+- operator/admin policy: can manage `oci/config` and `oci/roles/*`
+- workload policy: can call `oci/exchange` but cannot read or write `oci/config`
+
+Example workload policy:
+
+```hcl
+path "oci/exchange" {
+  capabilities = ["create", "update"]
+}
+```
+
+Example operator policy:
+
+```hcl
+path "oci/config" {
+  capabilities = ["create", "read", "update", "delete"]
+}
+
+path "oci/roles/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+```
 
 ## Development
 

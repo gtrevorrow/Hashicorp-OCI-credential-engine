@@ -111,7 +111,10 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	subjectTokenProvided := false
 	if raw, ok := data.GetOk("subject_token"); ok {
 		subjectToken = raw.(string)
-		subjectTokenProvided = subjectToken != ""
+		if subjectToken == "" {
+			return logical.ErrorResponse("subject_token was provided but is empty"), nil
+		}
+		subjectTokenProvided = true
 	}
 
 	requestedTokenType := ociRequestedTokenTypeUPST
@@ -231,7 +234,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if exchanger == nil {
 		exchanger = b.exchangeTokenForOCI
 	}
-	exchangeResult, err := exchanger(ctx, subjectToken, requestedTokenType, resType, publicKey, config)
+	exchangeResult, err := exchanger(ctx, subjectToken, requestedTokenType, resType, publicKey, ttl, config)
 	if err != nil {
 		if resolvedSubjectTokenClaims != nil {
 			return logical.ErrorResponseWithData(map[string]interface{}{
@@ -263,10 +266,6 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if publicKey == "" && exchangeResult.PrivateKey != "" {
 		respData["private_key"] = exchangeResult.PrivateKey
 	}
-	if publicKey == "" && exchangeResult.PublicKey != "" {
-		respData["public_key"] = exchangeResult.PublicKey
-	}
-
 	resp := b.Secret("oci_token").Response(respData, map[string]interface{}{
 		"role": roleName,
 	})
@@ -378,7 +377,6 @@ The response includes:
   - session_token: The OCI session token (for CLI/SDK use)
 	- rpst_token: OCI RPST token when requested_token_type is urn:oci:token-type:oci-rpst
 	- private_key: PEM-encoded private key for OCI request signing (omitted when public_key is provided)
-	- public_key: PEM-encoded public key for OCI request signing (omitted when public_key is provided)
 	- requested_token_type: The OCI token type requested/returned
   - token_type: Bearer
   - expires_in: Token lifetime in seconds

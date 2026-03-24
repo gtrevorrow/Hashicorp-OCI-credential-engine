@@ -11,7 +11,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | CFG-03 | Config without required field | Missing client_secret | Error: missing required field |
 | CFG-04 | Config with invalid URL | domain_url="not-a-url" | Error: invalid URL format |
 | CFG-05 | Config read returns secrets masked | Write config, then read | client_secret not in response |
-| CFG-06 | Config update | Overwrite existing config | New values persisted |
+| CFG-06 | Config partial update | Update one or more fields on existing config | Updated values persisted without rewriting unchanged fields |
 | CFG-07 | Config delete | Delete after creation | Config removed, subsequent read fails |
 | CFG-08 | Invalid role-mapping config | Set malformed or unsupported subject_token_role_mappings | Error: invalid subject_token_role_mappings |
 | CFG-09 | strict_role_name_match enabled | Set strict_role_name_match=true | Success, strict role-name validation enabled |
@@ -41,7 +41,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-01 | Exchange for UPST (default) | subject_token, role | UPST token returned |
 | EXC-02 | Exchange for RPST | + requested_token_type=oci-rpst, res_type | RPST token returned |
 | EXC-03 | Exchange with explicit UPST type | requested_token_type=oci-upst | UPST token returned |
-| EXC-04 | Exchange without subject_token (plugin-issued mode enabled) | role only, omit subject_token, enforce=false, enable_plugin_issued_subject_token=true | Uses plugin-issued subject-token mode (Vault identity token first; self-mint if configured) |
+| EXC-04 | Exchange without subject_token (plugin-issued mode enabled) | role only, omit subject_token, enable_plugin_issued_subject_token=true | Uses plugin-issued subject-token mode (Vault identity token first; self-mint if configured) |
 | EXC-05 | Exchange with TTL override | ttl < role.default_ttl | Custom TTL applied |
 | EXC-06 | Exchange with public_key provided | public_key in request | No generated key material in response |
 | EXC-07 | Exchange without subject_token (plugin-issued mode disabled) | omit subject_token, enable_plugin_issued_subject_token=false | Error: missing subject_token and plugin-issued mode disabled |
@@ -81,7 +81,7 @@ Current automated coverage is limited to TTL selection and clamping during excha
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
-| TTL-01 | Default TTL applied | No TTL specified | Uses role.default_ttl; RPST sends matching `rpst_exp` |
+| TTL-01 | Default TTL applied | No TTL specified | Uses role.default_ttl when present, otherwise backend default_ttl; RPST sends matching `rpst_exp` |
 | TTL-02 | Request TTL clamped to max | Request TTL > role.max_ttl | Clamped to max; RPST sends clamped `rpst_exp` |
 | TTL-03 | Lease renewal | Renew valid lease | Deferred: handler behavior not yet covered by automated tests |
 | TTL-04 | Lease revocation | Revoke lease | Deferred: local lease cleanup behavior not yet covered by automated tests |
@@ -93,7 +93,7 @@ Current automated coverage is limited to TTL selection and clamping during excha
 |---|---|---|---|
 | JWK-01 | Read JWKS without config | `vault read oci/jwks` | Error: backend not configured |
 | JWK-02 | Read JWKS when self-mint disabled | self-mint disabled | Error: subject_token_self_mint_enabled is false |
-| JWK-03 | Read JWKS when self-mint enabled | self-mint enabled (auto key or supplied key) | Returns RFC-compatible RSA JWKS with `kid`, `n`, `e` |
+| JWK-03 | Read JWKS when self-mint enabled | self-mint enabled (auto key or supplied key) | Returns RFC-compatible RSA JWKS with `kid`, `n`, `e`, and compatibility `x5c` |
 
 ## 8. Self-Mint Claim Contract
 
@@ -123,25 +123,23 @@ Current automated coverage is limited to TTL selection and clamping during excha
 ## Automated Coverage Snapshot
 
 Currently covered by automated tests:
-- `CFG-01`, `CFG-02`, `CFG-03`, `CFG-05`, `CFG-07`, `CFG-08`, `CFG-09`, `CFG-10`, `CFG-11`
+- `CFG-01`, `CFG-02`, `CFG-03`, `CFG-05`, `CFG-06`, `CFG-07`, `CFG-08`, `CFG-09`, `CFG-10`, `CFG-11`
 - `CFG-12`
 - `ROL-01`, `ROL-02`, `ROL-03`, `ROL-04`, `ROL-06`, `ROL-08`, `ROL-10`
-- `EXC-04`, `EXC-07`, `EXC-08`, `EXC-09`, `EXC-10`, `EXC-11`, `EXC-12`
+- `EXC-04`, `EXC-06`, `EXC-07`, `EXC-08`, `EXC-09`, `EXC-10`, `EXC-11`, `EXC-12`
 - Requested token-type validation for unsupported values and RPST missing `res_type`
-- `RCM-01`, `RCM-02`, `RCM-03`, `RCM-05`, `RCM-06`, `RCM-07`
+- `RCM-01`, `RCM-02`, `RCM-03`, `RCM-04`, `RCM-05`, `RCM-06`, `RCM-07`
 - `TTL-01`, `TTL-02`
 - `CLM-01`, `CLM-02`, `CLM-03`
 - `JWK-01`, `JWK-02`, `JWK-03`
 - `OCI-01`, `OCI-03`
 
 Covered partially or indirectly:
-- `EXC-01`, `EXC-02`, `EXC-03`, `EXC-06`
+- `EXC-01`, `EXC-02`, `EXC-03`
   These are covered at the OCI client integration layer rather than as full `path_exchange` success-path tests.
-- `RCM-04`
-  Enforcement-disabled behavior is implicit in exchange tests that proceed without guardrail checks, but there is no named dedicated test case.
 
 Not yet covered by automated tests:
-- `CFG-04`, `CFG-06`
+- `CFG-04`
 - `ROL-05`, `ROL-07`, `ROL-09`
 - `EXC-05`
 - `EXC-20`, `EXC-21`, `EXC-22`, `EXC-23`, `EXC-24`
@@ -197,8 +195,8 @@ vault read oci/roles/dev
 ### Automated Testing
 
 Current coverage includes:
-- Unit tests in `oci-backend/*_test.go` for config, roles, claim enforcement, plugin-issued subject-token flow, self-mint, and JWKS behavior
-- Integration tests in [oci_client_integration_test.go](/Users/gordon/Documents/projects/Hashicorp-OCI-credential-engine/oci-backend/oci_client_integration_test.go) for mock OCI token exchange behavior
+- Unit tests in `oci-backend/*_test.go` for config, roles, subject-token role mappings, plugin-issued subject-token flow, self-mint, and JWKS behavior
+- Integration tests in [oci_client_integration_test.go](/home/gordon/clawd/projects/Hashicorp-OCI-credential-engine/oci-backend/oci_client_integration_test.go) for mock OCI token exchange behavior
 
 Future additions:
 - Broader `path_exchange` success-path integration tests
@@ -213,3 +211,5 @@ Future additions:
 - `subject_token_role_mappings` uses first-match-wins semantics, so rule order matters
 - `subject_token_audience` is accepted only when `subject_token` is omitted and the requested audience is present in `subject_token_allowed_audiences`
 - If `enable_plugin_issued_subject_token=false`, callers must supply `subject_token`
+- If `subject_token` is explicitly provided as an empty value, the exchange is rejected instead of falling back to plugin-issued mode
+- When the engine generates exchange key material, the response returns only `private_key`; the generated public key is not returned

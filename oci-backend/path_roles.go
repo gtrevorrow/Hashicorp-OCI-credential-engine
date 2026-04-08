@@ -80,7 +80,7 @@ func (b *backend) pathRoles() []*framework.Path {
 			HelpDescription: pathRoleHelpDesc,
 		},
 		{
-			Pattern: path.Join("role"),
+			Pattern: "role/?$",
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ListOperation: &framework.PathOperation{
 					Callback: b.pathRoleList,

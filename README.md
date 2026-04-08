@@ -535,7 +535,7 @@ Vault-derived claims included when available:
 - `vault_group_names`
 
 Design notes:
-- The selected exchange role is not copied into the self-minted JWT.
+- The selected exchange role is not copied into the self-minted JWT. This is intentional: the role is a local plugin control used for Vault-side constraints and optional additive custom claims, not a trusted identity fact about the caller. Keeping it out of the JWT avoids turning a caller-selected plugin input into an OCI trust claim.
 - `aud` defaults to plugin config (`subject_token_self_mint_audience`) and may be overridden per request only through allowlisted `subject_token_audience` values.
 - OCI trust rules should use the Vault-derived claims above rather than caller-supplied parameters.
 - When the caller request is backed by a Vault Identity entity, `vault_entity_id` is the preferred stable trust-mapping claim.

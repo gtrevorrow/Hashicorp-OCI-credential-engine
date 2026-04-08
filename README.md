@@ -504,7 +504,7 @@ In this example, the plugin derives the effective role `developer` from the JWT 
 
 See [DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md](DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md) for full architecture and implementation details.
 
-*Important: No-`subject_token` flow uses plugin-issued subject-token mode and depends on `enable_plugin_issued_subject_token=true`. With the default callback, Vault identity-token generation is attempted first; if unavailable, self-mint is used only when explicitly configured. Self-minted tokens use Vault-derived identity claims, not the selected exchange role path.*
+*Important: If the caller omits `subject_token`, the plugin can only continue when `enable_plugin_issued_subject_token=true`. In the default callback flow, the plugin first tries to obtain a Vault-issued identity token. If Vault identity-token generation is unavailable, the plugin falls back to self-mint only when self-mint is explicitly enabled and configured. In that self-mint case, the JWT is built from trusted Vault runtime identity context. The selected exchange role is not copied into the token, although it may still apply local plugin constraints or add configured custom claims.*
 
 ### Default Self-Mint Claim Set
 

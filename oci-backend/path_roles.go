@@ -16,7 +16,7 @@ import (
 func (b *backend) pathRoles() []*framework.Path {
 	return []*framework.Path{
 		{
-			Pattern: path.Join("roles", framework.MatchAllRegex("name")),
+			Pattern: path.Join("role", framework.MatchAllRegex("name")),
 			Fields: map[string]*framework.FieldSchema{
 				"name": {
 					Type:        framework.TypeString,
@@ -80,7 +80,7 @@ func (b *backend) pathRoles() []*framework.Path {
 			HelpDescription: pathRoleHelpDesc,
 		},
 		{
-			Pattern: path.Join("roles"),
+			Pattern: path.Join("role"),
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ListOperation: &framework.PathOperation{
 					Callback: b.pathRoleList,
@@ -236,7 +236,7 @@ const pathRoleHelpDesc = `
 Roles define constraints and TTLs for OCI session tokens generated via token exchange.
 
 Example:
-  $ vault write oci/roles/developer \\
+  $ vault write oci/role/developer \\
       description="Development environment access" \\
       default_ttl=3600 \\
       max_ttl=14400 \\

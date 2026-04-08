@@ -329,7 +329,7 @@ Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exc
 
 ```bash
 # Create a development role
-vault write oci/roles/developer \
+vault write oci/role/developer \
     description="Development environment access" \
     default_ttl=3600 \
     max_ttl=14400 \
@@ -337,7 +337,7 @@ vault write oci/roles/developer \
     allowed_subjects="user1@example.com,user2@example.com"
 
 # Create a production role with stricter controls
-vault write oci/roles/prod \
+vault write oci/role/prod \
     description="Production environment access" \
     default_ttl=1800 \
     max_ttl=3600 \
@@ -555,7 +555,7 @@ Guardrails:
 Example role configuration:
 
 ```bash
-vault write oci/roles/developer \
+vault write oci/role/developer \
     description="Development environment access" \
     default_ttl=3600 \
     max_ttl=14400 \
@@ -666,10 +666,10 @@ TTL note:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/oci/roles/:name` | Read a role |
-| `POST/PUT` | `/oci/roles/:name` | Create or update a role |
-| `DELETE` | `/oci/roles/:name` | Delete a role |
-| `LIST` | `/oci/roles` | List all roles |
+| `GET` | `/oci/role/:name` | Read a role |
+| `POST/PUT` | `/oci/role/:name` | Create or update a role |
+| `DELETE` | `/oci/role/:name` | Delete a role |
+| `LIST` | `/oci/role` | List all roles |
 
 Role fields:
 - `description`
@@ -717,7 +717,7 @@ Highly visible operator note:
 
 Vault enforces this with its normal path-based ACL policies. A common split is:
 
-- operator/admin policy: can manage `oci/config` and `oci/roles/*`
+- operator/admin policy: can manage `oci/config` and `oci/role/*`
 - workload policy: can call `oci/exchange` or selected `oci/exchange/<role>` paths but cannot read or write `oci/config`
 
 Example workload policy:
@@ -739,7 +739,7 @@ path "oci/config" {
   capabilities = ["create", "read", "update", "delete"]
 }
 
-path "oci/roles/*" {
+path "oci/role/*" {
   capabilities = ["create", "read", "update", "delete", "list"]
 }
 ```
@@ -774,7 +774,7 @@ Please refer to the [Contributing Guide](CONTRIBUTING.md#testing-locally-with-va
 
 ## TODO / Future Enhancements
 
-The maintained project backlog lives in [TODO.md](/Users/gordon/Documents/projects/Hashicorp-OCI-credential-engine/TODO.md).
+The maintained project backlog lives in [TODO.md](TODO.md).
 
 Current highlights:
 - metrics and telemetry

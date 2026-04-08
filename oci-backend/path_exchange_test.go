@@ -89,7 +89,7 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 
 	reqRole := &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "roles/dev",
+		Path:      "role/dev",
 		Storage:   storage,
 		Data: map[string]interface{}{
 			"description": "dev role",
@@ -161,7 +161,7 @@ func TestPathExchange_WIFEnterprise(t *testing.T) {
 
 	reqRole := &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "roles/dev",
+		Path:      "role/dev",
 		Storage:   storage,
 		Data: map[string]interface{}{
 			"description": "dev role",
@@ -276,7 +276,7 @@ func TestPathExchange_SubjectTokenRoleMappings(t *testing.T) {
 
 	reqRole := &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "roles/dev",
+		Path:      "role/dev",
 		Storage:   storage,
 		Data: map[string]interface{}{
 			"description": "dev role",
@@ -287,7 +287,7 @@ func TestPathExchange_SubjectTokenRoleMappings(t *testing.T) {
 
 	reqOpsRole := &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "roles/ops",
+		Path:      "role/ops",
 		Storage:   storage,
 		Data: map[string]interface{}{
 			"description": "ops role",
@@ -516,7 +516,7 @@ func TestPathExchange_SubjectTokenCallbackFallback(t *testing.T) {
 
 	reqRole := &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "roles/dev",
+		Path:      "role/dev",
 		Storage:   storage,
 		Data: map[string]interface{}{
 			"description": "dev role",
@@ -624,7 +624,7 @@ func TestPathExchange_DefaultCallbackSelfMintEnabled(t *testing.T) {
 
 	reqRole := &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "roles/dev",
+		Path:      "role/dev",
 		Storage:   storage,
 		Data: map[string]interface{}{
 			"description": "dev role",
@@ -1171,7 +1171,7 @@ func TestDefaultCallbackSelfMintAddsRoleCustomClaims(t *testing.T) {
 
 	reqRole := &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "roles/developer",
+		Path:      "role/developer",
 		Storage:   storage,
 		Data: map[string]interface{}{
 			"self_mint_custom_claims": `{"oci_role":"developer","entitlements":["read","write"],"tenant":{"name":"dev"}}`,

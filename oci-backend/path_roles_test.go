@@ -16,7 +16,7 @@ func TestPathRoles_CreateUpdate(t *testing.T) {
 	t.Run("Create Role Success", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
-			Path:      "roles/test-role",
+			Path:      "role/test-role",
 			Storage:   storage,
 			Data: map[string]interface{}{
 				"description":             "A test role",
@@ -45,7 +45,7 @@ func TestPathRoles_CreateUpdate(t *testing.T) {
 	t.Run("Create Role Missing Name", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
-			Path:      "roles/", // No name appended
+			Path:      "role/", // No name appended
 			Storage:   storage,
 			Data: map[string]interface{}{
 				"description": "missing name",
@@ -66,7 +66,7 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 	// Pre-populate role
 	reqCreate := &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "roles/test-role",
+		Path:      "role/test-role",
 		Storage:   storage,
 		Data: map[string]interface{}{
 			"description": "Pre-created role",
@@ -80,7 +80,7 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 	t.Run("Read Role", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.ReadOperation,
-			Path:      "roles/test-role",
+			Path:      "role/test-role",
 			Storage:   storage,
 		}
 
@@ -99,7 +99,7 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 	t.Run("List Roles", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.ListOperation,
-			Path:      "roles",
+			Path:      "role",
 			Storage:   storage,
 		}
 
@@ -116,7 +116,7 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 	t.Run("Delete Role", func(t *testing.T) {
 		reqDelete := &logical.Request{
 			Operation: logical.DeleteOperation,
-			Path:      "roles/test-role",
+			Path:      "role/test-role",
 			Storage:   storage,
 		}
 
@@ -127,7 +127,7 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 		// Verify deletion
 		reqRead := &logical.Request{
 			Operation: logical.ReadOperation,
-			Path:      "roles/test-role",
+			Path:      "role/test-role",
 			Storage:   storage,
 		}
 		respRead, errRead := b.HandleRequest(context.Background(), reqRead)
@@ -157,7 +157,7 @@ func TestPathRoles_StrictRoleNameMatch(t *testing.T) {
 	t.Run("Reject Invalid Role Name", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
-			Path:      "roles/dev@team",
+			Path:      "role/dev@team",
 			Storage:   storage,
 			Data: map[string]interface{}{
 				"description": "invalid role name",
@@ -175,7 +175,7 @@ func TestPathRoles_StrictRoleNameMatch(t *testing.T) {
 	t.Run("Accept Valid Role Name", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
-			Path:      "roles/dev-team_1",
+			Path:      "role/dev-team_1",
 			Storage:   storage,
 			Data: map[string]interface{}{
 				"description": "valid role name",
@@ -194,7 +194,7 @@ func TestPathRoles_SelfMintCustomClaimsValidation(t *testing.T) {
 	t.Run("Reject Invalid JSON", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
-			Path:      "roles/test-role",
+			Path:      "role/test-role",
 			Storage:   storage,
 			Data: map[string]interface{}{
 				"self_mint_custom_claims": `{not-json}`,
@@ -211,7 +211,7 @@ func TestPathRoles_SelfMintCustomClaimsValidation(t *testing.T) {
 	t.Run("Reject Reserved JWT Claims", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
-			Path:      "roles/test-role",
+			Path:      "role/test-role",
 			Storage:   storage,
 			Data: map[string]interface{}{
 				"self_mint_custom_claims": `{"sub":"override"}`,
@@ -228,7 +228,7 @@ func TestPathRoles_SelfMintCustomClaimsValidation(t *testing.T) {
 	t.Run("Reject Trusted Vault Namespace Claims", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
-			Path:      "roles/test-role",
+			Path:      "role/test-role",
 			Storage:   storage,
 			Data: map[string]interface{}{
 				"self_mint_custom_claims": `{"vault_entity_id":"override"}`,

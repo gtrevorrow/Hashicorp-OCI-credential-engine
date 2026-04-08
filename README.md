@@ -443,7 +443,14 @@ If the caller-supplied JWT contains:
 
 then the effective Vault role is `developer`, because the first rule already matches and later rules are not evaluated.
 
-Example Vault-issued JWT setup:
+Example using Vault's built-in Identity/OIDC issuer as the upstream JWT source:
+
+This example is not configuring this plugin to mint the JWT. It is showing how Vault's native `identity/oidc/...` endpoints can act as the upstream issuer for the caller-supplied `subject_token` that is later exchanged through `oci/exchange`.
+
+In other words:
+- Vault Identity OIDC mints the JWT
+- the JWT contains claims such as `vault_role`
+- this plugin reads those JWT claims and derives the effective plugin role from `subject_token_role_mappings`
 
 ```bash
 # Set issuer used in OIDC discovery/JWKS
@@ -457,7 +464,7 @@ vault write identity/oidc/key/oci-subject-key \
     verification_ttl="72h" \
     allowed_client_ids="oci-token-exchange"
 
-# Create token role that emits claim used by OCI trust rules
+# Create token role that emits the claim this plugin will map to a role
 vault write identity/oidc/role/oci-developer \
     key="oci-subject-key" \
     client_id="oci-token-exchange" \
@@ -490,6 +497,8 @@ vault write oci/exchange \
     subject_token="$SUBJECT_TOKEN" \
     requested_token_type="urn:oci:token-type:oci-upst"
 ```
+
+In this example, the plugin derives the effective role `developer` from the JWT claim `vault_role=developer`. The caller does not pass `role` in the request because `subject_token_role_mappings` is doing that selection.
 
 5. OCI Identity Domain token exchange trust evaluates issuer/audience/claims and maps to the target OCI Domain Service User. OCI IAM policies on that service user determine final permissions.
 

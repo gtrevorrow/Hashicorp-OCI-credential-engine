@@ -19,11 +19,12 @@ func TestPathRoles_CreateUpdate(t *testing.T) {
 			Path:      "roles/test-role",
 			Storage:   storage,
 			Data: map[string]interface{}{
-				"description":      "A test role",
-				"default_ttl":      3600,
-				"max_ttl":          86400,
-				"allowed_subjects": []string{"systemA", "systemB"},
-				"allowed_groups":   []string{"dev-team"},
+				"description":             "A test role",
+				"default_ttl":             3600,
+				"max_ttl":                 86400,
+				"allowed_subjects":        []string{"systemA", "systemB"},
+				"allowed_groups":          []string{"dev-team"},
+				"self_mint_custom_claims": `{"oci_role":"developer","entitlements":["read","write"]}`,
 			},
 		}
 
@@ -37,6 +38,7 @@ func TestPathRoles_CreateUpdate(t *testing.T) {
 		require.NotNil(t, role)
 		assert.Equal(t, "A test role", role.Description)
 		assert.Contains(t, role.AllowedSubjects, "systemA")
+		assert.Equal(t, "developer", role.SelfMintCustomClaims["oci_role"])
 	})
 
 	// Covers ROL-08.
@@ -90,6 +92,7 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 		assert.Equal(t, "Pre-created role", resp.Data["description"])
 		assert.Equal(t, 1800, resp.Data["default_ttl"])
 		assert.Equal(t, 86400, resp.Data["max_ttl"]) // Because of the default logic
+		assert.Nil(t, resp.Data["self_mint_custom_claims"])
 	})
 
 	// Covers ROL-04.
@@ -182,5 +185,60 @@ func TestPathRoles_StrictRoleNameMatch(t *testing.T) {
 		resp, err := b.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		assert.False(t, resp != nil && resp.IsError())
+	})
+}
+
+func TestPathRoles_SelfMintCustomClaimsValidation(t *testing.T) {
+	b, storage := getTestBackend(t)
+
+	t.Run("Reject Invalid JSON", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "roles/test-role",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"self_mint_custom_claims": `{not-json}`,
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "invalid self_mint_custom_claims")
+	})
+
+	t.Run("Reject Reserved JWT Claims", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "roles/test-role",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"self_mint_custom_claims": `{"sub":"override"}`,
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "reserved")
+	})
+
+	t.Run("Reject Trusted Vault Namespace Claims", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "roles/test-role",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"self_mint_custom_claims": `{"vault_entity_id":"override"}`,
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "reserved vault_ namespace")
 	})
 }

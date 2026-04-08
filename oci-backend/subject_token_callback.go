@@ -72,6 +72,9 @@ func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedCo
 	if err := b.addSelfMintIdentityClaims(claims, req); err != nil {
 		return "", err
 	}
+	if err := b.addSelfMintRoleCustomClaims(context.Background(), claims, req); err != nil {
+		return "", err
+	}
 
 	signer, err := newSelfMintSigner(privateKey)
 	if err != nil {
@@ -229,6 +232,42 @@ func copyStringMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func (b *backend) addSelfMintRoleCustomClaims(ctx context.Context, claims map[string]interface{}, req *logical.Request) error {
+	if req == nil || req.Storage == nil || req.Data == nil {
+		return nil
+	}
+
+	rawRole, ok := req.Data["role"]
+	if !ok {
+		return nil
+	}
+
+	roleName, ok := rawRole.(string)
+	if !ok || strings.TrimSpace(roleName) == "" {
+		return nil
+	}
+
+	role, err := b.getRole(ctx, req.Storage, roleName)
+	if err != nil {
+		return fmt.Errorf("failed to load role %q for self-mint custom claims: %w", roleName, err)
+	}
+	if role == nil || len(role.SelfMintCustomClaims) == 0 {
+		return nil
+	}
+
+	for claim, value := range role.SelfMintCustomClaims {
+		if err := validateSelfMintCustomClaimName(claim); err != nil {
+			return fmt.Errorf("role %q has invalid self_mint_custom_claims: %w", roleName, err)
+		}
+		if _, exists := claims[claim]; exists {
+			return fmt.Errorf("role %q self_mint_custom_claims conflicts with existing claim %q", roleName, claim)
+		}
+		claims[claim] = value
+	}
+
+	return nil
 }
 
 func parseRSAPrivateKey(pemString string) (*rsa.PrivateKey, error) {

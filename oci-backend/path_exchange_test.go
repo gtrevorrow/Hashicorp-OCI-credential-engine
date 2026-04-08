@@ -1164,6 +1164,60 @@ func TestDefaultCallbackSelfMintWithoutEntityUsesTokenContextClaims(t *testing.T
 	require.NotContains(t, claims, "vault_group_names")
 }
 
+func TestDefaultCallbackSelfMintAddsRoleCustomClaims(t *testing.T) {
+	testKey := generateTestRSAPrivateKeyPEM(t)
+
+	b, storage := getTestBackend(t)
+
+	reqRole := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "roles/developer",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"self_mint_custom_claims": `{"oci_role":"developer","entitlements":["read","write"],"tenant":{"name":"dev"}}`,
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqRole)
+	require.NoError(t, err)
+
+	config := &federatedConfig{
+		SubjectTokenSelfMintEnabled:    true,
+		SubjectTokenSelfMintIssuer:     "https://vault.example.com",
+		SubjectTokenSelfMintAudience:   "urn:mace:oci:idcs",
+		SubjectTokenSelfMintTTLSeconds: 600,
+		SubjectTokenSelfMintPrivateKey: testKey,
+	}
+
+	req := &logical.Request{
+		Storage:             storage,
+		EntityID:            "entity-123",
+		DisplayName:         "kubernetes-app",
+		MountAccessor:       "auth_kubernetes_123",
+		MountType:           "kubernetes",
+		ClientTokenAccessor: "hmac-token-accessor",
+		Data: map[string]interface{}{
+			"role": "developer",
+		},
+	}
+
+	token, err := b.defaultSubjectTokenCallback(context.Background(), req, config)
+	require.NoError(t, err)
+
+	claims := decodeJWTClaims(t, token)
+	require.Equal(t, "developer", claims["oci_role"])
+
+	entitlements, ok := claims["entitlements"].([]interface{})
+	require.True(t, ok)
+	require.Equal(t, []interface{}{"read", "write"}, entitlements)
+
+	tenant, ok := claims["tenant"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "dev", tenant["name"])
+
+	require.Equal(t, "entity-123", claims["vault_entity_id"])
+	require.Equal(t, "kubernetes-app", claims["vault_display_name"])
+}
+
 func decodeJWTClaims(t *testing.T, token string) map[string]interface{} {
 	t.Helper()
 

@@ -533,6 +533,42 @@ Design notes:
 - When the caller is using a token flow without an attached entity, the self-minted JWT still includes token-context claims such as `vault_display_name`, `vault_mount_accessor`, `vault_mount_type`, and `vault_client_token_accessor`, and OCI trust can map on those if needed.
 - Claims like `vault_display_name` and `vault_client_token_accessor` are a weaker trust anchor than `vault_entity_id` because they identify token context rather than a durable Vault identity. Prefer `vault_entity_id` whenever it is available.
 
+### Role-Scoped Custom Claims For Self-Mint
+
+Roles may optionally contribute additional custom claims to self-minted subject tokens.
+
+Guardrails:
+- This applies only to the plugin self-mint path when the request selects an explicit role.
+- Custom claims are additive only. They do not replace or modify standard JWT claims or trusted Vault-derived claims.
+- Reserved JWT claims cannot be configured: `iss`, `sub`, `aud`, `iat`, `exp`, `nbf`, `jti`.
+- Claims in the `vault_` namespace are reserved for trusted Vault-derived identity context and cannot be configured.
+
+Example role configuration:
+
+```bash
+vault write oci/roles/developer \
+    description="Development environment access" \
+    default_ttl=3600 \
+    max_ttl=14400 \
+    self_mint_custom_claims='{
+      "oci_role": "developer",
+      "entitlements": ["repo-read", "artifact-pull"],
+      "tenant": {"name": "dev"}
+    }'
+```
+
+Example self-mint exchange using that role:
+
+```bash
+vault write oci/exchange/developer \
+    requested_token_type="urn:oci:token-type:oci-upst"
+```
+
+Typical mapping scenarios:
+- Add an `oci_role` claim so OCI trust rules can distinguish multiple workload classes minted by the same plugin.
+- Add an `entitlements` array for downstream systems that expect coarse-grained capability tags.
+- Add a small structured object such as `tenant.name` or `environment.name` when a relying party expects nested JSON claims.
+
 ### Using with OCI CLI
 
 ```bash
@@ -626,6 +662,14 @@ TTL note:
 | `DELETE` | `/oci/roles/:name` | Delete a role |
 | `LIST` | `/oci/roles` | List all roles |
 
+Role fields:
+- `description`
+- `default_ttl`
+- `max_ttl`
+- `allowed_subjects`
+- `allowed_groups`
+- `self_mint_custom_claims`: JSON object of additional claims to add to self-minted subject tokens for that role
+
 ## Architecture Details
 
 ### Token Exchange Flow
@@ -653,7 +697,7 @@ Use Vault policy boundaries as the primary control plane:
 2. Restrict role usage with path-based ACLs so each workload can only call specific role paths or namespaces.
 3. Keep `enable_plugin_issued_subject_token=false` by default for general clients, and enable plugin-issued subject-token mode only for tightly scoped policies.
 4. Use `subject_token_role_mappings` when callers provide their own JWTs and you want Vault role selection to come from trusted JWT claims rather than an explicit role path.
-5. Treat plugin-issued self-mint as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the selected exchange role path.
+5. Treat plugin-issued self-mint as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the selected exchange role path. If you add `self_mint_custom_claims`, keep them additive and use them only for claims that are not part of the trusted Vault-derived base set.
 6. Enable `strict_role_name_match=true` to prevent malformed role values.
 7. Protect `oci/config` write access so only operators can rotate or replace self-mint settings and signing keys.
 8. Treat `oci/exchange` as a privileged identity-issuance path when plugin-issued subject-token mode is enabled; do not grant it broadly just because OCI permissions are controlled later by service-user policy.

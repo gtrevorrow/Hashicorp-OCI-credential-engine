@@ -69,8 +69,9 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 		Path:      "role/test-role",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"description": "Pre-created role",
-			"default_ttl": 1800,
+			"description":             "Pre-created role",
+			"default_ttl":             1800,
+			"self_mint_custom_claims": `{"oci_role":"developer"}`,
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqCreate)
@@ -92,7 +93,9 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 		assert.Equal(t, "Pre-created role", resp.Data["description"])
 		assert.Equal(t, 1800, resp.Data["default_ttl"])
 		assert.Equal(t, 86400, resp.Data["max_ttl"]) // Because of the default logic
-		assert.Nil(t, resp.Data["self_mint_custom_claims"])
+		customClaims, ok := resp.Data["self_mint_custom_claims"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "developer", customClaims["oci_role"])
 	})
 
 	// Covers ROL-04.

@@ -430,7 +430,7 @@ func TestPathExchange_EmptySubjectTokenIsRejected(t *testing.T) {
 	require.Contains(t, resp.Error().Error(), "subject_token was provided but is empty")
 }
 
-func TestPathExchange_RequestBodyRoleIsRejected(t *testing.T) {
+func TestPathExchange_RequestBodyRoleIsIgnored(t *testing.T) {
 	b, storage := getTestBackend(t)
 	installFailingTokenExchanger(b)
 
@@ -460,7 +460,7 @@ func TestPathExchange_RequestBodyRoleIsRejected(t *testing.T) {
 	resp, err := b.HandleRequest(context.Background(), req)
 	require.NoError(t, err)
 	require.True(t, resp.IsError())
-	require.Contains(t, resp.Error().Error(), "role must be selected through the exchange path")
+	require.Contains(t, resp.Error().Error(), "token exchange failed")
 }
 
 func TestPathExchange_StrictRoleNameMatch(t *testing.T) {
@@ -850,6 +850,124 @@ func TestPathExchange_DebugClaimsDoNotSuppressErrorResponse(t *testing.T) {
 	debugData, ok := resp.Data["data"].(map[string]interface{})
 	require.True(t, ok)
 	require.Contains(t, debugData, "resolved_subject_token_claims")
+}
+
+func TestPathExchange_SelfMintRolePathAddsCustomClaimsToResolvedToken(t *testing.T) {
+	testKey := generateTestRSAPrivateKeyPEM(t)
+
+	b, storage := getTestBackend(t)
+	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
+		return &tokenExchangeResult{
+			AccessToken:        "access-token",
+			SessionToken:       "session-token",
+			TokenType:          "Bearer",
+			RequestedTokenType: ociRequestedTokenTypeUPST,
+		}, nil
+	})
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                                 "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                                  "test-client-id",
+			"client_secret":                              "test-client-secret",
+			"subject_token_self_mint_enabled":            true,
+			"subject_token_self_mint_issuer":             "https://vault.example.com",
+			"subject_token_self_mint_private_key":        testKey,
+			"debug_return_resolved_subject_token_claims": true,
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	reqRole := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "role/developer",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"self_mint_custom_claims": `{"oci_role":"developer","entitlements":["read","write"]}`,
+		},
+	}
+	_, err = b.HandleRequest(context.Background(), reqRole)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange/developer",
+		Storage:   storage,
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.False(t, resp.IsError())
+
+	claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "developer", claims["oci_role"])
+
+	entitlements, ok := claims["entitlements"].([]interface{})
+	require.True(t, ok)
+	require.Equal(t, []interface{}{"read", "write"}, entitlements)
+}
+
+func TestPathExchange_SelfMintWithoutRolePathDoesNotAddRoleCustomClaims(t *testing.T) {
+	testKey := generateTestRSAPrivateKeyPEM(t)
+
+	b, storage := getTestBackend(t)
+	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
+		return &tokenExchangeResult{
+			AccessToken:        "access-token",
+			SessionToken:       "session-token",
+			TokenType:          "Bearer",
+			RequestedTokenType: ociRequestedTokenTypeUPST,
+		}, nil
+	})
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                                 "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                                  "test-client-id",
+			"client_secret":                              "test-client-secret",
+			"subject_token_self_mint_enabled":            true,
+			"subject_token_self_mint_issuer":             "https://vault.example.com",
+			"subject_token_self_mint_private_key":        testKey,
+			"debug_return_resolved_subject_token_claims": true,
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	reqRole := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "role/developer",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"self_mint_custom_claims": `{"oci_role":"developer"}`,
+		},
+	}
+	_, err = b.HandleRequest(context.Background(), reqRole)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.False(t, resp.IsError())
+
+	claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
+	require.True(t, ok)
+	require.NotContains(t, claims, "oci_role")
 }
 
 func TestPathExchange_SubjectTokenAudienceOverrideRejectedForCallerProvidedToken(t *testing.T) {

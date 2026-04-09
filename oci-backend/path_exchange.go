@@ -154,6 +154,22 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		publicKey = raw.(string)
 	}
 
+	roleName := ""
+	if raw, ok := data.GetOk("role"); ok {
+		roleName = raw.(string)
+	}
+	if subjectTokenProvided && len(config.SubjectTokenRoleMappings) > 0 {
+		if roleName != "" {
+			return logical.ErrorResponse("role-specific exchange paths cannot be used when subject_token_role_mappings are configured"), nil
+		}
+	}
+	if roleName != "" {
+		if req.Data == nil {
+			req.Data = map[string]interface{}{}
+		}
+		req.Data["role"] = roleName
+	}
+
 	// Resolve missing subject token through registered callback flow.
 	if subjectToken == "" {
 		if !configEnablePluginIssuedSubjectToken(config) {
@@ -190,17 +206,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 	}
 
-	roleName := ""
-	if raw, ok := data.GetOk("role"); ok {
-		roleName = raw.(string)
-	}
-	if _, ok := req.Data["role"]; ok && roleName == "" {
-		return logical.ErrorResponse("role must be selected through the exchange path; use /exchange/:role"), nil
-	}
 	if subjectTokenProvided && len(config.SubjectTokenRoleMappings) > 0 {
-		if roleName != "" {
-			return logical.ErrorResponse("role-specific exchange paths cannot be used when subject_token_role_mappings are configured"), nil
-		}
 		derivedRoleName, derivedRoleErr := resolveRoleFromSubjectToken(subjectToken, config.SubjectTokenRoleMappings)
 		if derivedRoleErr != nil {
 			return logical.ErrorResponse("unable to derive role from subject_token: %v", derivedRoleErr), nil

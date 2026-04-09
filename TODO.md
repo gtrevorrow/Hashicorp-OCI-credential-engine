@@ -32,6 +32,8 @@ These items are intentionally deferred. They are not part of the current preferr
 
 - [ ] Add support for multiple issuers or IdPs per backend in plugin-issued token mode
 - [ ] Implement claims mapping or policy translation for plugin-issued token mode
+- [ ] Implement explicit brokered subject-token mode using local JWT validation plus template-based re-issuance
+  - design captured in `DESIGN_BROKERED_SUBJECT_TOKEN_MODE.md`
 
 ## Explicit Non-Goals For Now
 

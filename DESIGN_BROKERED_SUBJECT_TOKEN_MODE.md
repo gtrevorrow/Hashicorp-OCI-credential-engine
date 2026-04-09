@@ -78,6 +78,10 @@ The plugin then becomes the issuer of record for the token OCI sees.
 
 This is different from the current direct caller-supplied mode, where OCI remains the validation authority.
 
+The first implementation should explicitly support incoming JWTs signed with:
+- RSA
+- elliptic-curve algorithms
+
 ## High-Level Flow
 1. Caller authenticates to Vault and obtains a Vault token.
 2. Caller submits an external `subject_token` to the plugin.
@@ -140,7 +144,7 @@ Representative backend config shape:
 
 - `brokered_subject_token_trust`
   - structured trust config for validating incoming external JWTs
-  - includes issuer, audience, alg allowlist, JWKS or static keys, skew
+  - includes issuer, audience, alg allowlist, trust source, and skew
 
 - `brokered_subject_token_claim_mappings`
   - JSON object or ordered mapping rules
@@ -162,15 +166,52 @@ The first release should support one clear trust source at a time per backend, n
 
 Recommended initial support:
 - single issuer
-- single JWKS URL or static JWKS document
+- explicit trust source
 - explicit allowed algorithms
 - explicit allowed audiences
 - bounded clock skew
+
+Recommended trust-source options:
+- OIDC discovery
+  - plugin resolves issuer metadata and JWKS URI from the issuer
+  - operationally simple when the issuer publishes standard discovery metadata
+- explicit JWKS URL
+  - operator provides the JWKS endpoint directly
+  - requires network reachability from the plugin runtime to that endpoint
+- direct JWKS document upload
+  - operator stores trusted verification keys directly in plugin config
+  - avoids runtime dependency on external network access
+- direct public-key upload
+  - operator stores one or more public keys directly in plugin config
+  - useful when upstream key rotation is manual or tightly controlled
+
+Operational note:
+- OIDC discovery and explicit JWKS URL modes may require the Vault plugin runtime to reach the public internet or a routed private network path to the issuer.
+- Direct JWKS or public-key upload modes reduce that runtime dependency, but shift more rotation responsibility to operators.
 
 Defer for later:
 - multiple issuers per backend
 - automatic issuer discovery
 - complex key-source fallback chains
+
+## Library Selection Requirement
+JWT, JWK, and JWKS handling in brokered mode is security-sensitive.
+
+Implementation should prefer mature, well-maintained libraries over custom parsing or crypto glue.
+
+Requirements:
+- use established Go libraries for JWT verification and JWKS key resolution
+- avoid bespoke crypto implementation
+- avoid handwritten JOSE/JWK parsing when a well-maintained library already covers the use case
+- validate that the chosen library supports both RSA and elliptic-curve verification cleanly
+- prefer libraries with a strong maintenance history and a low history of security issues
+
+Selection criteria should include:
+- active maintenance
+- clear support for issuer/audience/signature validation
+- clean JWKS refresh behavior
+- support for RSA and EC algorithms
+- low complexity of the integration surface
 
 ## Mapping DSL
 The mapping language should be intentionally narrow in the first release.

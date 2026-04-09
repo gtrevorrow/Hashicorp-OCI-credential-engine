@@ -642,9 +642,7 @@ Brokered-mode mapping rules:
 - Missing claim references, invalid template syntax, reserved output claim names, and `vault_*` output claim names fail closed.
 - Existing `subject_token_role_mappings` are not used in brokered mode. Brokered mode and direct caller-token role derivation are separate flows.
 
-In this example, the plugin derives the effective role `developer` from the JWT claim `vault_role=developer`. The caller does not pass `role` in the request because `subject_token_role_mappings` is doing that selection.
-
-5. OCI Identity Domain token exchange trust evaluates issuer/audience/claims and maps to the target OCI Domain Service User. OCI IAM policies on that service user determine final permissions.
+6. OCI Identity Domain token exchange trust evaluates issuer, audience, and the brokered plugin-issued claims and maps to the target OCI Domain Service User. OCI IAM policies on that service user determine final permissions.
 
 See [DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md](DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md) for full architecture and implementation details.
 

@@ -76,6 +76,39 @@ sequenceDiagram
 
 This is a caller-supplied `subject_token` variant of flow 1. When `subject_token_role_mappings` are configured, the engine derives the effective Vault role from trusted JWT claims before OCI exchange instead of relying on an explicit role path.
 
+#### 1.2) Brokered Caller JWT Variant
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Credential Engine
+    participant S as Vault Storage
+    participant SV as Vault System View
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange[/<role>]` with external `subject_token`
+    V->>S: Read backend config and optional explicit role
+    S-->>V: Brokered trust config, mappings, self-mint key, optional role
+    V->>V: Check `brokered_subject_token_enabled=true`
+    V->>V: Validate JWT signature, `iss`, `aud`, `exp`, `nbf`, `iat`
+    V->>V: Render mapped claims from validated external claims
+    V->>SV: Read trusted Vault request and identity context
+    SV-->>V: Entity, alias, group, mount metadata
+    V->>V: Build brokered self-minted JWT
+    V->>V: Add role `self_mint_custom_claims` only when `/exchange/<role>` is used
+    alt Caller supplies `public_key`
+        V->>V: Use caller public key for OCI exchange
+    else `public_key` omitted
+        V->>V: Generate exchange RSA keypair
+    end
+    V->>O: POST `/oauth2/v1/token` with plugin-issued brokered `subject_token`
+    O-->>V: OCI UPST or RPST
+    V-->>C: Vault secret response with OCI token and generated exchange private key only when the engine generated the exchange keypair
+```
+
+This flow is intentionally separate from direct pass-through. When `brokered_subject_token_enabled=true` and the caller supplies `subject_token`, the plugin validates the external JWT locally, maps claims into a normalized claim set, self-mints a plugin-issued JWT, and exchanges that re-issued token with OCI.
+
 #### 2) Exchange Without `subject_token` (Plugin-Issued Subject Token Mode)
 
 ```mermaid
@@ -153,6 +186,7 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 - **UPST and RPST Support**: Request either `urn:oci:token-type:oci-upst` or `urn:oci:token-type:oci-rpst`
 - **Returned OCI Key Material**: When the engine generates the exchange RSA key pair, responses include the generated PEM-encoded `private_key` for request-signing workflows
 - **Plugin-Issued Subject Token Mode**: If `subject_token` is omitted and `enable_plugin_issued_subject_token=true`, the plugin resolves a token itself (default callback: Vault identity token first if availble in the version of vualt, self-mint if configured)
+- **Brokered Subject Token Mode**: If `subject_token` is supplied and `brokered_subject_token_enabled=true`, the plugin validates the external JWT, maps claims, self-mints a plugin-issued JWT, and exchanges the re-issued token with OCI
 - **Role-based TTL Policies**: Define roles with default and maximum TTL constraints
 - **Lease Management**: OCI tokens are issued as Vault secrets with TTL-based lease handling
 
@@ -208,6 +242,16 @@ Optional `.env.local` settings also map directly to `oci/config`, including:
 - `OCI_SUBJECT_TOKEN_SELF_MINT_TTL_SECONDS`
 - `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY`
 - `OCI_DEBUG_RETURN_RESOLVED_SUBJECT_TOKEN_CLAIMS`
+- `OCI_BROKERED_SUBJECT_TOKEN_ENABLED`
+- `OCI_BROKERED_SUBJECT_TOKEN_TRUST_TYPE`
+- `OCI_BROKERED_SUBJECT_TOKEN_ISSUER`
+- `OCI_BROKERED_SUBJECT_TOKEN_ALLOWED_AUDIENCES`
+- `OCI_BROKERED_SUBJECT_TOKEN_ALLOWED_ALGS`
+- `OCI_BROKERED_SUBJECT_TOKEN_CLOCK_SKEW_SECONDS`
+- `OCI_BROKERED_SUBJECT_TOKEN_JWKS_URL`
+- `OCI_BROKERED_SUBJECT_TOKEN_JWKS_JSON`
+- `OCI_BROKERED_SUBJECT_TOKEN_PUBLIC_KEYS`
+- `OCI_BROKERED_SUBJECT_TOKEN_CLAIM_MAPPINGS`
 
 Dev Note: If JWT self-mint is enabled in `.env.local` and `OCI_SUBJECT_TOKEN_SELF_MINT_PRIVATE_KEY` is not set, `./scripts/dev_vault.sh start` will create and reuse a local ignored PEM file at `.vault-dev-self-mint-key.pem`. That keeps the self-mint JWKS stable across dev restarts.
 
@@ -270,7 +314,14 @@ vault write oci/config \
     enable_plugin_issued_subject_token=true \
     strict_role_name_match=false \
     subject_token_self_mint_enabled=false \
-    subject_token_allowed_audiences="urn:oci:test,urn:oci:prod"
+    subject_token_allowed_audiences="urn:oci:test,urn:oci:prod" \
+    brokered_subject_token_enabled=true \
+    brokered_subject_token_trust_type="public_keys" \
+    brokered_subject_token_issuer="https://issuer.example.com" \
+    brokered_subject_token_allowed_audiences="urn:test" \
+    brokered_subject_token_allowed_algs="RS256,ES256" \
+    brokered_subject_token_public_keys='["-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"]' \
+    brokered_subject_token_claim_mappings='{"external_sub":"{{ claims.sub }}","principal":"svc/{{ claims.org }}/{{ claims.user.id }}"}'
 ```
 
 **Parameters:**
@@ -294,10 +345,22 @@ vault write oci/config \
 - `subject_token_self_mint_ttl_seconds`: TTL for self-minted token in seconds (default: `600`)
 - `subject_token_self_mint_private_key`: Optional PEM RSA private key. If omitted while self-mint is enabled, the plugin generates one and stores it in Vault plugin storage
 - `debug_return_resolved_subject_token_claims`: Development-only flag that includes decoded claims from the resolved subject token in `oci/exchange` responses, including error responses
+- `brokered_subject_token_enabled`: Enables explicit brokered mode for caller-supplied `subject_token` values (default: `false`)
+- `brokered_subject_token_trust_type`: Required when brokered mode is enabled. Supported values: `oidc_discovery`, `jwks_url`, `jwks_json`, `public_keys`
+- `brokered_subject_token_issuer`: Required when brokered mode is enabled. This is the expected incoming `iss` claim and the OIDC discovery issuer when `brokered_subject_token_trust_type=oidc_discovery`
+- `brokered_subject_token_allowed_audiences`: Required non-empty audience allowlist for incoming brokered-token validation
+- `brokered_subject_token_allowed_algs`: Required non-empty signing algorithm allowlist for incoming brokered-token validation. Phase 1 supports RSA and EC algorithms only
+- `brokered_subject_token_clock_skew_seconds`: Optional clock-skew tolerance for brokered `exp`, `nbf`, and `iat` validation (default: `0`)
+- `brokered_subject_token_jwks_url`: Required when `brokered_subject_token_trust_type=jwks_url`
+- `brokered_subject_token_jwks_json`: Required when `brokered_subject_token_trust_type=jwks_json`
+- `brokered_subject_token_public_keys`: Required when `brokered_subject_token_trust_type=public_keys`; accepts one PEM public key or a JSON array of PEM public keys
+- `brokered_subject_token_claim_mappings`: Optional JSON object of output-claim to string template. Templates may reference validated incoming claims such as `{{ claims.sub }}` or `svc/{{ claims.org }}/{{ claims.user.id }}`
 
 `oci/config` supports incremental updates. After the initial configuration is created, later `vault write oci/config ...` calls may update only the fields you want to change.
 
 If `subject_token_self_mint_enabled=true`, OCI must be able to discover the published JWKS for the self-mint signing key. See [Self-Mint JWKS Publication Workflow](#self-mint-jwks-publication-workflow).
+
+Brokered mode also relies on the existing self-mint signing configuration because the plugin re-issues a new JWT before calling OCI. In phase 1, explicit `/oci/exchange/:role` requests are still allowed in brokered mode, but role contribution is limited to the existing TTL controls and additive `self_mint_custom_claims`. Existing `subject_token_role_mappings` remain part of the direct pass-through flow and are not reused in brokered mode.
 
 The plugin keeps the private signing key in Vault plugin storage. The published JWKS contains only the public key material.
 
@@ -626,8 +689,8 @@ For RPST requests, `res_type` is required and the response will include `rpst_to
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST/PUT` | `/oci/exchange` | Exchange JWT subject token for OCI credentials; also used when the engine derives role from `subject_token_role_mappings` |
-| `POST/PUT` | `/oci/exchange/:role` | Exchange JWT subject token for OCI credentials using an explicit plugin role selected from the path |
+| `POST/PUT` | `/oci/exchange` | Exchange JWT subject token for OCI credentials; when `brokered_subject_token_enabled=true`, a caller-supplied `subject_token` is validated and re-issued before OCI exchange |
+| `POST/PUT` | `/oci/exchange/:role` | Exchange JWT subject token for OCI credentials using an explicit plugin role selected from the path; in brokered mode the role contributes existing TTL policy and additive `self_mint_custom_claims` only |
 
 ### JWKS Path
 
@@ -652,7 +715,7 @@ vault read oci/jwks
   "ttl": 3600
 }
 ```
-*(Note: `subject_token` is optional when `enable_plugin_issued_subject_token=true` and the plugin-issued subject-token mode can resolve a token. `subject_token_audience` is only used for plugin-issued subject tokens. The plugin always sends `subject_token_type=jwt` to OCI. Select an explicit role through `/oci/exchange/:role`, not a request body field.)*
+*(Note: `subject_token` is optional when `enable_plugin_issued_subject_token=true` and the plugin-issued subject-token mode can resolve a token. `subject_token_audience` is only used for plugin-issued subject tokens. When `brokered_subject_token_enabled=true` and the caller supplies `subject_token`, the plugin validates and re-issues that token before OCI exchange. The plugin always sends `subject_token_type=jwt` to OCI. Select an explicit role through `/oci/exchange/:role`, not a request body field.)*
 
 `requested_token_type` defaults to `urn:oci:token-type:oci-upst`. Supported values:
 - `urn:oci:token-type:oci-upst`

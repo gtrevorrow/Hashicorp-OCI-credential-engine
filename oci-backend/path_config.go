@@ -141,6 +141,86 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Debug Resolved Subject Token Claims",
 					},
 				},
+				"brokered_subject_token_enabled": {
+					Type:        framework.TypeBool,
+					Description: "When true, validate caller-supplied subject_token locally and exchange a plugin-issued brokered JWT instead of passing the original token to OCI",
+					Default:     false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Brokered Subject Token Enabled",
+					},
+				},
+				"brokered_subject_token_trust_type": {
+					Type:        framework.TypeString,
+					Description: "Trust source for brokered subject_token validation: oidc_discovery, jwks_url, jwks_json, or public_keys",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Brokered Subject Token Trust Type",
+					},
+				},
+				"brokered_subject_token_issuer": {
+					Type:        framework.TypeString,
+					Description: "Expected issuer (iss) for incoming brokered subject_token validation; also used for OIDC discovery when trust_type=oidc_discovery",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Brokered Subject Token Issuer",
+					},
+				},
+				"brokered_subject_token_allowed_audiences": {
+					Type:        framework.TypeCommaStringSlice,
+					Description: "Allowed audience values for incoming brokered subject_token validation",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Brokered Subject Token Allowed Audiences",
+					},
+				},
+				"brokered_subject_token_allowed_algs": {
+					Type:        framework.TypeCommaStringSlice,
+					Description: "Allowed JWT signing algorithms for incoming brokered subject_token validation; phase 1 supports RSA and EC only",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Brokered Subject Token Allowed Algs",
+					},
+				},
+				"brokered_subject_token_clock_skew_seconds": {
+					Type:        framework.TypeDurationSecond,
+					Description: "Clock skew tolerance in seconds for brokered subject_token exp, nbf, and iat validation",
+					Default:     0,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Brokered Subject Token Clock Skew",
+					},
+				},
+				"brokered_subject_token_jwks_url": {
+					Type:        framework.TypeString,
+					Description: "JWKS URL for brokered subject_token validation when trust_type=jwks_url",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Brokered Subject Token JWKS URL",
+					},
+				},
+				"brokered_subject_token_jwks_json": {
+					Type:        framework.TypeString,
+					Description: "Inline JWKS JSON document for brokered subject_token validation when trust_type=jwks_json",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Brokered Subject Token JWKS JSON",
+					},
+				},
+				"brokered_subject_token_public_keys": {
+					Type:        framework.TypeString,
+					Description: "PEM-encoded public key or JSON array of PEM-encoded public keys for brokered subject_token validation when trust_type=public_keys",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Brokered Subject Token Public Keys",
+					},
+				},
+				"brokered_subject_token_claim_mappings": {
+					Type:        framework.TypeString,
+					Description: "JSON object of output claim name to string template for brokered subject_token claim mapping",
+					Required:    false,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Name: "Brokered Subject Token Claim Mappings",
+					},
+				},
 			},
 
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -196,6 +276,16 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 		"subject_token_allowed_audiences":            configSubjectTokenAllowedAudiences(config),
 		"subject_token_self_mint_ttl_seconds":        configSubjectTokenSelfMintTTLSeconds(config),
 		"debug_return_resolved_subject_token_claims": config.DebugReturnResolvedSubjectTokenClaims,
+		"brokered_subject_token_enabled":             config.BrokeredSubjectTokenEnabled,
+		"brokered_subject_token_trust_type":          config.BrokeredSubjectTokenTrustType,
+		"brokered_subject_token_issuer":              config.BrokeredSubjectTokenIssuer,
+		"brokered_subject_token_allowed_audiences":   configBrokeredSubjectTokenAllowedAudiences(config),
+		"brokered_subject_token_allowed_algs":        configBrokeredSubjectTokenAllowedAlgs(config),
+		"brokered_subject_token_clock_skew_seconds":  configBrokeredSubjectTokenClockSkewSeconds(config),
+		"brokered_subject_token_jwks_url":            config.BrokeredSubjectTokenJWKSURL,
+		"brokered_subject_token_jwks_json":           config.BrokeredSubjectTokenJWKSJSON,
+		"brokered_subject_token_public_keys":         config.BrokeredSubjectTokenPublicKeys,
+		"brokered_subject_token_claim_mappings":      config.BrokeredSubjectTokenClaimMappings,
 	}
 	return &logical.Response{Data: respData}, nil
 }
@@ -219,6 +309,10 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		config.SubjectTokenAllowedAudiences = data.Get("subject_token_allowed_audiences").([]string)
 		config.SubjectTokenSelfMintTTLSeconds = data.Get("subject_token_self_mint_ttl_seconds").(int)
 		config.DebugReturnResolvedSubjectTokenClaims = data.Get("debug_return_resolved_subject_token_claims").(bool)
+		config.BrokeredSubjectTokenEnabled = data.Get("brokered_subject_token_enabled").(bool)
+		config.BrokeredSubjectTokenAllowedAudiences = data.Get("brokered_subject_token_allowed_audiences").([]string)
+		config.BrokeredSubjectTokenAllowedAlgs = data.Get("brokered_subject_token_allowed_algs").([]string)
+		config.BrokeredSubjectTokenClockSkewSeconds = data.Get("brokered_subject_token_clock_skew_seconds").(int)
 		enablePluginIssuedSubjectToken := data.Get("enable_plugin_issued_subject_token").(bool)
 		config.EnablePluginIssuedSubjectToken = &enablePluginIssuedSubjectToken
 	}
@@ -262,6 +356,44 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	if _, ok := req.Data["debug_return_resolved_subject_token_claims"]; ok {
 		config.DebugReturnResolvedSubjectTokenClaims = data.Get("debug_return_resolved_subject_token_claims").(bool)
 	}
+	if _, ok := req.Data["brokered_subject_token_enabled"]; ok {
+		config.BrokeredSubjectTokenEnabled = data.Get("brokered_subject_token_enabled").(bool)
+	}
+	if _, ok := req.Data["brokered_subject_token_trust_type"]; ok {
+		config.BrokeredSubjectTokenTrustType = data.Get("brokered_subject_token_trust_type").(string)
+	}
+	if _, ok := req.Data["brokered_subject_token_issuer"]; ok {
+		config.BrokeredSubjectTokenIssuer = data.Get("brokered_subject_token_issuer").(string)
+	}
+	if _, ok := req.Data["brokered_subject_token_allowed_audiences"]; ok {
+		config.BrokeredSubjectTokenAllowedAudiences = data.Get("brokered_subject_token_allowed_audiences").([]string)
+	}
+	if _, ok := req.Data["brokered_subject_token_allowed_algs"]; ok {
+		config.BrokeredSubjectTokenAllowedAlgs = data.Get("brokered_subject_token_allowed_algs").([]string)
+	}
+	if _, ok := req.Data["brokered_subject_token_clock_skew_seconds"]; ok {
+		config.BrokeredSubjectTokenClockSkewSeconds = data.Get("brokered_subject_token_clock_skew_seconds").(int)
+	}
+	if _, ok := req.Data["brokered_subject_token_jwks_url"]; ok {
+		config.BrokeredSubjectTokenJWKSURL = data.Get("brokered_subject_token_jwks_url").(string)
+	}
+	if _, ok := req.Data["brokered_subject_token_jwks_json"]; ok {
+		config.BrokeredSubjectTokenJWKSJSON = data.Get("brokered_subject_token_jwks_json").(string)
+	}
+	if _, ok := req.Data["brokered_subject_token_public_keys"]; ok {
+		publicKeys, publicKeyErr := decodeBrokeredSubjectTokenPublicKeys(data.Get("brokered_subject_token_public_keys").(string))
+		if publicKeyErr != nil {
+			return logical.ErrorResponse("invalid brokered_subject_token_public_keys: %v", publicKeyErr), nil
+		}
+		config.BrokeredSubjectTokenPublicKeys = publicKeys
+	}
+	if _, ok := req.Data["brokered_subject_token_claim_mappings"]; ok {
+		claimMappings, mappingErr := decodeBrokeredSubjectTokenClaimMappings(data.Get("brokered_subject_token_claim_mappings").(string))
+		if mappingErr != nil {
+			return logical.ErrorResponse("invalid brokered_subject_token_claim_mappings: %v", mappingErr), nil
+		}
+		config.BrokeredSubjectTokenClaimMappings = claimMappings
+	}
 	if _, ok := req.Data["enable_plugin_issued_subject_token"]; ok {
 		enablePluginIssuedSubjectToken := data.Get("enable_plugin_issued_subject_token").(bool)
 		config.EnablePluginIssuedSubjectToken = &enablePluginIssuedSubjectToken
@@ -301,6 +433,21 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 				return logical.ErrorResponse("failed to generate subject_token_self_mint_private_key: %v", keyErr), nil
 			}
 			config.SubjectTokenSelfMintPrivateKey = privateKeyPEM
+		}
+	}
+	if config.BrokeredSubjectTokenEnabled {
+		if config.SubjectTokenSelfMintIssuer == "" {
+			return logical.ErrorResponse("subject_token_self_mint_issuer is required when brokered_subject_token_enabled=true"), nil
+		}
+		if config.SubjectTokenSelfMintPrivateKey == "" {
+			privateKeyPEM, keyErr := generateRSAPrivateKeyPEM()
+			if keyErr != nil {
+				return logical.ErrorResponse("failed to generate subject_token_self_mint_private_key: %v", keyErr), nil
+			}
+			config.SubjectTokenSelfMintPrivateKey = privateKeyPEM
+		}
+		if brokerErr := validateBrokeredSubjectTokenConfig(config); brokerErr != nil {
+			return logical.ErrorResponse("%v", brokerErr), nil
 		}
 	}
 
@@ -395,6 +542,59 @@ func configSubjectTokenAllowedAudiences(config *federatedConfig) []string {
 	return out
 }
 
+func configBrokeredSubjectTokenAllowedAudiences(config *federatedConfig) []string {
+	if config == nil || len(config.BrokeredSubjectTokenAllowedAudiences) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(config.BrokeredSubjectTokenAllowedAudiences))
+	seen := make(map[string]struct{}, len(config.BrokeredSubjectTokenAllowedAudiences))
+	for _, audience := range config.BrokeredSubjectTokenAllowedAudiences {
+		audience = strings.TrimSpace(audience)
+		if audience == "" {
+			continue
+		}
+		if _, ok := seen[audience]; ok {
+			continue
+		}
+		seen[audience] = struct{}{}
+		out = append(out, audience)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func configBrokeredSubjectTokenAllowedAlgs(config *federatedConfig) []string {
+	if config == nil || len(config.BrokeredSubjectTokenAllowedAlgs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(config.BrokeredSubjectTokenAllowedAlgs))
+	seen := make(map[string]struct{}, len(config.BrokeredSubjectTokenAllowedAlgs))
+	for _, alg := range config.BrokeredSubjectTokenAllowedAlgs {
+		alg = strings.ToUpper(strings.TrimSpace(alg))
+		if alg == "" {
+			continue
+		}
+		if _, ok := seen[alg]; ok {
+			continue
+		}
+		seen[alg] = struct{}{}
+		out = append(out, alg)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func configBrokeredSubjectTokenClockSkewSeconds(config *federatedConfig) int {
+	if config == nil || config.BrokeredSubjectTokenClockSkewSeconds < 0 {
+		return 0
+	}
+	return config.BrokeredSubjectTokenClockSkewSeconds
+}
+
 const pathConfigHelpDesc = `
 The OCI secrets engine exchanges 3rd party OIDC/OAuth JWT tokens for OCI session tokens.
 
@@ -416,6 +616,16 @@ Optional:
   - subject_token_self_mint_ttl_seconds: TTL for self-minted token (default: 600)
   - subject_token_self_mint_private_key: Optional PEM RSA private key; auto-generated and stored if omitted when self-mint is enabled
   - debug_return_resolved_subject_token_claims: Development-only flag to include resolved subject token claims in exchange responses
+  - brokered_subject_token_enabled: Enable brokered validation and re-issuance for caller-supplied subject_token (default: false)
+  - brokered_subject_token_trust_type: Required when brokered mode is enabled; one of oidc_discovery, jwks_url, jwks_json, public_keys
+  - brokered_subject_token_issuer: Required when brokered mode is enabled; expected incoming issuer and OIDC discovery issuer
+  - brokered_subject_token_allowed_audiences: Required non-empty audience allowlist for incoming brokered subject_token validation
+  - brokered_subject_token_allowed_algs: Required non-empty JWT alg allowlist for incoming brokered subject_token validation
+  - brokered_subject_token_clock_skew_seconds: Optional clock skew tolerance for incoming brokered subject_token validation
+  - brokered_subject_token_jwks_url: Required trust source when trust_type=jwks_url
+  - brokered_subject_token_jwks_json: Required trust source when trust_type=jwks_json
+  - brokered_subject_token_public_keys: Required trust source when trust_type=public_keys
+  - brokered_subject_token_claim_mappings: Optional JSON object of output claim name to string template
 
 Example:
   $ vault write oci/config \

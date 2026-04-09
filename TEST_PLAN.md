@@ -18,6 +18,12 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | CFG-10 | plugin-issued subject token disabled | Set enable_plugin_issued_subject_token=false | Success, subject_token becomes required unless changed |
 | CFG-11 | self-mint enabled without private key | Set subject_token_self_mint_enabled=true, issuer set, omit private key | Success, plugin auto-generates and stores RSA signing key |
 | CFG-12 | allowlisted plugin-issued audiences configured | Set subject_token_allowed_audiences | Success, allowed plugin-issued audiences persisted |
+| CFG-13 | brokered mode enabled with valid trust config | Set brokered mode, trust type, issuer, audiences, algs, trust source, mappings | Success, brokered settings persisted |
+| CFG-14 | brokered mode invalid trust-source combination | Enable brokered mode with multiple trust sources | Error: exactly one trust source required |
+| CFG-15 | brokered mode invalid alg config | Enable brokered mode with unsupported alg | Error: unsupported brokered_subject_token_allowed_alg |
+| CFG-16 | brokered mode invalid mapping config | Set malformed brokered_subject_token_claim_mappings | Error: invalid brokered_subject_token_claim_mappings |
+| CFG-17 | brokered mode reserved output claim rejection | brokered_subject_token_claim_mappings includes reserved JWT claim | Error: reserved claim cannot be overridden |
+| CFG-18 | brokered mode reserved vault namespace rejection | brokered_subject_token_claim_mappings includes `vault_*` claim | Error: reserved vault_ namespace |
 
 ## 2. Roles Path Tests
 
@@ -53,6 +59,10 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-10 | Exchange without subject_token (allowlisted audience override) | omit subject_token, set subject_token_audience to allowed value | Plugin-issued token uses requested audience |
 | EXC-11 | Exchange with disallowed audience override | omit subject_token, set subject_token_audience to unlisted value | Error: audience override not allowed |
 | EXC-12 | Exchange with subject_token_audience and caller-provided JWT | subject_token and subject_token_audience set | Error: audience override only applies to plugin-issued tokens |
+| EXC-13 | Brokered mode uses re-issued token | subject_token provided, brokered_subject_token_enabled=true | OCI exchange receives plugin-issued brokered JWT, not original external token |
+| EXC-14 | Brokered mode explicit role path adds self-mint custom claims | brokered mode + `/exchange/:role` + role self_mint_custom_claims | Brokered JWT includes mapped claims plus role additive custom claims |
+| EXC-15 | Brokered bare exchange omits role-scoped custom claims | brokered mode + bare `/exchange` | Brokered JWT includes mapped claims only, without role-scoped custom claims |
+| EXC-16 | Brokered mode disabled preserves direct pass-through | subject_token provided, brokered mode off | OCI exchange receives original caller-supplied token |
 
 ## 4. Exchange Path - Token Content Validation
 
@@ -77,6 +87,29 @@ These cases are primarily OCI-behavior or end-to-end validation scenarios unless
 | RCM-05 | String array claim matching | claim value is array containing an element that matches a rule | Matching rule selects role |
 | RCM-06 | Explicit role path rejected when mappings enabled | subject_token provided and `/exchange/:role` used while mappings are configured | Error: role-specific exchange paths cannot be used |
 | RCM-07 | Strict role name match in config | strict_role_name_match=true, mapped role contains invalid chars | Error |
+
+## 5.1 Brokered Subject Token Validation
+
+| ID | Test Case | Input | Expected Result |
+|---|---|---|---|
+| BRV-01 | Valid RSA token | Brokered mode with RSA public key trust, valid RS256 JWT | Incoming token validates successfully |
+| BRV-02 | Valid EC token | Brokered mode with EC public key trust, valid ES256 JWT | Incoming token validates successfully |
+| BRV-03 | Bad signature | Signed JWT with non-matching key | Error before OCI exchange |
+| BRV-04 | Wrong issuer | JWT `iss` does not match configured brokered issuer | Error before OCI exchange |
+| BRV-05 | Wrong audience | JWT `aud` not in configured brokered allowlist | Error before OCI exchange |
+| BRV-06 | Expired token | JWT `exp` already elapsed | Error before OCI exchange |
+| BRV-07 | Unsupported alg | JWT alg not in configured brokered allowlist | Error before OCI exchange |
+
+## 5.2 Brokered Claim Mapping
+
+| ID | Test Case | Input | Expected Result |
+|---|---|---|---|
+| BRM-01 | Simple one-to-one mapping | `{"external_sub":"{{ claims.sub }}"}` | Output claim rendered from validated input claim |
+| BRM-02 | Concatenated mapping | `{"principal":"{{ claims.org }}:{{ claims.sub }}"}` | Output claim renders literals plus multiple claims |
+| BRM-03 | Nested claim mapping | `{"employee_id":"{{ claims.user.id }}"}` | Nested claim resolves successfully |
+| BRM-04 | Missing claim reference | Template references absent claim | Error, fail closed |
+| BRM-05 | Reserved output claim rejection | Mapping outputs reserved JWT claim | Error, fail closed |
+| BRM-06 | Vault namespace output rejection | Mapping outputs `vault_*` claim | Error, fail closed |
 
 ## 6. Lease & TTL Management
 
@@ -107,6 +140,7 @@ Current automated coverage is limited to TTL selection and clamping during excha
 | CLM-03 | Self-mint excludes exchange role selector | plugin-issued self-mint invoked through `/exchange/:role` | JWT does not contain `vault_role` or the selected exchange role |
 | CLM-04 | Self-mint adds role-scoped custom claims only on role path | plugin-issued self-mint invoked through `/exchange/:role` and that role has self_mint_custom_claims | JWT contains the configured additive custom claims |
 | CLM-05 | Bare self-mint does not infer role-scoped custom claims | plugin-issued self-mint invoked through bare `/exchange` while roles with self_mint_custom_claims exist | JWT does not contain role-scoped custom claims because no explicit role was selected |
+| CLM-06 | Brokered self-mint adds mapped claims additively | brokered mode with claim mappings | JWT contains mapped external claims without overriding reserved or `vault_*` claims |
 
 ## 9. OCI API Integration (Mock/Real)
 
@@ -129,13 +163,15 @@ Current automated coverage is limited to TTL selection and clamping during excha
 
 Currently covered by automated tests:
 - `CFG-01`, `CFG-02`, `CFG-03`, `CFG-05`, `CFG-06`, `CFG-07`, `CFG-08`, `CFG-09`, `CFG-10`, `CFG-11`
-- `CFG-12`
+- `CFG-12`, `CFG-13`, `CFG-14`, `CFG-15`, `CFG-16`, `CFG-17`, `CFG-18`
 - `ROL-01`, `ROL-02`, `ROL-03`, `ROL-04`, `ROL-06`, `ROL-08`, `ROL-10`, `ROL-11`, `ROL-12`, `ROL-13`
-- `EXC-04`, `EXC-06`, `EXC-07`, `EXC-08`, `EXC-09`, `EXC-10`, `EXC-11`, `EXC-12`
+- `EXC-04`, `EXC-06`, `EXC-07`, `EXC-08`, `EXC-09`, `EXC-10`, `EXC-11`, `EXC-12`, `EXC-13`, `EXC-14`, `EXC-15`, `EXC-16`
 - Requested token-type validation for unsupported values and RPST missing `res_type`
 - `RCM-01`, `RCM-02`, `RCM-03`, `RCM-04`, `RCM-05`, `RCM-06`, `RCM-07`
+- `BRV-01`, `BRV-02`, `BRV-03`, `BRV-04`, `BRV-05`, `BRV-06`, `BRV-07`
+- `BRM-01`, `BRM-02`, `BRM-03`, `BRM-04`, `BRM-05`, `BRM-06`
 - `TTL-01`, `TTL-02`
-- `CLM-01`, `CLM-02`, `CLM-03`, `CLM-04`, `CLM-05`
+- `CLM-01`, `CLM-02`, `CLM-03`, `CLM-04`, `CLM-05`, `CLM-06`
 - `JWK-01`, `JWK-02`, `JWK-03`
 - `OCI-01`, `OCI-03`
 
@@ -210,7 +246,7 @@ vault write oci/exchange/developer \
 
 Current coverage includes:
 - Unit tests in `oci-backend/*_test.go` for config, roles, subject-token role mappings, plugin-issued subject-token flow, self-mint, and JWKS behavior
-- Handler-level tests covering explicit `/exchange/:role` self-mint custom-claim injection and bare `/exchange` omission of role-scoped custom claims
+- Handler-level tests covering explicit `/exchange/:role` self-mint custom-claim injection, bare `/exchange` omission of role-scoped custom claims, and brokered-mode re-issuance behavior
 - Integration tests in [oci_client_integration_test.go](/home/gordon/clawd/projects/Hashicorp-OCI-credential-engine/oci-backend/oci_client_integration_test.go) for mock OCI token exchange behavior
 
 Future additions:

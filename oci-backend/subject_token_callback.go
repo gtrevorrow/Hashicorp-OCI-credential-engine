@@ -55,19 +55,7 @@ func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedCo
 		return "", fmt.Errorf("invalid subject_token_self_mint_private_key: %w", err)
 	}
 
-	now := time.Now().UTC()
-	ttl := time.Duration(configSubjectTokenSelfMintTTLSeconds(config)) * time.Second
-	expiresAt := now.Add(ttl)
-
-	claims := map[string]interface{}{
-		"iss": config.SubjectTokenSelfMintIssuer,
-		"sub": buildSelfMintSubject(req),
-		"aud": audience,
-		"iat": jwt.NewNumericDate(now),
-		"exp": jwt.NewNumericDate(expiresAt),
-		"jti": randomJTI(),
-	}
-
+	claims := buildBaseSelfMintClaims(req, config, audience)
 	addSelfMintRequestClaims(claims, req)
 	if err := b.addSelfMintIdentityClaims(claims, req); err != nil {
 		return "", err
@@ -82,6 +70,21 @@ func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedCo
 	}
 
 	return jwt.Signed(signer).Claims(claims).Serialize()
+}
+
+func buildBaseSelfMintClaims(req *logical.Request, config *federatedConfig, audience string) map[string]interface{} {
+	now := time.Now().UTC()
+	ttl := time.Duration(configSubjectTokenSelfMintTTLSeconds(config)) * time.Second
+	expiresAt := now.Add(ttl)
+
+	return map[string]interface{}{
+		"iss": config.SubjectTokenSelfMintIssuer,
+		"sub": buildSelfMintSubject(req),
+		"aud": audience,
+		"iat": jwt.NewNumericDate(now),
+		"exp": jwt.NewNumericDate(expiresAt),
+		"jti": randomJTI(),
+	}
 }
 
 func decodeJWTClaimsMap(token string) (map[string]interface{}, error) {

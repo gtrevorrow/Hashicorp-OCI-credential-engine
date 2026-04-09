@@ -635,7 +635,7 @@ vault write oci/exchange/developer \
     requested_token_type="urn:oci:token-type:oci-upst"
 ```
 
-Phase 1 brokered-mode notes:
+Brokered-mode mapping rules:
 
 - Template expressions are string-only and may reference validated incoming claims such as `{{ claims.sub }}` or nested values such as `{{ claims.user.profile.employee_id }}`.
 - Literal text around interpolations is allowed, for example `svc/{{ claims.org }}/{{ claims.app }}/{{ claims.env }}`.

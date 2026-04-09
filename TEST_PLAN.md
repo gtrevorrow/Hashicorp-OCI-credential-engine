@@ -24,8 +24,8 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | ROL-01 | Create role minimal | name="dev", default_ttl=1h | Success |
-| ROL-02 | Create role full | + description, max_ttl, allowed_groups, allowed_subjects | Success |
-| ROL-03 | Read role | Read existing role | All fields returned |
+| ROL-02 | Create role full | + description, max_ttl, allowed_groups, allowed_subjects, self_mint_custom_claims | Success |
+| ROL-03 | Read role | Read existing role | All fields returned, including self_mint_custom_claims when configured |
 | ROL-04 | List roles | Create 3 roles, list | All 3 names returned |
 | ROL-05 | Update role | Change TTL on existing role | New values persisted |
 | ROL-06 | Delete role | Delete existing role | Role removed |
@@ -33,6 +33,9 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | ROL-08 | Role with invalid name (default mode) | Empty name | Error |
 | ROL-09 | Role with special chars (strict mode off) | name includes `@` or space | Success |
 | ROL-10 | Role with invalid chars (strict mode on) | strict_role_name_match=true, name includes `@` or space | Error |
+| ROL-11 | Role with invalid self-mint custom claims JSON | self_mint_custom_claims is malformed JSON | Error: invalid self_mint_custom_claims |
+| ROL-12 | Role with reserved JWT claim override | self_mint_custom_claims includes `sub`, `iss`, `aud`, `exp`, `iat`, `nbf`, or `jti` | Error: reserved claim cannot be overridden |
+| ROL-13 | Role with reserved Vault namespace claim | self_mint_custom_claims includes `vault_*` | Error: reserved vault_ namespace |
 
 ## 3. Exchange Path - Basic Flows
 
@@ -41,7 +44,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-01 | Exchange for UPST (default) | subject_token, role | UPST token returned |
 | EXC-02 | Exchange for RPST | + requested_token_type=oci-rpst, res_type | RPST token returned |
 | EXC-03 | Exchange with explicit UPST type | requested_token_type=oci-upst | UPST token returned |
-| EXC-04 | Exchange without subject_token (plugin-issued mode enabled) | role only, omit subject_token, enable_plugin_issued_subject_token=true | Uses plugin-issued subject-token mode (Vault identity token first; self-mint if configured) |
+| EXC-04 | Exchange without subject_token (plugin-issued mode enabled) | call `/exchange/:role` or bare `/exchange`, omit subject_token, enable_plugin_issued_subject_token=true | Uses plugin-issued subject-token mode (Vault identity token first; self-mint if configured) |
 | EXC-05 | Exchange with TTL override | ttl < role.default_ttl | Custom TTL applied |
 | EXC-06 | Exchange with public_key provided | public_key in request | No generated key material in response |
 | EXC-07 | Exchange without subject_token (plugin-issued mode disabled) | omit subject_token, enable_plugin_issued_subject_token=false | Error: missing subject_token and plugin-issued mode disabled |
@@ -102,6 +105,8 @@ Current automated coverage is limited to TTL selection and clamping during excha
 | CLM-01 | Self-mint uses Vault-derived subject | plugin-issued self-mint with `EntityID` present | `sub` is derived from Vault identity, not the selected exchange role |
 | CLM-02 | Self-mint includes entity and alias claims | plugin-issued self-mint with entity/alias metadata available | JWT contains stable Vault-derived identity claims |
 | CLM-03 | Self-mint excludes exchange role selector | plugin-issued self-mint invoked through `/exchange/:role` | JWT does not contain `vault_role` or the selected exchange role |
+| CLM-04 | Self-mint adds role-scoped custom claims only on role path | plugin-issued self-mint invoked through `/exchange/:role` and that role has self_mint_custom_claims | JWT contains the configured additive custom claims |
+| CLM-05 | Bare self-mint does not infer role-scoped custom claims | plugin-issued self-mint invoked through bare `/exchange` while roles with self_mint_custom_claims exist | JWT does not contain role-scoped custom claims because no explicit role was selected |
 
 ## 9. OCI API Integration (Mock/Real)
 
@@ -125,12 +130,12 @@ Current automated coverage is limited to TTL selection and clamping during excha
 Currently covered by automated tests:
 - `CFG-01`, `CFG-02`, `CFG-03`, `CFG-05`, `CFG-06`, `CFG-07`, `CFG-08`, `CFG-09`, `CFG-10`, `CFG-11`
 - `CFG-12`
-- `ROL-01`, `ROL-02`, `ROL-03`, `ROL-04`, `ROL-06`, `ROL-08`, `ROL-10`
+- `ROL-01`, `ROL-02`, `ROL-03`, `ROL-04`, `ROL-06`, `ROL-08`, `ROL-10`, `ROL-11`, `ROL-12`, `ROL-13`
 - `EXC-04`, `EXC-06`, `EXC-07`, `EXC-08`, `EXC-09`, `EXC-10`, `EXC-11`, `EXC-12`
 - Requested token-type validation for unsupported values and RPST missing `res_type`
 - `RCM-01`, `RCM-02`, `RCM-03`, `RCM-04`, `RCM-05`, `RCM-06`, `RCM-07`
 - `TTL-01`, `TTL-02`
-- `CLM-01`, `CLM-02`, `CLM-03`
+- `CLM-01`, `CLM-02`, `CLM-03`, `CLM-04`, `CLM-05`
 - `JWK-01`, `JWK-02`, `JWK-03`
 - `OCI-01`, `OCI-03`
 
@@ -186,16 +191,26 @@ vault write oci/config \
 vault read oci/config
 
 # Test role create (ROL-01)
-vault write oci/roles/dev default_ttl=3600 max_ttl=7200
+vault write oci/role/dev default_ttl=3600 max_ttl=7200
 
 # Test role read (ROL-03)
-vault read oci/roles/dev
+vault read oci/role/dev
+
+# Test self-mint role custom claims (ROL-02 / CLM-04)
+vault write oci/role/developer \
+    self_mint_custom_claims='{"oci_role":"developer","entitlements":["read","write"]}'
+
+# Test self-mint exchange with explicit role path (EXC-04 / CLM-04)
+vault write oci/exchange/developer \
+    requested_token_type="urn:oci:token-type:oci-rpst" \
+    res_type="ref_vault"
 ```
 
 ### Automated Testing
 
 Current coverage includes:
 - Unit tests in `oci-backend/*_test.go` for config, roles, subject-token role mappings, plugin-issued subject-token flow, self-mint, and JWKS behavior
+- Handler-level tests covering explicit `/exchange/:role` self-mint custom-claim injection and bare `/exchange` omission of role-scoped custom claims
 - Integration tests in [oci_client_integration_test.go](/home/gordon/clawd/projects/Hashicorp-OCI-credential-engine/oci-backend/oci_client_integration_test.go) for mock OCI token exchange behavior
 
 Future additions:

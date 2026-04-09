@@ -2,7 +2,10 @@ package ocibackend
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/vault/sdk/framework"
@@ -13,7 +16,7 @@ import (
 func (b *backend) pathRoles() []*framework.Path {
 	return []*framework.Path{
 		{
-			Pattern: path.Join("roles", framework.MatchAllRegex("name")),
+			Pattern: path.Join("role", framework.MatchAllRegex("name")),
 			Fields: map[string]*framework.FieldSchema{
 				"name": {
 					Type:        framework.TypeString,
@@ -45,6 +48,11 @@ func (b *backend) pathRoles() []*framework.Path {
 					Description: "List of allowed groups from the subject token",
 					Required:    false,
 				},
+				"self_mint_custom_claims": {
+					Type:        framework.TypeString,
+					Description: "JSON object of additional claims to add only to self-minted subject tokens for this role",
+					Required:    false,
+				},
 			},
 
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -72,7 +80,7 @@ func (b *backend) pathRoles() []*framework.Path {
 			HelpDescription: pathRoleHelpDesc,
 		},
 		{
-			Pattern: path.Join("roles"),
+			Pattern: "role/?$",
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ListOperation: &framework.PathOperation{
 					Callback: b.pathRoleList,
@@ -90,12 +98,13 @@ func (b *backend) pathRoles() []*framework.Path {
 
 // Role management
 type roleEntry struct {
-	Name            string        `json:"name"`
-	Description     string        `json:"description"`
-	DefaultTTL      time.Duration `json:"default_ttl"`
-	MaxTTL          time.Duration `json:"max_ttl"`
-	AllowedSubjects []string      `json:"allowed_subjects,omitempty"`
-	AllowedGroups   []string      `json:"allowed_groups,omitempty"`
+	Name                 string                 `json:"name"`
+	Description          string                 `json:"description"`
+	DefaultTTL           time.Duration          `json:"default_ttl"`
+	MaxTTL               time.Duration          `json:"max_ttl"`
+	AllowedSubjects      []string               `json:"allowed_subjects,omitempty"`
+	AllowedGroups        []string               `json:"allowed_groups,omitempty"`
+	SelfMintCustomClaims map[string]interface{} `json:"self_mint_custom_claims,omitempty"`
 }
 
 func (b *backend) getRole(ctx context.Context, s logical.Storage, name string) (*roleEntry, error) {
@@ -137,12 +146,13 @@ func (b *backend) pathRoleRead(ctx context.Context, req *logical.Request, data *
 
 	return &logical.Response{
 		Data: map[string]interface{}{
-			"name":             role.Name,
-			"description":      role.Description,
-			"default_ttl":      int(role.DefaultTTL.Seconds()),
-			"max_ttl":          int(role.MaxTTL.Seconds()),
-			"allowed_subjects": role.AllowedSubjects,
-			"allowed_groups":   role.AllowedGroups,
+			"name":                    role.Name,
+			"description":             role.Description,
+			"default_ttl":             int(role.DefaultTTL.Seconds()),
+			"max_ttl":                 int(role.MaxTTL.Seconds()),
+			"allowed_subjects":        role.AllowedSubjects,
+			"allowed_groups":          role.AllowedGroups,
+			"self_mint_custom_claims": role.SelfMintCustomClaims,
 		},
 	}, nil
 }
@@ -161,13 +171,19 @@ func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, data 
 		return logical.ErrorResponse("invalid role name '%s': strict_role_name_match requires pattern [A-Za-z0-9._:-]+", name), nil
 	}
 
+	selfMintCustomClaims, err := decodeRoleSelfMintCustomClaims(data.Get("self_mint_custom_claims").(string))
+	if err != nil {
+		return logical.ErrorResponse("invalid self_mint_custom_claims: %v", err), nil
+	}
+
 	role := &roleEntry{
-		Name:            name,
-		Description:     data.Get("description").(string),
-		DefaultTTL:      time.Duration(data.Get("default_ttl").(int)) * time.Second,
-		MaxTTL:          time.Duration(data.Get("max_ttl").(int)) * time.Second,
-		AllowedSubjects: data.Get("allowed_subjects").([]string),
-		AllowedGroups:   data.Get("allowed_groups").([]string),
+		Name:                 name,
+		Description:          data.Get("description").(string),
+		DefaultTTL:           time.Duration(data.Get("default_ttl").(int)) * time.Second,
+		MaxTTL:               time.Duration(data.Get("max_ttl").(int)) * time.Second,
+		AllowedSubjects:      data.Get("allowed_subjects").([]string),
+		AllowedGroups:        data.Get("allowed_groups").([]string),
+		SelfMintCustomClaims: selfMintCustomClaims,
 	}
 
 	if role.DefaultTTL == 0 {
@@ -220,7 +236,7 @@ const pathRoleHelpDesc = `
 Roles define constraints and TTLs for OCI session tokens generated via token exchange.
 
 Example:
-  $ vault write oci/roles/developer \\
+  $ vault write oci/role/developer \\
       description="Development environment access" \\
       default_ttl=3600 \\
       max_ttl=14400 \\
@@ -235,3 +251,49 @@ List configured OCI credential roles.
 const pathRoleListHelpDesc = `
 Lists the names of all configured roles in the OCI secrets engine.
 `
+
+func decodeRoleSelfMintCustomClaims(raw string) (map[string]interface{}, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+
+	var claims map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &claims); err != nil {
+		return nil, fmt.Errorf("must be a JSON object: %w", err)
+	}
+	if len(claims) == 0 {
+		return nil, nil
+	}
+
+	for claim := range claims {
+		if err := validateSelfMintCustomClaimName(claim); err != nil {
+			return nil, err
+		}
+	}
+
+	return claims, nil
+}
+
+func validateSelfMintCustomClaimName(claim string) error {
+	claim = strings.TrimSpace(claim)
+	if claim == "" {
+		return fmt.Errorf("claim names must be non-empty")
+	}
+	if isReservedSelfMintClaim(claim) {
+		return fmt.Errorf("claim %q is reserved and cannot be overridden", claim)
+	}
+	if strings.HasPrefix(claim, "vault_") {
+		return fmt.Errorf("claim %q uses the reserved vault_ namespace", claim)
+	}
+	return nil
+}
+
+func isReservedSelfMintClaim(claim string) bool {
+	switch claim {
+	case "iss", "sub", "aud", "iat", "exp", "nbf", "jti":
+		return true
+	default:
+		return false
+	}
+}

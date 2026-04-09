@@ -561,6 +561,87 @@ vault write oci/exchange \
     requested_token_type="urn:oci:token-type:oci-upst"
 ```
 
+### Brokered Caller-Supplied Subject Token Flow (Template-Based Claim Mapping)
+
+Use this flow when callers still provide `subject_token`, but OCI should trust only a plugin-issued JWT. In this mode the plugin validates the incoming JWT locally, renders mapped claims from the validated external claims, self-mints a new JWT, and exchanges that brokered JWT with OCI.
+
+1. Configure brokered mode and define the template-based claim mappings:
+
+```bash
+vault write oci/config \
+    domain_url="https://idcs-xxxxx.identity.oraclecloud.com" \
+    client_id="ocid1.oauth2client.oc1..xxxxx" \
+    client_secret="<oauth-client-secret>" \
+    subject_token_self_mint_issuer="https://vault.example.com" \
+    brokered_subject_token_enabled=true \
+    brokered_subject_token_trust_type="public_keys" \
+    brokered_subject_token_issuer="https://issuer.example.com" \
+    brokered_subject_token_allowed_audiences="urn:example:workload" \
+    brokered_subject_token_allowed_algs="RS256,ES256" \
+    brokered_subject_token_public_keys='["-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"]' \
+    brokered_subject_token_claim_mappings='{
+      "external_sub":"{{ claims.sub }}",
+      "department":"{{ claims.department }}",
+      "principal":"svc/{{ claims.org }}/{{ claims.app }}/{{ claims.env }}",
+      "employee_ref":"{{ claims.user.profile.employee_id }}"
+    }'
+```
+
+2. The upstream JWT can carry whatever external claim shape your issuer provides, for example:
+
+```json
+{
+  "iss": "https://issuer.example.com",
+  "sub": "user-123",
+  "aud": "urn:example:workload",
+  "org": "acme",
+  "app": "billing",
+  "env": "prod",
+  "department": "finance",
+  "user": {
+    "profile": {
+      "employee_id": "E-4242"
+    }
+  }
+}
+```
+
+3. With the mapping config above, the brokered self-minted JWT produced by the plugin will add these OCI-facing claims:
+
+```json
+{
+  "external_sub": "user-123",
+  "department": "finance",
+  "principal": "svc/acme/billing/prod",
+  "employee_ref": "E-4242"
+}
+```
+
+The plugin also adds its normal self-mint claims such as `iss`, `sub`, `aud`, `iat`, `exp`, `jti`, plus trusted `vault_*` claims when available. Mapped claims are additive only. They cannot override reserved JWT claims or `vault_*` claims.
+
+4. The workload calls the normal exchange path with the external JWT:
+
+```bash
+vault write oci/exchange \
+    subject_token="$EXTERNAL_SUBJECT_TOKEN" \
+    requested_token_type="urn:oci:token-type:oci-upst"
+```
+
+5. If you need existing role TTL controls or additive `self_mint_custom_claims`, use the explicit role path:
+
+```bash
+vault write oci/exchange/developer \
+    subject_token="$EXTERNAL_SUBJECT_TOKEN" \
+    requested_token_type="urn:oci:token-type:oci-upst"
+```
+
+Phase 1 brokered-mode notes:
+
+- Template expressions are string-only and may reference validated incoming claims such as `{{ claims.sub }}` or nested values such as `{{ claims.user.profile.employee_id }}`.
+- Literal text around interpolations is allowed, for example `svc/{{ claims.org }}/{{ claims.app }}/{{ claims.env }}`.
+- Missing claim references, invalid template syntax, reserved output claim names, and `vault_*` output claim names fail closed.
+- Existing `subject_token_role_mappings` are not used in brokered mode. Brokered mode and direct caller-token role derivation are separate flows.
+
 In this example, the plugin derives the effective role `developer` from the JWT claim `vault_role=developer`. The caller does not pass `role` in the request because `subject_token_role_mappings` is doing that selection.
 
 5. OCI Identity Domain token exchange trust evaluates issuer/audience/claims and maps to the target OCI Domain Service User. OCI IAM policies on that service user determine final permissions.

@@ -325,7 +325,7 @@ vault write oci/config \
     brokered_subject_token_trust_type="public_keys" \
     brokered_subject_token_issuer="https://issuer.example.com" \
     brokered_subject_token_allowed_audiences="urn:test" \
-    brokered_subject_token_allowed_algs="RS256,ES256" \
+    brokered_subject_token_allowed_algs="RS256" \
     brokered_subject_token_public_keys='["-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"]' \
     brokered_subject_token_claim_mappings='{"external_sub":"{{ claims.sub }}","principal":"svc/{{ claims.org }}/{{ claims.user.id }}"}'
 ```
@@ -355,7 +355,7 @@ vault write oci/config \
 - `brokered_subject_token_trust_type`: Required when brokered mode is enabled. Supported values: `oidc_discovery`, `jwks_url`, `jwks_json`, `public_keys`
 - `brokered_subject_token_issuer`: Required when brokered mode is enabled. This is the expected incoming `iss` claim and the OIDC discovery issuer when `brokered_subject_token_trust_type=oidc_discovery`
 - `brokered_subject_token_allowed_audiences`: Required non-empty audience allowlist for incoming brokered-token validation
-- `brokered_subject_token_allowed_algs`: Required non-empty signing algorithm allowlist for incoming brokered-token validation. Phase 1 supports RSA and EC algorithms only
+- `brokered_subject_token_allowed_algs`: Required non-empty signing algorithm allowlist for incoming brokered-token validation. Supported values are RSA (`RS256`, `RS384`, `RS512`) and EC (`ES256`, `ES384`, `ES512`)
 - `brokered_subject_token_clock_skew_seconds`: Optional clock-skew tolerance for brokered `exp`, `nbf`, and `iat` validation (default: `0`)
 - `brokered_subject_token_jwks_url`: Required when `brokered_subject_token_trust_type=jwks_url`
 - `brokered_subject_token_jwks_json`: Required when `brokered_subject_token_trust_type=jwks_json`
@@ -586,7 +586,7 @@ Required values in this example:
 - `brokered_subject_token_allowed_audiences`
   Required non-empty allowlist for the incoming external JWT `aud` claim.
 - `brokered_subject_token_allowed_algs`
-  Required non-empty allowlist for the incoming external JWT signing algorithm.
+  Required non-empty allowlist for the incoming external JWT signing algorithm. Supported values are RSA (`RS256`, `RS384`, `RS512`) and EC (`ES256`, `ES384`, `ES512`). In most brokered trust relationships this should be a single algorithm.
 - `brokered_subject_token_public_keys`
   Required for this example because `brokered_subject_token_trust_type=public_keys`.
 
@@ -613,7 +613,7 @@ vault write oci/config \
     brokered_subject_token_trust_type="public_keys" \
     brokered_subject_token_issuer="https://issuer.example.com" \
     brokered_subject_token_allowed_audiences="urn:example:workload" \
-    brokered_subject_token_allowed_algs="RS256,ES256" \
+    brokered_subject_token_allowed_algs="RS256" \
     brokered_subject_token_public_keys='["-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"]' \
     brokered_subject_token_claim_mappings='{
       "external_sub":"{{ claims.sub }}",

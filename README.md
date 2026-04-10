@@ -221,6 +221,12 @@ make build-all
 
 For local development, use the  `./scripts/dev_vault.sh start` script that runs `make build`, starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are for non-dev setups.
 
+The helper script cannot set environment variables in your current shell by itself. To load the dev Vault CLI environment after startup, run:
+
+```bash
+eval "$(./scripts/dev_vault.sh env)"
+```
+
 Dev Note: If you want dev startup to reapply backend config automatically, create `.env.local` in the repo root with at least:
 
 ```bash
@@ -566,6 +572,36 @@ vault write oci/exchange \
 Use this flow when callers still provide `subject_token`, but OCI should trust only a plugin-issued JWT. In this mode the plugin validates the incoming JWT locally, renders mapped claims from the validated external claims, self-mints a new JWT, and exchanges that brokered JWT with OCI.
 
 1. Configure brokered mode and define the template-based claim mappings:
+
+Required values in this example:
+
+- `subject_token_self_mint_issuer`
+  Required because the plugin re-issues a brokered JWT and must set its `iss` claim.
+- `brokered_subject_token_enabled=true`
+  Required to turn on brokered handling for caller-supplied `subject_token` values.
+- `brokered_subject_token_trust_type="public_keys"`
+  Required to tell the plugin how to validate the incoming external JWT. Supported values are `oidc_discovery`, `jwks_url`, `jwks_json`, and `public_keys`.
+- `brokered_subject_token_issuer`
+  Required expected `iss` claim on the incoming external JWT.
+- `brokered_subject_token_allowed_audiences`
+  Required non-empty allowlist for the incoming external JWT `aud` claim.
+- `brokered_subject_token_allowed_algs`
+  Required non-empty allowlist for the incoming external JWT signing algorithm.
+- `brokered_subject_token_public_keys`
+  Required for this example because `brokered_subject_token_trust_type=public_keys`.
+
+Optional values shown or omitted in this example:
+
+- `brokered_subject_token_claim_mappings`
+  Optional. If omitted, the plugin still validates and re-issues the JWT, but it adds no mapped external claims to the brokered token.
+- `brokered_subject_token_clock_skew_seconds`
+  Optional. Default is `0`, so `exp`, `nbf`, and `iat` are evaluated with no extra skew tolerance unless you set one.
+- `subject_token_self_mint_audience`
+  Optional. Default is `urn:mace:oci:idcs` if not supplied.
+- `subject_token_self_mint_ttl_seconds`
+  Optional. Default is `600` seconds if not supplied.
+- `subject_token_self_mint_private_key`
+  Optional. If omitted, the plugin generates and stores an RSA signing key automatically when self-mint signing is needed.
 
 ```bash
 vault write oci/config \

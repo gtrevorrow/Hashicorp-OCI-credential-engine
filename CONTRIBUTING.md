@@ -81,11 +81,13 @@ make build
 ./scripts/dev_vault.sh start
 ```
 
-3. Set up your environment, register, and enable the plugin:
+3. Load the dev Vault environment into your current shell:
 ```bash
-export VAULT_ADDR='http://127.0.0.1:8200'
-export VAULT_TOKEN='root'
+eval "$(./scripts/dev_vault.sh env)"
+```
 
+4. Register and enable the plugin if you are not relying on the helper script to do it for you:
+```bash
 # Automatically calculates SHA256 and registers the plugin
 ./scripts/register_plugin.sh
 

@@ -6,10 +6,9 @@ Allow operators to derive additional claims for plugin-issued self-minted subjec
 This document is written as implementation context for future development.
 
 ## Problem Statement
-Today the plugin supports two additive claim layers for self-minted subject tokens:
+Today the plugin supports one operator-controlled additive claim layer for self-minted subject tokens:
 
-1. Built-in trusted self-mint claims derived from Vault runtime context.
-2. Role-scoped `self_mint_custom_claims`, which are literal JSON values appended after the trusted claim set.
+1. Role-scoped `self_mint_custom_claims`, which are currently literal JSON values appended after the trusted built-in claim set.
 
 That is useful for static claim injection, but it does not help when operators need to derive claim values from trusted Vault context already available to the plugin. Examples:
 
@@ -21,11 +20,13 @@ That is useful for static claim injection, but it does not help when operators n
 The current literal `self_mint_custom_claims` field cannot do that because it stores values as-is and performs no interpolation or transformation.
 
 ## Design Decision
-Add a new role-level configuration field for templated self-mint claims sourced from trusted Vault context:
+Use a single role-level configuration field for custom self-mint claims, with string-template semantics sourced from trusted Vault context:
 
-- keep existing `self_mint_custom_claims` unchanged for backward compatibility
-- add a new field such as `self_mint_custom_claim_templates`
-- render these templates during self-mint claim construction after trusted Vault context has been resolved
+- keep the field name `self_mint_custom_claims`
+- redefine it to mean output claim name -> string template
+- all configured custom self-mint claims are string-valued
+- pure literal strings remain valid by simply omitting interpolation
+- render templates during self-mint claim construction after trusted Vault context has been resolved
 - expose only explicitly approved trusted namespaces to the template renderer
 - keep the templating language intentionally narrow and fail closed
 
@@ -35,11 +36,11 @@ This feature should apply to plugin-issued self-mint flows, including:
 - brokered mode after the plugin has validated the external token and is assembling the brokered self-minted JWT
 
 ## Non-Goals
-- changing the meaning of existing `self_mint_custom_claims`
 - introducing arbitrary scripting or a general-purpose expression language
 - allowing templates to read directly from untrusted request body inputs
 - allowing templated claims to override reserved JWT claims or trusted `vault_*` claims
 - introducing broad auth-method-specific special cases where existing alias/entity metadata already carries the needed values
+- supporting non-string custom claim values in this phase
 
 ## Current State
 Current self-mint claim assembly order is:
@@ -73,27 +74,20 @@ Current behavior of `self_mint_custom_claims`:
 - cannot use the `vault_*` namespace
 
 ## Proposed Configuration Model
-Add a new role-level field:
+Keep a single role-level field:
 
-- `self_mint_custom_claim_templates`
+- `self_mint_custom_claims`
   - JSON object of output claim name -> string template
   - optional
   - rendered during self-mint claim construction
-
-Keep the existing field:
-
-- `self_mint_custom_claims`
-  - JSON object of literal additive claims
-  - unchanged behavior
+  - all output values are strings
 
 Representative role config:
 
 ```json
 {
   "self_mint_custom_claims": {
-    "static_env": "prod"
-  },
-  "self_mint_custom_claim_templates": {
+    "static_env": "prod",
     "aws_arn": "{{ vault.alias.metadata.arn }}",
     "principal": "aws/{{ vault.alias.metadata.arn }}",
     "entity_ref": "{{ vault.entity.id }}"
@@ -101,18 +95,21 @@ Representative role config:
 }
 ```
 
-## Why A New Field Instead Of Reusing `self_mint_custom_claims`
-Reusing `self_mint_custom_claims` for templates would create avoidable problems:
+In this model:
 
-- existing roles already depend on literal JSON semantics
-- changing meaning would be a breaking behavior change
-- templated claims need different validation rules and failure behavior
-- keeping literals and templates separate preserves operator clarity
+- `"prod"` is a valid literal string template
+- `"aws/{{ vault.alias.metadata.arn }}"` is a rendered template
+- there is no separate field for literal versus templated custom claims
 
-Recommended outcome:
+## Why A Single Field Is Enough
+For the current requirement, one field is sufficient because:
 
-- `self_mint_custom_claims` remains literal and additive
-- `self_mint_custom_claim_templates` is the templated additive layer
+- operators only need simple string-valued outputs
+- literal strings can be represented without interpolation
+- interpolated strings can use the same syntax
+- separating literal and templated fields would add configuration complexity without solving a real current need
+
+If future requirements require non-string outputs such as arrays, numbers, or objects, the config model can be revisited then.
 
 ## Template Context
 Templates should read from trusted context only.
@@ -216,6 +213,7 @@ Scalar interpolation rules:
 - numeric values may stringify in canonical decimal form
 - arrays and maps must not stringify implicitly
 - arrays require explicit helper handling such as `join(...)`
+- final configured custom claims are always emitted as strings
 
 ## Claim Assembly Order
 Recommended final order:
@@ -223,17 +221,9 @@ Recommended final order:
 1. standard self-mint JWT claims
 2. trusted built-in Vault claims
 3. brokered mapped claims, when brokered mode is active
-4. role-scoped templated self-mint claims
-5. role-scoped literal `self_mint_custom_claims`
+4. role-scoped rendered `self_mint_custom_claims`
 
 If any later layer collides with an earlier layer, fail closed.
-
-Why put templated claims before literal claims:
-
-- it keeps literal `self_mint_custom_claims` as the final additive operator-controlled override-free layer
-- it preserves a simple mental model: computed claims first, static literals second
-
-An equally valid alternative is to reverse 4 and 5, but the precedence must be explicit and tested.
 
 ## Security Model
 This feature is safe only if the template input surface remains constrained to trusted data.
@@ -264,7 +254,7 @@ Example template config:
 
 ```json
 {
-  "self_mint_custom_claim_templates": {
+  "self_mint_custom_claims": {
     "aws_arn": "{{ vault.alias.metadata.arn }}",
     "principal": "aws/{{ vault.alias.metadata.arn }}"
   }
@@ -293,8 +283,9 @@ Examples:
 ### Role Schema
 Update `path_roles.go`:
 
-- add `self_mint_custom_claim_templates` field
-- parse as JSON object of string -> string
+- keep the field name `self_mint_custom_claims`
+- change parsing to JSON object of string -> string
+- reject non-string configured values
 - validate claim names using the same reserved-claim and `vault_*` rejection rules
 - validate template syntax on write if possible
 
@@ -321,16 +312,16 @@ New flow:
 1. build standard self-mint claims
 2. add trusted Vault claims
 3. add brokered mapped claims when active
-4. render role-scoped templated claims
-5. add role-scoped literal custom claims
+4. render role-scoped `self_mint_custom_claims`
 
 ### Read Path
-Update role read responses so `self_mint_custom_claim_templates` is visible on `read oci/role/<name>`.
+Update role read responses so `self_mint_custom_claims` returns the configured string-template map.
 
 ## Tests
 ### Role Config Tests
 - valid template config
 - malformed JSON
+- non-string configured value rejection
 - reserved output claim rejection
 - `vault_*` output claim rejection
 - invalid template syntax
@@ -347,13 +338,10 @@ Update role read responses so `self_mint_custom_claim_templates` is visible on `
 ### Self-Mint Assembly Tests
 - templated claims appear in runtime self-mint flow
 - templated claims appear in brokered self-mint flow when enabled
-- literal custom claims still work unchanged
 - collisions between templated claims and trusted claims fail
-- collisions between templated claims and literal custom claims fail
 
 ## Acceptance Criteria
-- operators can define templated additive claims from trusted Vault context
-- existing `self_mint_custom_claims` behavior remains backward compatible
+- operators can define additive string-valued claims from trusted Vault context
 - templated claims never override reserved or trusted built-in claims
 - array condensation is supported only through explicit minimal helpers
 - both runtime self-mint and brokered self-mint can use the feature consistently
@@ -365,16 +353,15 @@ Update role read responses so `self_mint_custom_claim_templates` is visible on `
   - Mitigation: document recommended stable context paths and examples
 - Risk: confusion between trusted Vault context and brokered external claims
   - Mitigation: keep separate namespaces such as `vault.*` and `brokered.claims.*`
-- Risk: backward compatibility break for existing role configs
-  - Mitigation: introduce a new field rather than changing `self_mint_custom_claims`
+- Risk: future need for non-string custom claim values
+  - Mitigation: keep this phase string-only; if real use cases appear later, extend or refactor the config model then
 
 ## Open Questions
 - Should the first implementation include `join()` immediately, or ship scalar-only templates first and add `join()` only once needed?
 - Should brokered validated claims be exposed to role templates in the first version, or should role templates start with `vault.*` only?
-- Should templated claims render before or after literal `self_mint_custom_claims`, and which precedence model is easiest for operators to reason about?
 
 ## Out Of Scope
 - arbitrary scripting
 - conditionals and loops
 - automatic per-auth-method adapters outside normal alias/entity/request metadata
-- changing the semantics of existing literal `self_mint_custom_claims`
+- non-string custom claim outputs in this phase

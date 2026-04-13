@@ -888,7 +888,7 @@ func TestPathExchange_SelfMintRolePathAddsCustomClaimsToResolvedToken(t *testing
 		Path:      "role/developer",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"self_mint_custom_claims": `{"oci_role":"developer","entitlements":["read","write"]}`,
+			"self_mint_custom_claims": `{"oci_role":"developer","principal":"developer-static"}`,
 		},
 	}
 	_, err = b.HandleRequest(context.Background(), reqRole)
@@ -908,10 +908,7 @@ func TestPathExchange_SelfMintRolePathAddsCustomClaimsToResolvedToken(t *testing
 	claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "developer", claims["oci_role"])
-
-	entitlements, ok := claims["entitlements"].([]interface{})
-	require.True(t, ok)
-	require.Equal(t, []interface{}{"read", "write"}, entitlements)
+	require.Equal(t, "developer-static", claims["principal"])
 }
 
 func TestPathExchange_SelfMintWithoutRolePathDoesNotAddRoleCustomClaims(t *testing.T) {
@@ -1081,7 +1078,7 @@ func TestPathExchange_BrokeredRolePathAddsExistingSelfMintCustomClaims(t *testin
 		Path:      "role/developer",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"self_mint_custom_claims": `{"oci_role":"developer"}`,
+			"self_mint_custom_claims": `{"oci_role":"developer","external_subject":"{{ brokered.claims.sub }}"}`,
 		},
 	})
 	require.NoError(t, err)
@@ -1110,6 +1107,7 @@ func TestPathExchange_BrokeredRolePathAddsExistingSelfMintCustomClaims(t *testin
 	require.True(t, ok)
 	require.Equal(t, "developer", claims["oci_role"])
 	require.Equal(t, "user-123", claims["external_sub"])
+	require.Equal(t, "user-123", claims["external_subject"])
 }
 
 func TestPathExchange_BrokeredBareExchangeDoesNotAddRoleScopedClaims(t *testing.T) {
@@ -1542,7 +1540,7 @@ func TestDefaultCallbackSelfMintAddsRoleCustomClaims(t *testing.T) {
 		Path:      "role/developer",
 		Storage:   storage,
 		Data: map[string]interface{}{
-			"self_mint_custom_claims": `{"oci_role":"developer","entitlements":["read","write"],"tenant":{"name":"dev"}}`,
+			"self_mint_custom_claims": `{"oci_role":"developer","principal":"{{ vault.entity.id }}"}`,
 		},
 	}
 	_, err := b.HandleRequest(context.Background(), reqRole)
@@ -1573,14 +1571,7 @@ func TestDefaultCallbackSelfMintAddsRoleCustomClaims(t *testing.T) {
 
 	claims := decodeJWTClaims(t, token)
 	require.Equal(t, "developer", claims["oci_role"])
-
-	entitlements, ok := claims["entitlements"].([]interface{})
-	require.True(t, ok)
-	require.Equal(t, []interface{}{"read", "write"}, entitlements)
-
-	tenant, ok := claims["tenant"].(map[string]interface{})
-	require.True(t, ok)
-	require.Equal(t, "dev", tenant["name"])
+	require.Equal(t, "entity-123", claims["principal"])
 
 	require.Equal(t, "entity-123", claims["vault_entity_id"])
 	require.Equal(t, "kubernetes-app", claims["vault_display_name"])

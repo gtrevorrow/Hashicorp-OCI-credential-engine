@@ -8,7 +8,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func (b *backend) selfMintBrokeredSubjectToken(ctx context.Context, req *logical.Request, config *federatedConfig, mappedClaims map[string]interface{}) (string, error) {
+func (b *backend) selfMintBrokeredSubjectToken(ctx context.Context, req *logical.Request, config *federatedConfig, brokeredClaims map[string]interface{}, mappedClaims map[string]interface{}) (string, error) {
 	audience := configSubjectTokenSelfMintAudience(config)
 	privateKey, err := parseRSAPrivateKey(config.SubjectTokenSelfMintPrivateKey)
 	if err != nil {
@@ -23,7 +23,7 @@ func (b *backend) selfMintBrokeredSubjectToken(ctx context.Context, req *logical
 	if err := addBrokeredMappedClaims(claims, mappedClaims); err != nil {
 		return "", err
 	}
-	if err := b.addSelfMintRoleCustomClaims(ctx, claims, req); err != nil {
+	if err := b.addSelfMintRoleCustomClaims(ctx, claims, req, brokeredClaims); err != nil {
 		return "", err
 	}
 

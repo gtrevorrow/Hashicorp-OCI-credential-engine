@@ -206,7 +206,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 			return logical.ErrorResponse("failed to map brokered subject_token claims: %v", mappingErr), nil
 		}
 
-		brokeredToken, mintErr := b.selfMintBrokeredSubjectToken(ctx, req, config, mappedClaims)
+		brokeredToken, mintErr := b.selfMintBrokeredSubjectToken(ctx, req, config, validatedClaims, mappedClaims)
 		if mintErr != nil {
 			return logical.ErrorResponse("failed to self-mint brokered subject_token: %v", mintErr), nil
 		}

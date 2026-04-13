@@ -60,7 +60,7 @@ func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedCo
 	if err := b.addSelfMintIdentityClaims(claims, req); err != nil {
 		return "", err
 	}
-	if err := b.addSelfMintRoleCustomClaims(context.Background(), claims, req); err != nil {
+	if err := b.addSelfMintRoleCustomClaims(context.Background(), claims, req, nil); err != nil {
 		return "", err
 	}
 
@@ -237,7 +237,7 @@ func copyStringMap(in map[string]string) map[string]string {
 	return out
 }
 
-func (b *backend) addSelfMintRoleCustomClaims(ctx context.Context, claims map[string]interface{}, req *logical.Request) error {
+func (b *backend) addSelfMintRoleCustomClaims(ctx context.Context, claims map[string]interface{}, req *logical.Request, brokeredClaims map[string]interface{}) error {
 	if req == nil || req.Storage == nil || req.Data == nil {
 		return nil
 	}
@@ -260,7 +260,13 @@ func (b *backend) addSelfMintRoleCustomClaims(ctx context.Context, claims map[st
 		return nil
 	}
 
-	for claim, value := range role.SelfMintCustomClaims {
+	templateContext := buildSelfMintTemplateContext(req, claims)
+	renderedClaims, err := renderSelfMintCustomClaimMappings(templateContext, role.SelfMintCustomClaims, brokeredClaims)
+	if err != nil {
+		return fmt.Errorf("role %q has invalid self_mint_custom_claims: %w", roleName, err)
+	}
+
+	for claim, value := range renderedClaims {
 		if err := validateSelfMintCustomClaimName(claim); err != nil {
 			return fmt.Errorf("role %q has invalid self_mint_custom_claims: %w", roleName, err)
 		}

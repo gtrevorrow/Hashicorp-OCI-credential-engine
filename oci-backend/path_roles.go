@@ -98,13 +98,13 @@ func (b *backend) pathRoles() []*framework.Path {
 
 // Role management
 type roleEntry struct {
-	Name                 string                 `json:"name"`
-	Description          string                 `json:"description"`
-	DefaultTTL           time.Duration          `json:"default_ttl"`
-	MaxTTL               time.Duration          `json:"max_ttl"`
-	AllowedSubjects      []string               `json:"allowed_subjects,omitempty"`
-	AllowedGroups        []string               `json:"allowed_groups,omitempty"`
-	SelfMintCustomClaims map[string]interface{} `json:"self_mint_custom_claims,omitempty"`
+	Name                 string            `json:"name"`
+	Description          string            `json:"description"`
+	DefaultTTL           time.Duration     `json:"default_ttl"`
+	MaxTTL               time.Duration     `json:"max_ttl"`
+	AllowedSubjects      []string          `json:"allowed_subjects,omitempty"`
+	AllowedGroups        []string          `json:"allowed_groups,omitempty"`
+	SelfMintCustomClaims map[string]string `json:"self_mint_custom_claims,omitempty"`
 }
 
 func (b *backend) getRole(ctx context.Context, s logical.Storage, name string) (*roleEntry, error) {
@@ -252,24 +252,36 @@ const pathRoleListHelpDesc = `
 Lists the names of all configured roles in the OCI secrets engine.
 `
 
-func decodeRoleSelfMintCustomClaims(raw string) (map[string]interface{}, error) {
+func decodeRoleSelfMintCustomClaims(raw string) (map[string]string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}
 
-	var claims map[string]interface{}
-	if err := json.Unmarshal([]byte(raw), &claims); err != nil {
+	var rawClaims map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &rawClaims); err != nil {
 		return nil, fmt.Errorf("must be a JSON object: %w", err)
 	}
-	if len(claims) == 0 {
+	if len(rawClaims) == 0 {
 		return nil, nil
 	}
 
-	for claim := range claims {
+	claims := make(map[string]string, len(rawClaims))
+	for claim, value := range rawClaims {
 		if err := validateSelfMintCustomClaimName(claim); err != nil {
 			return nil, err
 		}
+		template, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("claim %q must use a string template", claim)
+		}
+		if strings.TrimSpace(template) == "" {
+			return nil, fmt.Errorf("claim %q must use a non-empty string template", claim)
+		}
+		if err := validateSelfMintCustomClaimTemplate(template); err != nil {
+			return nil, fmt.Errorf("claim %q: %w", claim, err)
+		}
+		claims[claim] = template
 	}
 
 	return claims, nil

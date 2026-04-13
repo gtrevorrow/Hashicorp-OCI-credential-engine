@@ -2,8 +2,10 @@ package ocibackend
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/go-jose/go-jose/v4"
 	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -290,6 +292,163 @@ func TestPathConfig_SelfMintValidation(t *testing.T) {
 	require.NotNil(t, config)
 	require.NotEmpty(t, config.SubjectTokenSelfMintPrivateKey)
 	require.Contains(t, config.SubjectTokenSelfMintPrivateKey, "BEGIN RSA PRIVATE KEY")
+}
+
+func TestPathConfig_BrokeredSubjectTokenValidation(t *testing.T) {
+	b, storage := getTestBackend(t)
+	testKey := generateTestRSAPrivateKeyPEM(t)
+	rsaKey := generateTestRSAPrivateKey(t)
+
+	baseData := map[string]interface{}{
+		"domain_url":                               "https://idcs-test.identity.oraclecloud.com",
+		"client_id":                                "test-client-id",
+		"client_secret":                            "test-client-secret",
+		"subject_token_self_mint_issuer":           "https://vault.example.com",
+		"subject_token_self_mint_private_key":      testKey,
+		"brokered_subject_token_enabled":           true,
+		"brokered_subject_token_trust_type":        "public_keys",
+		"brokered_subject_token_issuer":            "https://issuer.example.com",
+		"brokered_subject_token_allowed_audiences": []string{"urn:test"},
+		"brokered_subject_token_allowed_algs":      []string{"RS256"},
+		"brokered_subject_token_public_keys":       encodeTestPublicKeyPEM(t, &rsaKey.PublicKey),
+		"brokered_subject_token_claim_mappings":    `{"external_sub":"{{ claims.sub }}"}`,
+	}
+
+	t.Run("Brokered Mode Disabled Allows Empty Brokered Config", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"domain_url":                     "https://idcs-test.identity.oraclecloud.com",
+				"client_id":                      "test-client-id",
+				"client_secret":                  "test-client-secret",
+				"brokered_subject_token_enabled": false,
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.False(t, resp != nil && resp.IsError())
+	})
+
+	t.Run("Brokered Mode Enabled Reads Back Parsed Settings", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data:      baseData,
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.False(t, resp != nil && resp.IsError())
+
+		readResp, err := b.HandleRequest(context.Background(), &logical.Request{
+			Operation: logical.ReadOperation,
+			Path:      "config",
+			Storage:   storage,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, readResp)
+		assert.Equal(t, true, readResp.Data["brokered_subject_token_enabled"])
+		assert.Equal(t, "public_keys", readResp.Data["brokered_subject_token_trust_type"])
+		assert.Equal(t, "https://issuer.example.com", readResp.Data["brokered_subject_token_issuer"])
+		assert.Equal(t, []string{"urn:test"}, readResp.Data["brokered_subject_token_allowed_audiences"])
+		assert.Equal(t, []string{"RS256"}, readResp.Data["brokered_subject_token_allowed_algs"])
+		assert.Equal(t, map[string]string{"external_sub": "{{ claims.sub }}"}, readResp.Data["brokered_subject_token_claim_mappings"])
+	})
+
+	t.Run("Rejects Invalid Trust Source Combination", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: mergeConfigMaps(baseData, map[string]interface{}{
+				"brokered_subject_token_jwks_json": makeTestJWKS(t, &rsaKey.PublicKey, jose.RS256, "rsa-1"),
+			}),
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "exactly one trust source")
+	})
+
+	t.Run("Rejects Invalid Alg Config", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: mergeConfigMaps(baseData, map[string]interface{}{
+				"brokered_subject_token_allowed_algs": []string{"HS256"},
+			}),
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "unsupported brokered_subject_token_allowed_alg")
+	})
+
+	t.Run("Rejects Invalid Mapping Config", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: mergeConfigMaps(baseData, map[string]interface{}{
+				"brokered_subject_token_claim_mappings": "{not-json}",
+			}),
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "invalid brokered_subject_token_claim_mappings")
+	})
+
+	t.Run("Rejects Reserved Output Claim Names", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: mergeConfigMaps(baseData, map[string]interface{}{
+				"brokered_subject_token_claim_mappings": `{"sub":"{{ claims.sub }}"}`,
+			}),
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "reserved")
+	})
+
+	t.Run("Rejects Vault Namespace Output Claim Names", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data: mergeConfigMaps(baseData, map[string]interface{}{
+				"brokered_subject_token_claim_mappings": `{"vault_external":"{{ claims.sub }}"}`,
+			}),
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, resp.IsError())
+		require.Contains(t, strings.ToLower(resp.Error().Error()), "vault_")
+	})
+}
+
+func mergeConfigMaps(base map[string]interface{}, overrides map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(base)+len(overrides))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
 }
 
 func TestPathConfig_PartialUpdates(t *testing.T) {

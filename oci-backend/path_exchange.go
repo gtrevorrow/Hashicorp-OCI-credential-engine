@@ -158,7 +158,8 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if raw, ok := data.GetOk("role"); ok {
 		roleName = raw.(string)
 	}
-	if subjectTokenProvided && len(config.SubjectTokenRoleMappings) > 0 {
+	brokeredMode := subjectTokenProvided && config.BrokeredSubjectTokenEnabled
+	if subjectTokenProvided && !brokeredMode && len(config.SubjectTokenRoleMappings) > 0 {
 		if roleName != "" {
 			return logical.ErrorResponse("role-specific exchange paths cannot be used when subject_token_role_mappings are configured"), nil
 		}
@@ -194,6 +195,24 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		return logical.ErrorResponse("subject_token_audience is only supported when subject_token is omitted"), nil
 	}
 
+	if brokeredMode {
+		validatedClaims, validateErr := b.validateBrokeredSubjectToken(ctx, subjectToken, config)
+		if validateErr != nil {
+			return logical.ErrorResponse("failed to validate brokered subject_token: %v", validateErr), nil
+		}
+
+		mappedClaims, mappingErr := renderBrokeredClaimMappings(validatedClaims, config.BrokeredSubjectTokenClaimMappings)
+		if mappingErr != nil {
+			return logical.ErrorResponse("failed to map brokered subject_token claims: %v", mappingErr), nil
+		}
+
+		brokeredToken, mintErr := b.selfMintBrokeredSubjectToken(ctx, req, config, mappedClaims)
+		if mintErr != nil {
+			return logical.ErrorResponse("failed to self-mint brokered subject_token: %v", mintErr), nil
+		}
+		subjectToken = brokeredToken
+	}
+
 	var resolvedSubjectTokenClaims map[string]interface{}
 	if config.DebugReturnResolvedSubjectTokenClaims {
 		claims, claimsErr := decodeJWTClaimsMap(subjectToken)
@@ -206,7 +225,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 	}
 
-	if subjectTokenProvided && len(config.SubjectTokenRoleMappings) > 0 {
+	if subjectTokenProvided && !brokeredMode && len(config.SubjectTokenRoleMappings) > 0 {
 		derivedRoleName, derivedRoleErr := resolveRoleFromSubjectToken(subjectToken, config.SubjectTokenRoleMappings)
 		if derivedRoleErr != nil {
 			return logical.ErrorResponse("unable to derive role from subject_token: %v", derivedRoleErr), nil

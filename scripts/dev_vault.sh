@@ -7,6 +7,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEV_ENV_FILE="$REPO_ROOT/.env.local"
 DEV_SELF_MINT_KEY_FILE="$REPO_ROOT/.vault-dev-self-mint-key.pem"
 
+print_shell_exports() {
+    echo "export VAULT_ADDR='${VAULT_ADDR:-http://127.0.0.1:8200}'"
+    echo "export VAULT_TOKEN='${VAULT_TOKEN:-root}'"
+}
+
 reset_dev_oci_env() {
     unset OCI_DOMAIN_URL
     unset OCI_CLIENT_ID
@@ -159,12 +164,19 @@ if [ "$ACTION" == "start" ]; then
 
     echo ""
     echo "Dev Vault is ready."
-    echo "Environment:"
-    echo "export VAULT_ADDR='$VAULT_ADDR'"
-    echo "export VAULT_TOKEN='$VAULT_TOKEN'"
+    echo "This script cannot modify the parent shell environment."
+    echo "Run this in your current shell to load the dev Vault variables:"
+    echo "eval \"\$($0 env)\""
+    echo "Resolved exports:"
+    print_shell_exports
     if [ -f "$DEV_SELF_MINT_KEY_FILE" ]; then
         echo "Self-mint signing key: $DEV_SELF_MINT_KEY_FILE"
     fi
+
+elif [ "$ACTION" == "env" ]; then
+    export VAULT_ADDR=${VAULT_ADDR:-"http://127.0.0.1:8200"}
+    export VAULT_TOKEN=${VAULT_TOKEN:-"root"}
+    print_shell_exports
 
 elif [ "$ACTION" == "stop" ]; then
     if [ -f /tmp/vault.pid ]; then
@@ -179,6 +191,6 @@ elif [ "$ACTION" == "stop" ]; then
         pkill -f "vault server -dev" && echo "Killed vault process" || echo "No vault process found."
     fi
 else
-    echo "Usage: $0 {start|stop}"
+    echo "Usage: $0 {start|stop|env}"
     exit 1
 fi

@@ -1,0 +1,28 @@
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Credential Engine
+    participant S as Vault Storage
+    participant SV as Vault System View
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange[/<role>]` with external `subject_token`
+    V->>S: Read backend config, brokered trust config, self-mint key, optional role
+    S-->>V: Config, mappings, signing key, role TTL/custom claims
+    V->>V: Check `brokered_subject_token_enabled=true`
+    V->>V: Validate JWT header, alg, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
+    V->>V: Render mapped claims from validated external claims
+    V->>SV: Read trusted Vault request and identity context
+    SV-->>V: Entity, alias, group, mount metadata
+    V->>V: Build brokered self-minted JWT
+    opt Explicit `/exchange/<role>` path used
+        V->>V: Add role `self_mint_custom_claims` if non-conflicting
+    end
+    alt Caller supplies `public_key`
+        V->>V: Use caller public key for OCI exchange
+    else `public_key` omitted
+        V->>V: Generate exchange RSA keypair
+    end
+    V->>O: POST `/oauth2/v1/token` with brokered self-minted `subject_token`
+    O-->>V: OCI UPST or RPST
+    V-->>C: Vault secret response with OCI token and generated exchange private key only when engine generated the exchange keypair

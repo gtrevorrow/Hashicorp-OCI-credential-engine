@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
 	"github.com/hashicorp/vault/sdk/helper/pluginutil"
 	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/stretchr/testify/assert"
@@ -968,6 +969,255 @@ func TestPathExchange_SelfMintWithoutRolePathDoesNotAddRoleCustomClaims(t *testi
 	claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
 	require.True(t, ok)
 	require.NotContains(t, claims, "oci_role")
+}
+
+func TestPathExchange_BrokeredModeUsesReissuedToken(t *testing.T) {
+	b, storage := getTestBackend(t)
+	incomingKey := generateTestRSAPrivateKey(t)
+	selfMintKey := generateTestRSAPrivateKeyPEM(t)
+	var exchangedSubjectToken string
+
+	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
+		exchangedSubjectToken = subjectToken
+		return &tokenExchangeResult{
+			AccessToken:        "access-token",
+			SessionToken:       "session-token",
+			TokenType:          "Bearer",
+			RequestedTokenType: ociRequestedTokenTypeUPST,
+		}, nil
+	})
+
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                                 "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                                  "test-client-id",
+			"client_secret":                              "test-client-secret",
+			"subject_token_self_mint_issuer":             "https://vault.example.com",
+			"subject_token_self_mint_private_key":        selfMintKey,
+			"debug_return_resolved_subject_token_claims": true,
+			"brokered_subject_token_enabled":             true,
+			"brokered_subject_token_trust_type":          "public_keys",
+			"brokered_subject_token_issuer":              "https://issuer.example.com",
+			"brokered_subject_token_allowed_audiences":   []string{"urn:test"},
+			"brokered_subject_token_allowed_algs":        []string{"RS256"},
+			"brokered_subject_token_public_keys":         encodeTestPublicKeyPEM(t, &incomingKey.PublicKey),
+			"brokered_subject_token_claim_mappings":      `{"external_sub":"{{ claims.sub }}","principal":"svc/{{ claims.org }}/{{ claims.user.id }}"}`,
+		},
+	})
+	require.NoError(t, err)
+
+	incomingToken := makeSignedTestJWT(t, incomingKey, jose.RS256, map[string]interface{}{
+		"iss":  "https://issuer.example.com",
+		"sub":  "user-123",
+		"aud":  "urn:test",
+		"org":  "acme",
+		"user": map[string]interface{}{"id": "42"},
+		"iat":  time.Now().Add(-time.Minute).Unix(),
+		"nbf":  time.Now().Add(-time.Minute).Unix(),
+		"exp":  time.Now().Add(time.Hour).Unix(),
+	})
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token": incomingToken,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.False(t, resp.IsError())
+	require.NotEqual(t, incomingToken, exchangedSubjectToken)
+
+	claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "https://vault.example.com", claims["iss"])
+	require.Equal(t, "user-123", claims["external_sub"])
+	require.Equal(t, "svc/acme/42", claims["principal"])
+}
+
+func TestPathExchange_BrokeredRolePathAddsExistingSelfMintCustomClaims(t *testing.T) {
+	b, storage := getTestBackend(t)
+	incomingKey := generateTestRSAPrivateKey(t)
+	selfMintKey := generateTestRSAPrivateKeyPEM(t)
+
+	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
+		return &tokenExchangeResult{
+			AccessToken:        "access-token",
+			SessionToken:       "session-token",
+			TokenType:          "Bearer",
+			RequestedTokenType: ociRequestedTokenTypeUPST,
+		}, nil
+	})
+
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                                 "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                                  "test-client-id",
+			"client_secret":                              "test-client-secret",
+			"subject_token_self_mint_issuer":             "https://vault.example.com",
+			"subject_token_self_mint_private_key":        selfMintKey,
+			"debug_return_resolved_subject_token_claims": true,
+			"brokered_subject_token_enabled":             true,
+			"brokered_subject_token_trust_type":          "public_keys",
+			"brokered_subject_token_issuer":              "https://issuer.example.com",
+			"brokered_subject_token_allowed_audiences":   []string{"urn:test"},
+			"brokered_subject_token_allowed_algs":        []string{"RS256"},
+			"brokered_subject_token_public_keys":         encodeTestPublicKeyPEM(t, &incomingKey.PublicKey),
+			"brokered_subject_token_claim_mappings":      `{"external_sub":"{{ claims.sub }}"}`,
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "role/developer",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"self_mint_custom_claims": `{"oci_role":"developer"}`,
+		},
+	})
+	require.NoError(t, err)
+
+	incomingToken := makeSignedTestJWT(t, incomingKey, jose.RS256, map[string]interface{}{
+		"iss": "https://issuer.example.com",
+		"sub": "user-123",
+		"aud": "urn:test",
+		"iat": time.Now().Add(-time.Minute).Unix(),
+		"nbf": time.Now().Add(-time.Minute).Unix(),
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange/developer",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token": incomingToken,
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, resp.IsError())
+
+	claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "developer", claims["oci_role"])
+	require.Equal(t, "user-123", claims["external_sub"])
+}
+
+func TestPathExchange_BrokeredBareExchangeDoesNotAddRoleScopedClaims(t *testing.T) {
+	b, storage := getTestBackend(t)
+	incomingKey := generateTestRSAPrivateKey(t)
+	selfMintKey := generateTestRSAPrivateKeyPEM(t)
+
+	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
+		return &tokenExchangeResult{
+			AccessToken:        "access-token",
+			SessionToken:       "session-token",
+			TokenType:          "Bearer",
+			RequestedTokenType: ociRequestedTokenTypeUPST,
+		}, nil
+	})
+
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                                 "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                                  "test-client-id",
+			"client_secret":                              "test-client-secret",
+			"subject_token_self_mint_issuer":             "https://vault.example.com",
+			"subject_token_self_mint_private_key":        selfMintKey,
+			"debug_return_resolved_subject_token_claims": true,
+			"brokered_subject_token_enabled":             true,
+			"brokered_subject_token_trust_type":          "public_keys",
+			"brokered_subject_token_issuer":              "https://issuer.example.com",
+			"brokered_subject_token_allowed_audiences":   []string{"urn:test"},
+			"brokered_subject_token_allowed_algs":        []string{"RS256"},
+			"brokered_subject_token_public_keys":         encodeTestPublicKeyPEM(t, &incomingKey.PublicKey),
+			"brokered_subject_token_claim_mappings":      `{"external_sub":"{{ claims.sub }}"}`,
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "role/developer",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"self_mint_custom_claims": `{"oci_role":"developer"}`,
+		},
+	})
+	require.NoError(t, err)
+
+	incomingToken := makeSignedTestJWT(t, incomingKey, jose.RS256, map[string]interface{}{
+		"iss": "https://issuer.example.com",
+		"sub": "user-123",
+		"aud": "urn:test",
+		"iat": time.Now().Add(-time.Minute).Unix(),
+		"nbf": time.Now().Add(-time.Minute).Unix(),
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token": incomingToken,
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, resp.IsError())
+
+	claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
+	require.True(t, ok)
+	require.NotContains(t, claims, "oci_role")
+}
+
+func TestPathExchange_BrokeredModeOffPreservesDirectPassThrough(t *testing.T) {
+	b, storage := getTestBackend(t)
+	b.setTokenExchanger(func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
+		require.Equal(t, "caller-jwt-token", subjectToken)
+		return &tokenExchangeResult{
+			AccessToken:        "access-token",
+			SessionToken:       "session-token",
+			TokenType:          "Bearer",
+			RequestedTokenType: ociRequestedTokenTypeUPST,
+		}, nil
+	})
+
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                     "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                      "test-client-id",
+			"client_secret":                  "test-client-secret",
+			"brokered_subject_token_enabled": false,
+		},
+	})
+	require.NoError(t, err)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token": "caller-jwt-token",
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, resp.IsError())
 }
 
 func TestPathExchange_SubjectTokenAudienceOverrideRejectedForCallerProvidedToken(t *testing.T) {

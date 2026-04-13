@@ -16,7 +16,7 @@ sequenceDiagram
     SV-->>V: Entity, alias, group, mount metadata
     V->>V: Build brokered self-minted JWT
     opt Explicit `/exchange/<role>` path used
-        V->>V: Add role `self_mint_custom_claims` if non-conflicting
+        V->>V: Render role `self_mint_custom_claims` templates if non-conflicting
     end
     alt Caller supplies `public_key`
         V->>V: Use caller public key for OCI exchange

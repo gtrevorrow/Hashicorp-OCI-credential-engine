@@ -30,8 +30,8 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | ROL-01 | Create role minimal | name="dev", default_ttl=1h | Success |
-| ROL-02 | Create role full | + description, max_ttl, allowed_groups, allowed_subjects, self_mint_custom_claims | Success |
-| ROL-03 | Read role | Read existing role | All fields returned, including self_mint_custom_claims when configured |
+| ROL-02 | Create role full | + description, max_ttl, allowed_groups, allowed_subjects, templated self_mint_custom_claims | Success |
+| ROL-03 | Read role | Read existing role | All fields returned, including templated self_mint_custom_claims when configured |
 | ROL-04 | List roles | Create 3 roles, list | All 3 names returned |
 | ROL-05 | Update role | Change TTL on existing role | New values persisted |
 | ROL-06 | Delete role | Delete existing role | Role removed |
@@ -42,6 +42,8 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | ROL-11 | Role with invalid self-mint custom claims JSON | self_mint_custom_claims is malformed JSON | Error: invalid self_mint_custom_claims |
 | ROL-12 | Role with reserved JWT claim override | self_mint_custom_claims includes `sub`, `iss`, `aud`, `exp`, `iat`, `nbf`, or `jti` | Error: reserved claim cannot be overridden |
 | ROL-13 | Role with reserved Vault namespace claim | self_mint_custom_claims includes `vault_*` | Error: reserved vault_ namespace |
+| ROL-14 | Role with non-string custom claim value | self_mint_custom_claims contains array, object, number, or bool | Error: claim must use a string template |
+| ROL-15 | Role with invalid self-mint template syntax | self_mint_custom_claims contains malformed template | Error: invalid template syntax |
 
 ## 3. Exchange Path - Basic Flows
 
@@ -60,7 +62,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-11 | Exchange with disallowed audience override | omit subject_token, set subject_token_audience to unlisted value | Error: audience override not allowed |
 | EXC-12 | Exchange with subject_token_audience and caller-provided JWT | subject_token and subject_token_audience set | Error: audience override only applies to plugin-issued tokens |
 | EXC-13 | Brokered mode uses re-issued token | subject_token provided, brokered_subject_token_enabled=true | OCI exchange receives plugin-issued brokered JWT, not original external token |
-| EXC-14 | Brokered mode explicit role path adds self-mint custom claims | brokered mode + `/exchange/:role` + role self_mint_custom_claims | Brokered JWT includes mapped claims plus role additive custom claims |
+| EXC-14 | Brokered mode explicit role path adds self-mint custom claims | brokered mode + `/exchange/:role` + templated role self_mint_custom_claims | Brokered JWT includes mapped claims plus rendered additive custom claims |
 | EXC-15 | Brokered bare exchange omits role-scoped custom claims | brokered mode + bare `/exchange` | Brokered JWT includes mapped claims only, without role-scoped custom claims |
 | EXC-16 | Brokered mode disabled preserves direct pass-through | subject_token provided, brokered mode off | OCI exchange receives original caller-supplied token |
 
@@ -138,9 +140,12 @@ Current automated coverage is limited to TTL selection and clamping during excha
 | CLM-01 | Self-mint uses Vault-derived subject | plugin-issued self-mint with `EntityID` present | `sub` is derived from Vault identity, not the selected exchange role |
 | CLM-02 | Self-mint includes entity and alias claims | plugin-issued self-mint with entity/alias metadata available | JWT contains stable Vault-derived identity claims |
 | CLM-03 | Self-mint excludes exchange role selector | plugin-issued self-mint invoked through `/exchange/:role` | JWT does not contain `vault_role` or the selected exchange role |
-| CLM-04 | Self-mint adds role-scoped custom claims only on role path | plugin-issued self-mint invoked through `/exchange/:role` and that role has self_mint_custom_claims | JWT contains the configured additive custom claims |
+| CLM-04 | Self-mint adds role-scoped custom claims only on role path | plugin-issued self-mint invoked through `/exchange/:role` and that role has self_mint_custom_claims | JWT contains the configured rendered additive custom claims |
 | CLM-05 | Bare self-mint does not infer role-scoped custom claims | plugin-issued self-mint invoked through bare `/exchange` while roles with self_mint_custom_claims exist | JWT does not contain role-scoped custom claims because no explicit role was selected |
 | CLM-06 | Brokered self-mint adds mapped claims additively | brokered mode with claim mappings | JWT contains mapped external claims without overriding reserved or `vault_*` claims |
+| CLM-07 | Self-mint custom claims can render trusted Vault metadata | role self_mint_custom_claims references `vault.entity.*` or `vault.alias.*` | JWT contains rendered string claims from trusted Vault context |
+| CLM-08 | Self-mint custom claims can condense group names | role self_mint_custom_claims uses `join(vault.groups, ",")` | JWT contains joined group-name string |
+| CLM-09 | Brokered role templates can read validated brokered claims | brokered mode + `/exchange/:role` + `{{ brokered.claims.sub }}` | JWT contains rendered string claim from validated brokered claims |
 
 ## 9. OCI API Integration (Mock/Real)
 
@@ -164,14 +169,14 @@ Current automated coverage is limited to TTL selection and clamping during excha
 Currently covered by automated tests:
 - `CFG-01`, `CFG-02`, `CFG-03`, `CFG-05`, `CFG-06`, `CFG-07`, `CFG-08`, `CFG-09`, `CFG-10`, `CFG-11`
 - `CFG-12`, `CFG-13`, `CFG-14`, `CFG-15`, `CFG-16`, `CFG-17`, `CFG-18`
-- `ROL-01`, `ROL-02`, `ROL-03`, `ROL-04`, `ROL-06`, `ROL-08`, `ROL-10`, `ROL-11`, `ROL-12`, `ROL-13`
+- `ROL-01`, `ROL-02`, `ROL-03`, `ROL-04`, `ROL-06`, `ROL-08`, `ROL-10`, `ROL-11`, `ROL-12`, `ROL-13`, `ROL-14`, `ROL-15`
 - `EXC-04`, `EXC-06`, `EXC-07`, `EXC-08`, `EXC-09`, `EXC-10`, `EXC-11`, `EXC-12`, `EXC-13`, `EXC-14`, `EXC-15`, `EXC-16`
 - Requested token-type validation for unsupported values and RPST missing `res_type`
 - `RCM-01`, `RCM-02`, `RCM-03`, `RCM-04`, `RCM-05`, `RCM-06`, `RCM-07`
 - `BRV-01`, `BRV-02`, `BRV-03`, `BRV-04`, `BRV-05`, `BRV-06`, `BRV-07`
 - `BRM-01`, `BRM-02`, `BRM-03`, `BRM-04`, `BRM-05`, `BRM-06`
 - `TTL-01`, `TTL-02`
-- `CLM-01`, `CLM-02`, `CLM-03`, `CLM-04`, `CLM-05`, `CLM-06`
+- `CLM-01`, `CLM-02`, `CLM-03`, `CLM-04`, `CLM-05`, `CLM-06`, `CLM-07`, `CLM-08`, `CLM-09`
 - `JWK-01`, `JWK-02`, `JWK-03`
 - `OCI-01`, `OCI-03`
 
@@ -193,7 +198,7 @@ Not yet covered by automated tests:
 ### MVP Tests (Must Have)
 - **CFG-01, CFG-05** - Basic config write/read
 - **ROL-01, ROL-03** - Basic role create/read
-- **EXC-01, EXC-10** - Basic exchange success
+- **EXC-01, EXC-10** - Basic exchange success and allowlisted audience override
 - **RCM-01, RCM-02** - Role claim enforcement
 - **TTL-01** - Default TTL behavior
 
@@ -232,9 +237,9 @@ vault write oci/role/dev default_ttl=3600 max_ttl=7200
 # Test role read (ROL-03)
 vault read oci/role/dev
 
-# Test self-mint role custom claims (ROL-02 / CLM-04)
+# Test self-mint role custom claims (ROL-02 / CLM-04 / CLM-07 / CLM-08)
 vault write oci/role/developer \
-    self_mint_custom_claims='{"oci_role":"developer","entitlements":["read","write"]}'
+    self_mint_custom_claims='{"oci_role":"developer","entity_ref":"{{ vault.entity.id }}","group_list":"{{ join(vault.groups, \",\") }}"}'
 
 # Test self-mint exchange with explicit role path (EXC-04 / CLM-04)
 vault write oci/exchange/developer \
@@ -246,7 +251,7 @@ vault write oci/exchange/developer \
 
 Current coverage includes:
 - Unit tests in `oci-backend/*_test.go` for config, roles, subject-token role mappings, plugin-issued subject-token flow, self-mint, and JWKS behavior
-- Handler-level tests covering explicit `/exchange/:role` self-mint custom-claim injection, bare `/exchange` omission of role-scoped custom claims, and brokered-mode re-issuance behavior
+- Handler-level tests covering explicit `/exchange/:role` self-mint custom-claim rendering, bare `/exchange` omission of role-scoped custom claims, trusted Vault-context interpolation, `join(vault.groups, ...)`, and brokered-mode re-issuance behavior
 - Integration tests in [oci_client_integration_test.go](/home/gordon/clawd/projects/Hashicorp-OCI-credential-engine/oci-backend/oci_client_integration_test.go) for mock OCI token exchange behavior
 
 Future additions:

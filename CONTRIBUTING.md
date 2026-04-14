@@ -42,6 +42,8 @@ Our GitHub Actions PR workflow utilizes `commitlint` to enforce these rules.
 
 We use `make` to streamline building the Vault plugin.
 
+This document is the source of truth for contributor build, local Vault dev, and test workflows. The [README](README.md) keeps only a short install overview and links back here for contributor-facing detail.
+
 ### Prerequisites
 * Go 1.21 or later
 * Vault 1.12+ (for local testing)
@@ -71,22 +73,32 @@ This generates a `go.work` file that tells the Go compiler to use your local SDK
 ### Testing Locally with Vault
 To iteratively test the plugin locally:
 
-1. Build the plugin:
-```bash
-make build
-```
-
-2. Start Vault in dev mode using the helper script:
+1. Start Vault in dev mode using the helper script:
 ```bash
 ./scripts/dev_vault.sh start
 ```
 
-3. Load the dev Vault environment into your current shell:
+This is the preferred local workflow. The helper script:
+- runs `make build`
+- copies the rebuilt binary into Vault's dev plugin directory
+- starts Vault dev mode
+- registers the plugin
+- enables the `oci` mount
+- seeds `oci/config` from `.env.local` when that file is present
+
+2. Load the dev Vault environment into your current shell:
 ```bash
 eval "$(./scripts/dev_vault.sh env)"
 ```
 
-4. Register and enable the plugin if you are not relying on the helper script to do it for you:
+3. If you change code and want a clean dev refresh, restart through the same helper instead of relying on ad hoc rebuild and reload steps:
+```bash
+./scripts/dev_vault.sh stop
+./scripts/dev_vault.sh start
+eval "$(./scripts/dev_vault.sh env)"
+```
+
+4. Register and enable the plugin manually only if you are not relying on the helper script to do it for you:
 ```bash
 # Automatically calculates SHA256 and registers the plugin
 ./scripts/register_plugin.sh

@@ -202,24 +202,24 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 
 ### Build the Plugin
 
+For contributor-oriented build, local Vault dev, and test workflows, use [CONTRIBUTING.md](CONTRIBUTING.md#building-and-local-development) as the source of truth.
+
 ```bash
 # Clone the repository
 git clone https://github.com/gordon/Hashicorp-OCI-credential-engine.git
 cd Hashicorp-OCI-credential-engine
 
-# Download dependencies
-go mod tidy
-
 # Build the plugin
 make build
-
-# Or build for all platforms
-make build-all
 ```
 
 ### Register the Plugin with Vault
 
-For local development, use the  `./scripts/dev_vault.sh start` script that runs `make build`, starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are for non-dev setups.
+For local development, prefer `./scripts/dev_vault.sh start`. That helper rebuilds the plugin, refreshes the dev plugin directory Vault actually runs from, starts Vault dev mode, registers the plugin, enables the `oci` mount, and can seed `oci/config` from a local `.env.local` file in the repo root.
+
+For the detailed local-development and test workflow, including `dev_vault.sh`, `register_plugin.sh`, `make test-unit`, and `make test-integration`, see [CONTRIBUTING.md](CONTRIBUTING.md#testing-locally-with-vault).
+
+The manual steps below are for non-dev setups or operators who want to register the plugin explicitly.
 
 The helper script cannot set environment variables in your current shell by itself. To load the dev Vault CLI environment after startup, run:
 

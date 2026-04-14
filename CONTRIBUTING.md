@@ -106,6 +106,25 @@ eval "$(./scripts/dev_vault.sh env)"
 vault secrets enable -path=oci -plugin-name=oci plugin
 ```
 
+5. For a representative non-root self-mint smoke test, use the helper script:
+```bash
+./scripts/smoke_self_mint_non_root.sh
+```
+
+This script assumes the dev server is already running through `./scripts/dev_vault.sh start` and that `oci/config` has been seeded successfully. It:
+- enables `userpass` if needed
+- creates a non-root user and internal identity group
+- attaches the user's entity to that group
+- writes a role with templated self-mint custom claims
+- runs `/oci/exchange/:role` as the non-root user
+- prints `resolved_subject_token_claims`
+
+This is the easiest representative local test for:
+- `vault.entity.*`
+- `vault.alias.*`
+- `vault.groups`
+- `join(vault.groups, ",")`
+
 *(Note: When you are finished developing, you can stop the server with `./scripts/dev_vault.sh stop`)*
 
 ## Test Strategy

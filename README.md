@@ -96,7 +96,7 @@ sequenceDiagram
     V->>SV: Read trusted Vault request and identity context
     SV-->>V: Entity, alias, group, mount metadata
     V->>V: Build brokered self-minted JWT
-    V->>V: Add role `self_mint_custom_claims` only when `/exchange/<role>` is used
+    V->>V: Render role `self_mint_custom_claims` templates only when `/exchange/<role>` is used
     alt Caller supplies `public_key`
         V->>V: Use caller public key for OCI exchange
     else `public_key` omitted
@@ -202,24 +202,24 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 
 ### Build the Plugin
 
+For contributor-oriented build, local Vault dev, and test workflows, use [CONTRIBUTING.md](CONTRIBUTING.md#building-and-local-development) as the source of truth.
+
 ```bash
 # Clone the repository
 git clone https://github.com/gordon/Hashicorp-OCI-credential-engine.git
 cd Hashicorp-OCI-credential-engine
 
-# Download dependencies
-go mod tidy
-
 # Build the plugin
 make build
-
-# Or build for all platforms
-make build-all
 ```
 
 ### Register the Plugin with Vault
 
-For local development, use the  `./scripts/dev_vault.sh start` script that runs `make build`, starts Vault dev mode, registers the plugin, enables the `oci` mount automatically, and can seed `oci/config` from a local `.env.local` file in the repo root. The manual steps below are for non-dev setups.
+For local development, prefer `./scripts/dev_vault.sh start`. That helper rebuilds the plugin, refreshes the dev plugin directory Vault actually runs from, starts Vault dev mode, registers the plugin, enables the `oci` mount, and can seed `oci/config` from a local `.env.local` file in the repo root.
+
+For the detailed local-development and test workflow, including `dev_vault.sh`, `register_plugin.sh`, `make test-unit`, and `make test-integration`, see [CONTRIBUTING.md](CONTRIBUTING.md#testing-locally-with-vault).
+
+The manual steps below are for non-dev setups or operators who want to register the plugin explicitly.
 
 The helper script cannot set environment variables in your current shell by itself. To load the dev Vault CLI environment after startup, run:
 
@@ -366,7 +366,7 @@ vault write oci/config \
 
 If `subject_token_self_mint_enabled=true`, OCI must be able to discover the published JWKS for the self-mint signing key. See [Self-Mint JWKS Publication Workflow](#self-mint-jwks-publication-workflow).
 
-Brokered mode also relies on the existing self-mint signing configuration because the plugin re-issues a new JWT before calling OCI. In phase 1, explicit `/oci/exchange/:role` requests are still allowed in brokered mode, but role contribution is limited to the existing TTL controls and additive `self_mint_custom_claims`. Existing `subject_token_role_mappings` remain part of the direct pass-through flow and are not reused in brokered mode.
+Brokered mode also relies on the existing self-mint signing configuration because the plugin re-issues a new JWT before calling OCI. Explicit `/oci/exchange/:role` requests are still allowed in brokered mode, but role contribution is limited to the existing TTL controls and additive templated `self_mint_custom_claims`. Existing `subject_token_role_mappings` remain part of the direct pass-through flow and are not reused in brokered mode.
 
 The plugin keeps the private signing key in Vault plugin storage. The published JWKS contains only the public key material.
 
@@ -663,7 +663,7 @@ vault write oci/exchange \
     requested_token_type="urn:oci:token-type:oci-upst"
 ```
 
-5. If you need existing role TTL controls or additive `self_mint_custom_claims`, use the explicit role path:
+5. If you need existing role TTL controls or additive templated `self_mint_custom_claims`, use the explicit role path:
 
 ```bash
 vault write oci/exchange/developer \
@@ -682,7 +682,7 @@ Brokered-mode mapping rules:
 
 See [DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md](DESIGN_VAULT_ROLE_TO_OCI_SERVICE_USER.md) for full architecture and implementation details.
 
-*Important: If the caller omits `subject_token`, the plugin can only continue when `enable_plugin_issued_subject_token=true`. In the default callback flow, the plugin first tries to obtain a Vault-issued identity token. If Vault identity-token generation is unavailable, the plugin falls back to self-mint only when self-mint is explicitly enabled and configured. In that self-mint case, the JWT is built from trusted Vault runtime identity context. The selected exchange role is not copied into the token, although it may still apply local plugin constraints or add configured custom claims.*
+*Important: If the caller omits `subject_token`, the plugin can only continue when `enable_plugin_issued_subject_token=true`. In the default callback flow, the plugin first tries to obtain a Vault-issued identity token. If Vault identity-token generation is unavailable, the plugin falls back to self-mint only when self-mint is explicitly enabled and configured. In that self-mint case, the JWT is built from trusted Vault runtime identity context. The selected exchange role is not copied into the token, although it may still apply local plugin constraints or add configured templated custom claims.*
 
 ### Default Self-Mint Claim Set
 
@@ -722,13 +722,37 @@ Design notes:
 
 ### Role-Scoped Custom Claims For Self-Mint
 
-Roles may optionally contribute additional custom claims to self-minted subject tokens.
+Roles may optionally contribute additional custom claims to self-minted subject tokens through string templates stored in `self_mint_custom_claims`.
 
 Guardrails:
 - This applies only to the plugin self-mint path when the request selects an explicit role.
 - Custom claims are additive only. They do not replace or modify standard JWT claims or trusted Vault-derived claims.
+- Configured values are string templates. Pure string literals are valid and do not require interpolation.
 - Reserved JWT claims cannot be configured: `iss`, `sub`, `aud`, `iat`, `exp`, `nbf`, `jti`.
 - Claims in the `vault_` namespace are reserved for trusted Vault-derived identity context and cannot be configured.
+- Template rendering fails closed on bad syntax, missing values, collisions, or unsupported non-scalar interpolation.
+
+Trusted template inputs:
+- `vault.entity.id`
+- `vault.entity.name`
+- `vault.entity.namespace_id`
+- `vault.entity.metadata.*`
+- `vault.alias.name`
+- `vault.alias.mount_accessor`
+- `vault.alias.mount_type`
+- `vault.alias.metadata.*`
+- `vault.alias.custom_metadata.*`
+- `vault.request.display_name`
+- `vault.request.mount_accessor`
+- `vault.request.mount_type`
+- `vault.request.client_token_accessor`
+- `vault.groups`
+
+Supported template style:
+- direct lookup: `{{ vault.entity.id }}`
+- nested lookup: `{{ vault.alias.metadata.arn }}`
+- literal + interpolation: `aws/{{ vault.alias.metadata.arn }}`
+- list condensation: `{{ join(vault.groups, ",") }}`
 
 Example role configuration:
 
@@ -739,8 +763,10 @@ vault write oci/role/developer \
     max_ttl=14400 \
     self_mint_custom_claims='{
       "oci_role": "developer",
-      "entitlements": ["repo-read", "artifact-pull"],
-      "tenant": {"name": "dev"}
+      "entity_ref": "{{ vault.entity.id }}",
+      "aws_arn": "{{ vault.alias.metadata.arn }}",
+      "principal": "aws/{{ vault.alias.metadata.arn }}",
+      "group_list": "{{ join(vault.groups, \",\") }}"
     }'
 ```
 
@@ -753,8 +779,9 @@ vault write oci/exchange/developer \
 
 Typical mapping scenarios:
 - Add an `oci_role` claim so OCI trust rules can distinguish multiple workload classes minted by the same plugin.
-- Add an `entitlements` array for downstream systems that expect coarse-grained capability tags.
-- Add a small structured object such as `tenant.name` or `environment.name` when a relying party expects nested JSON claims.
+- Copy a trusted alias metadata value such as an AWS ARN into a compact OCI-facing claim.
+- Condense group membership into a single string claim using `join(vault.groups, ",")`.
+- Build a normalized principal string from trusted Vault context rather than caller-supplied input.
 
 ### Using with OCI CLI
 
@@ -805,7 +832,7 @@ For RPST requests, `res_type` is required and the response will include `rpst_to
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST/PUT` | `/oci/exchange` | Exchange JWT subject token for OCI credentials; when `brokered_subject_token_enabled=true`, a caller-supplied `subject_token` is validated and re-issued before OCI exchange |
-| `POST/PUT` | `/oci/exchange/:role` | Exchange JWT subject token for OCI credentials using an explicit plugin role selected from the path; in brokered mode the role contributes existing TTL policy and additive `self_mint_custom_claims` only |
+| `POST/PUT` | `/oci/exchange/:role` | Exchange JWT subject token for OCI credentials using an explicit plugin role selected from the path; in brokered mode the role contributes existing TTL policy and additive templated `self_mint_custom_claims` only |
 
 ### JWKS Path
 
@@ -855,7 +882,7 @@ Role fields:
 - `max_ttl`
 - `allowed_subjects`
 - `allowed_groups`
-- `self_mint_custom_claims`: JSON object of additional claims to add to self-minted subject tokens for that role
+- `self_mint_custom_claims`: JSON object of output claim name to string template for additive self-minted claims; supports pure string literals and trusted-context interpolation
 
 ## Architecture Details
 
@@ -870,7 +897,7 @@ Role fields:
 
 ### Security Considerations
 
-- **Token Validation**: Subject token validation is performed by OCI IAM during token exchange
+- **Token Validation**: In direct pass-through mode, OCI IAM validates the caller-supplied subject token during exchange. In brokered mode, the plugin validates the external JWT locally, self-mints a new plugin-issued JWT, and OCI validates that brokered JWT during exchange.
 - **TTL Semantics**: RPST requests can be bounded by plugin TTL policy. UPST lifetime is determined by OCI; plugin TTL settings mainly control Vault lease metadata for UPST responses.
 - **Lease Management**: Vault lease lifecycle is applied to issued secrets, but OCI exchanged tokens cannot be actively revoked server-side before expiration. Vault simply drops the lease locally.
 - **Audit Logging**: All token exchanges are logged to Vault audit log
@@ -884,7 +911,7 @@ Use Vault policy boundaries as the primary control plane:
 2. Restrict role usage with path-based ACLs so each workload can only call specific role paths or namespaces.
 3. Keep `enable_plugin_issued_subject_token=false` by default for general clients, and enable plugin-issued subject-token mode only for tightly scoped policies.
 4. Use `subject_token_role_mappings` when callers provide their own JWTs and you want Vault role selection to come from trusted JWT claims rather than an explicit role path.
-5. Treat plugin-issued self-mint as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the selected exchange role path. If you add `self_mint_custom_claims`, keep them additive and use them only for claims that are not part of the trusted Vault-derived base set.
+5. Treat plugin-issued self-mint as a separate trust model: OCI should rely on Vault-derived claims such as entity, alias, group, or namespace attributes, not the selected exchange role path. If you add `self_mint_custom_claims`, keep them additive and derive them only from trusted Vault context rather than caller-controlled request inputs.
 6. Enable `strict_role_name_match=true` to prevent malformed role values.
 7. Protect `oci/config` write access so only operators can rotate or replace self-mint settings and signing keys.
 8. Treat `oci/exchange` as a privileged identity-issuance path when plugin-issued subject-token mode is enabled; do not grant it broadly just because OCI permissions are controlled later by service-user policy.

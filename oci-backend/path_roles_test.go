@@ -24,7 +24,7 @@ func TestPathRoles_CreateUpdate(t *testing.T) {
 				"max_ttl":                 86400,
 				"allowed_subjects":        []string{"systemA", "systemB"},
 				"allowed_groups":          []string{"dev-team"},
-				"self_mint_custom_claims": `{"oci_role":"developer","entitlements":["read","write"]}`,
+				"self_mint_custom_claims": `{"oci_role":"developer","principal":"aws/{{ vault.alias.metadata.arn }}"}`,
 			},
 		}
 
@@ -39,6 +39,7 @@ func TestPathRoles_CreateUpdate(t *testing.T) {
 		assert.Equal(t, "A test role", role.Description)
 		assert.Contains(t, role.AllowedSubjects, "systemA")
 		assert.Equal(t, "developer", role.SelfMintCustomClaims["oci_role"])
+		assert.Equal(t, "aws/{{ vault.alias.metadata.arn }}", role.SelfMintCustomClaims["principal"])
 	})
 
 	// Covers ROL-08.
@@ -93,7 +94,7 @@ func TestPathRoles_ReadListDelete(t *testing.T) {
 		assert.Equal(t, "Pre-created role", resp.Data["description"])
 		assert.Equal(t, 1800, resp.Data["default_ttl"])
 		assert.Equal(t, 86400, resp.Data["max_ttl"]) // Because of the default logic
-		customClaims, ok := resp.Data["self_mint_custom_claims"].(map[string]interface{})
+		customClaims, ok := resp.Data["self_mint_custom_claims"].(map[string]string)
 		require.True(t, ok)
 		assert.Equal(t, "developer", customClaims["oci_role"])
 	})
@@ -228,6 +229,23 @@ func TestPathRoles_SelfMintCustomClaimsValidation(t *testing.T) {
 		require.Contains(t, resp.Error().Error(), "reserved")
 	})
 
+	t.Run("Reject Non String Values", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "role/test-role",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"self_mint_custom_claims": `{"entitlements":["read","write"]}`,
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "must use a string template")
+	})
+
 	t.Run("Reject Trusted Vault Namespace Claims", func(t *testing.T) {
 		req := &logical.Request{
 			Operation: logical.UpdateOperation,
@@ -243,5 +261,22 @@ func TestPathRoles_SelfMintCustomClaimsValidation(t *testing.T) {
 		require.NotNil(t, resp)
 		require.True(t, resp.IsError())
 		require.Contains(t, resp.Error().Error(), "reserved vault_ namespace")
+	})
+
+	t.Run("Reject Invalid Template Syntax", func(t *testing.T) {
+		req := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "role/test-role",
+			Storage:   storage,
+			Data: map[string]interface{}{
+				"self_mint_custom_claims": `{"principal":"{{ vault.entity.id "}`,
+			},
+		}
+
+		resp, err := b.HandleRequest(context.Background(), req)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.True(t, resp.IsError())
+		require.Contains(t, resp.Error().Error(), "invalid template syntax")
 	})
 }

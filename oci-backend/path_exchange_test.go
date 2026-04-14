@@ -894,21 +894,31 @@ func TestPathExchange_SelfMintRolePathAddsCustomClaimsToResolvedToken(t *testing
 	_, err = b.HandleRequest(context.Background(), reqRole)
 	require.NoError(t, err)
 
-	req := &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "exchange/developer",
-		Storage:   storage,
+	for _, tc := range []struct {
+		name string
+		op   logical.Operation
+	}{
+		{name: "create", op: logical.CreateOperation},
+		{name: "update", op: logical.UpdateOperation},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &logical.Request{
+				Operation: tc.op,
+				Path:      "exchange/developer",
+				Storage:   storage,
+			}
+
+			resp, err := b.HandleRequest(context.Background(), req)
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			require.False(t, resp.IsError())
+
+			claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
+			require.True(t, ok)
+			require.Equal(t, "developer", claims["oci_role"])
+			require.Equal(t, "developer-static", claims["principal"])
+		})
 	}
-
-	resp, err := b.HandleRequest(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	require.False(t, resp.IsError())
-
-	claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
-	require.True(t, ok)
-	require.Equal(t, "developer", claims["oci_role"])
-	require.Equal(t, "developer-static", claims["principal"])
 }
 
 func TestPathExchange_SelfMintWithoutRolePathDoesNotAddRoleCustomClaims(t *testing.T) {
@@ -1092,22 +1102,32 @@ func TestPathExchange_BrokeredRolePathAddsExistingSelfMintCustomClaims(t *testin
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "exchange/developer",
-		Storage:   storage,
-		Data: map[string]interface{}{
-			"subject_token": incomingToken,
-		},
-	})
-	require.NoError(t, err)
-	require.False(t, resp.IsError())
+	for _, tc := range []struct {
+		name string
+		op   logical.Operation
+	}{
+		{name: "create", op: logical.CreateOperation},
+		{name: "update", op: logical.UpdateOperation},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := b.HandleRequest(context.Background(), &logical.Request{
+				Operation: tc.op,
+				Path:      "exchange/developer",
+				Storage:   storage,
+				Data: map[string]interface{}{
+					"subject_token": incomingToken,
+				},
+			})
+			require.NoError(t, err)
+			require.False(t, resp.IsError())
 
-	claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
-	require.True(t, ok)
-	require.Equal(t, "developer", claims["oci_role"])
-	require.Equal(t, "user-123", claims["external_sub"])
-	require.Equal(t, "user-123", claims["external_subject"])
+			claims, ok := resp.Data["resolved_subject_token_claims"].(map[string]interface{})
+			require.True(t, ok)
+			require.Equal(t, "developer", claims["oci_role"])
+			require.Equal(t, "user-123", claims["external_sub"])
+			require.Equal(t, "user-123", claims["external_subject"])
+		})
+	}
 }
 
 func TestPathExchange_BrokeredBareExchangeDoesNotAddRoleScopedClaims(t *testing.T) {

@@ -897,6 +897,7 @@ Role fields:
 
 ### Security Considerations
 
+- **Threat Model**: For a deep-dive into the trust architecture, attack vectors, and mitigations (especially concerning self-minted and brokered modes), see [THREAT_MODEL.md](THREAT_MODEL.md).
 - **Token Validation**: In direct pass-through mode, OCI IAM validates the caller-supplied subject token during exchange. In brokered mode, the plugin validates the external JWT locally, self-mints a new plugin-issued JWT, and OCI validates that brokered JWT during exchange.
 - **TTL Semantics**: RPST requests can be bounded by plugin TTL policy. UPST lifetime is determined by OCI; plugin TTL settings mainly control Vault lease metadata for UPST responses.
 - **Lease Management**: Vault lease lifecycle is applied to issued secrets, but OCI exchanged tokens cannot be actively revoked server-side before expiration. Vault simply drops the lease locally.

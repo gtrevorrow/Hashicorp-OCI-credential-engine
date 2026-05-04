@@ -92,6 +92,17 @@ echo "Resolved self-minted subject token claims:"
 echo "${RESPONSE_JSON}" | jq '.data.resolved_subject_token_claims'
 
 echo
+echo "OCI session token received:"
+echo "${RESPONSE_JSON}" | jq -r '
+  .data
+  | if (.rpst_token // "") != "" then .rpst_token
+    elif (.session_token // "") != "" then .session_token
+    elif (.access_token // "") != "" then .access_token
+    else "missing token field"
+    end
+'
+
+echo
 echo "Expected highlights:"
 echo "- entity_ref is non-empty"
 echo "- entity_name is non-empty when Vault identity has a name for the entity"

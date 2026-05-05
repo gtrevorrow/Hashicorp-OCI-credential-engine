@@ -40,6 +40,7 @@ Thumbs.db
 .env
 .env.local
 dev-config.json
+.vault-dev-self-mint-key.pem
 
 # Temporary files
 *.tmp

@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/sdk/framework"
@@ -12,6 +14,10 @@ import (
 )
 
 const (
+	// defaultHTTPClientTimeout is the maximum time allowed for an outbound HTTP
+	// request (e.g., OCI token exchange) to complete before being cancelled.
+	defaultHTTPClientTimeout = 30 * time.Second
+
 	backendHelp = `
 The OCI secrets engine dynamically generates OCI session tokens
 by exchanging 3rd party OIDC/OAuth JWT subject tokens.
@@ -25,8 +31,41 @@ endpoint to submit a JWT subject token and receive an OCI session token.
 // backend implements the Vault secrets engine backend
 type backend struct {
 	*framework.Backend
-	lock   sync.RWMutex
-	logger hclog.Logger
+	lock                 sync.RWMutex
+	logger               hclog.Logger
+	httpClient           *http.Client
+	subjectTokenCallback SubjectTokenCallback
+	tokenExchanger       func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error)
+}
+
+// SubjectTokenCallback mints a JWT subject token for fallback flows when callers
+// do not provide subject_token and plugin identity token generation is unavailable.
+type SubjectTokenCallback func(ctx context.Context, req *logical.Request, config *federatedConfig) (string, error)
+
+// RegisterSubjectTokenCallback registers a callback used to self-mint fallback
+// subject tokens. Intended for feature-gated enterprise/non-enterprise behavior.
+func (b *backend) RegisterSubjectTokenCallback(callback SubjectTokenCallback) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	b.subjectTokenCallback = callback
+}
+
+func (b *backend) getSubjectTokenCallback() SubjectTokenCallback {
+	b.lock.RLock()
+	defer b.lock.RUnlock()
+	return b.subjectTokenCallback
+}
+
+func (b *backend) setTokenExchanger(exchanger func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error)) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	b.tokenExchanger = exchanger
+}
+
+func (b *backend) getTokenExchanger() func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error) {
+	b.lock.RLock()
+	defer b.lock.RUnlock()
+	return b.tokenExchanger
 }
 
 // Factory returns a configured logical.Factory
@@ -38,6 +77,9 @@ func Factory(version string) logical.Factory {
 
 		b := backend{
 			logger: conf.Logger,
+			httpClient: &http.Client{
+				Timeout: defaultHTTPClientTimeout,
+			},
 		}
 		b.Backend = &framework.Backend{
 			Help: backendHelp,
@@ -50,6 +92,7 @@ func Factory(version string) logical.Factory {
 				b.pathConfig(),
 				b.pathExchange(),
 				b.pathRoles(),
+				b.pathJWKS(),
 			),
 			Secrets: []*framework.Secret{
 				b.ociTokenSecret(),
@@ -61,6 +104,8 @@ func Factory(version string) logical.Factory {
 		if err := b.Setup(ctx, conf); err != nil {
 			return nil, err
 		}
+		b.RegisterSubjectTokenCallback(b.defaultSubjectTokenCallback)
+		b.setTokenExchanger(b.exchangeTokenForOCI)
 
 		return &b, nil
 	}
@@ -73,14 +118,8 @@ func TLSProvider() (*tls.Config, error) {
 
 // federatedConfig holds OCI federated identity configuration
 type federatedConfig struct {
-	// OCI tenancy and identity domain
-	TenancyOCID string `json:"tenancy_ocid" mapstructure:"tenancy_ocid"`
-
 	// OCI Identity Domain URL (e.g., https://idcs-xxxx.identity.oraclecloud.com)
 	DomainUrl string `json:"domain_url" mapstructure:"domain_url"`
-
-	// OCI Region
-	Region string `json:"region" mapstructure:"region"`
 
 	// Client credentials for the OAuth Confidential Application inside the Identity Domain
 	ClientID     string `json:"client_id" mapstructure:"client_id"`
@@ -92,18 +131,44 @@ type federatedConfig struct {
 	// Maximum TTL for issued OCI session tokens
 	MaxTTL int `json:"max_ttl" mapstructure:"max_ttl"`
 
-	// Enforce that a claim in caller-provided subject_token matches request role.
-	EnforceRoleClaimMatch bool `json:"enforce_role_claim_match" mapstructure:"enforce_role_claim_match"`
-
-	// Claim key used when EnforceRoleClaimMatch is enabled.
-	RoleClaimKey string `json:"role_claim_key" mapstructure:"role_claim_key"`
+	// Ordered rules used to derive a Vault role from a caller-supplied subject token.
+	SubjectTokenRoleMappings []subjectTokenRoleMapping `json:"subject_token_role_mappings,omitempty" mapstructure:"subject_token_role_mappings"`
 
 	// Allow plugin identity token fallback when subject_token is omitted.
 	// Pointer is used to preserve default behavior for legacy configs with missing field.
-	AllowPluginIdentityFallback *bool `json:"allow_plugin_identity_fallback,omitempty" mapstructure:"allow_plugin_identity_fallback"`
+	EnablePluginIssuedSubjectToken *bool `json:"enable_plugin_issued_subject_token,omitempty" mapstructure:"enable_plugin_issued_subject_token"`
 
 	// Enforce strict role-name format for role creation and exchange requests.
 	StrictRoleNameMatch bool `json:"strict_role_name_match" mapstructure:"strict_role_name_match"`
+
+	// Built-in callback fallback controls for self-minting subject_token.
+	SubjectTokenSelfMintEnabled           bool     `json:"subject_token_self_mint_enabled" mapstructure:"subject_token_self_mint_enabled"`
+	SubjectTokenSelfMintIssuer            string   `json:"subject_token_self_mint_issuer" mapstructure:"subject_token_self_mint_issuer"`
+	SubjectTokenSelfMintAudience          string   `json:"subject_token_self_mint_audience" mapstructure:"subject_token_self_mint_audience"`
+	SubjectTokenAllowedAudiences          []string `json:"subject_token_allowed_audiences" mapstructure:"subject_token_allowed_audiences"`
+	SubjectTokenSelfMintTTLSeconds        int      `json:"subject_token_self_mint_ttl_seconds" mapstructure:"subject_token_self_mint_ttl_seconds"`
+	SubjectTokenSelfMintPrivateKey        string   `json:"subject_token_self_mint_private_key" mapstructure:"subject_token_self_mint_private_key"`
+	DebugReturnResolvedSubjectTokenClaims bool     `json:"debug_return_resolved_subject_token_claims" mapstructure:"debug_return_resolved_subject_token_claims"`
+
+	// Brokered subject token mode validates an incoming external JWT locally,
+	// maps claims into a plugin-issued JWT, and exchanges the re-issued token with OCI.
+	BrokeredSubjectTokenEnabled          bool              `json:"brokered_subject_token_enabled" mapstructure:"brokered_subject_token_enabled"`
+	BrokeredSubjectTokenTrustType        string            `json:"brokered_subject_token_trust_type,omitempty" mapstructure:"brokered_subject_token_trust_type"`
+	BrokeredSubjectTokenIssuer           string            `json:"brokered_subject_token_issuer,omitempty" mapstructure:"brokered_subject_token_issuer"`
+	BrokeredSubjectTokenAllowedAudiences []string          `json:"brokered_subject_token_allowed_audiences,omitempty" mapstructure:"brokered_subject_token_allowed_audiences"`
+	BrokeredSubjectTokenAllowedAlgs      []string          `json:"brokered_subject_token_allowed_algs,omitempty" mapstructure:"brokered_subject_token_allowed_algs"`
+	BrokeredSubjectTokenClockSkewSeconds int               `json:"brokered_subject_token_clock_skew_seconds,omitempty" mapstructure:"brokered_subject_token_clock_skew_seconds"`
+	BrokeredSubjectTokenJWKSURL          string            `json:"brokered_subject_token_jwks_url,omitempty" mapstructure:"brokered_subject_token_jwks_url"`
+	BrokeredSubjectTokenJWKSJSON         string            `json:"brokered_subject_token_jwks_json,omitempty" mapstructure:"brokered_subject_token_jwks_json"`
+	BrokeredSubjectTokenPublicKeys       []string          `json:"brokered_subject_token_public_keys,omitempty" mapstructure:"brokered_subject_token_public_keys"`
+	BrokeredSubjectTokenClaimMappings    map[string]string `json:"brokered_subject_token_claim_mappings,omitempty" mapstructure:"brokered_subject_token_claim_mappings"`
+}
+
+type subjectTokenRoleMapping struct {
+	Claim string `json:"claim" mapstructure:"claim"`
+	Op    string `json:"op" mapstructure:"op"`
+	Value string `json:"value" mapstructure:"value"`
+	Role  string `json:"role" mapstructure:"role"`
 }
 
 // getConfig retrieves the backend configuration from storage

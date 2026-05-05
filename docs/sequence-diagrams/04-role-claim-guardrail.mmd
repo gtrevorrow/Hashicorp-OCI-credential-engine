@@ -1,0 +1,23 @@
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant V as Vault OCI Credential Engine
+    participant S as Vault Storage
+    participant O as OCI Token Endpoint
+
+    C->>V: `vault write oci/exchange` with caller JWT
+    V->>S: Read backend config and role policy
+    S-->>V: `subject_token_role_mappings`, role entries
+    V->>V: Parse caller JWT payload only
+    V->>V: Evaluate ordered role-mapping rules
+    V->>V: First matching rule selects Vault role
+    V->>S: Read derived Vault role entry
+    S-->>V: Role TTL and local policy constraints
+
+    alt Mapping rule matches
+        V->>O: POST `/oauth2/v1/token`
+        O-->>V: OCI session token
+        V-->>C: Success response
+    else No rule matches
+        V-->>C: Error response before OCI call
+    end

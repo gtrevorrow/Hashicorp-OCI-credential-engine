@@ -66,6 +66,8 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-15 | Brokered bare exchange omits role-scoped custom claims | brokered mode + bare `/exchange` | Brokered JWT includes mapped claims only, without role-scoped custom claims |
 | EXC-16 | Brokered mode disabled preserves direct pass-through | subject_token provided, brokered mode off | OCI exchange receives original caller-supplied token |
 
+Exchange schema coverage: `TestPathExchange_RejectsUnknownFieldsBeforeTokenResolution` checks create/update requests in direct, self-mint, and brokered modes. It rejects body `role` on bare exchange and unknown fields on bare/named routes before token processing. Existing role-mapping and named-role tests preserve supported role selection.
+
 ## 4. Exchange Path - Token Content Validation
 
 These cases are primarily OCI-behavior or end-to-end validation scenarios unless explicitly covered by local claim-parsing tests.

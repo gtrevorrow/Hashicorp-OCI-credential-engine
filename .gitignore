@@ -49,3 +49,6 @@ dev-config.json
 
 # Local Go test cache
 .gocache/
+
+# Local project review
+/security_best_practices_report.md

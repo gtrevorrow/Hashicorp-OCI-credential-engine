@@ -30,6 +30,7 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange/<role>` with `subject_token`
+    V->>V: Validate exchange schema; reject unknown fields before processing
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Validate request fields and TTL
@@ -57,6 +58,7 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange` with caller JWT
+    V->>V: Validate exchange schema; reject unknown fields before processing
     V->>S: Read backend config and role policy
     S-->>V: `subject_token_role_mappings`, role entries
     V->>V: Parse caller JWT payload only
@@ -88,6 +90,7 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange[/<role>]` with external `subject_token`
+    V->>V: Validate exchange schema; reject unknown fields before processing
     V->>S: Read backend config and optional explicit role
     S-->>V: Brokered trust config, mappings, self-mint key, optional role
     V->>V: Check `brokered_subject_token_enabled=true`
@@ -121,6 +124,7 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
+    V->>V: Validate exchange schema; reject unknown fields before processing
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Check `enable_plugin_issued_subject_token=true`
@@ -151,6 +155,7 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
+    V->>V: Validate exchange schema; reject unknown fields before processing
     V->>S: Read backend config and self-mint key
     S-->>V: Config, role constraints, signing key
     V->>V: Check plugin-issued mode is enabled
@@ -434,6 +439,7 @@ Notes:
 
 - Omit `subject_token` and set `enable_plugin_issued_subject_token=true` if you want the credential engine to obtain one on the caller's behalf. On Vault Enterprise, the engine first tries Vault identity-token generation. On Vault Open Source, or if Vault cannot generate an identity token for the request, the engine can fall back to self-mint when `subject_token_self_mint_enabled=true` and the required self-mint settings are configured.
 - If the credential engine obtains a subject token on the caller's behalf, the caller may optionally provide `subject_token_audience`. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
+- Exchange requests reject fields outside the endpoint schema before token resolution, validation, or signing. Bare `oci/exchange` does not accept a `role` body field.
 - Use `oci/exchange/<role>` when you want Vault policy to control which plugin role may be used for the exchange.
 - Use bare `oci/exchange` when `subject_token_role_mappings` are configured and the engine should derive the effective Vault role from trusted JWT claims.
 - If `public_key` is not supplied, the engine generates a fresh RSA key pair for the exchange and returns only the generated `private_key`.

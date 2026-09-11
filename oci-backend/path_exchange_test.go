@@ -431,37 +431,53 @@ func TestPathExchange_EmptySubjectTokenIsRejected(t *testing.T) {
 	require.Contains(t, resp.Error().Error(), "subject_token was provided but is empty")
 }
 
-func TestPathExchange_RequestBodyRoleIsIgnored(t *testing.T) {
-	b, storage := getTestBackend(t)
-	installFailingTokenExchanger(b)
-
-	reqConfig := &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]interface{}{
-			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
-			"client_id":     "test-client-id",
-			"client_secret": "test-client-secret",
-		},
+func TestPathExchange_RejectsUnknownFieldsBeforeTokenResolution(t *testing.T) {
+	for _, mode := range []string{"direct", "self-mint", "brokered"} {
+		for _, op := range []logical.Operation{logical.CreateOperation, logical.UpdateOperation} {
+			for _, tc := range []struct {
+				name  string
+				path  string
+				field string
+			}{
+				{name: "bare body role", path: "exchange", field: "role"},
+				{name: "bare unknown field", path: "exchange", field: "unexpected"},
+				{name: "named path unknown field", path: "exchange/developer", field: "unexpected"},
+			} {
+				t.Run(mode+"/"+string(op)+"/"+tc.name, func(t *testing.T) {
+					b, storage := getTestBackend(t)
+					enabled := true
+					require.NoError(t, b.saveConfig(context.Background(), storage, &federatedConfig{
+						DomainUrl: "https://example.test", ClientID: "test", ClientSecret: "test",
+						EnablePluginIssuedSubjectToken: &enabled,
+						SubjectTokenSelfMintEnabled:    mode == "self-mint",
+						BrokeredSubjectTokenEnabled:    mode == "brokered",
+					}))
+					b.RegisterSubjectTokenCallback(func(context.Context, *logical.Request, *federatedConfig) (string, error) {
+						t.Fatal("invalid request must not resolve or mint a subject token")
+						return "", nil
+					})
+					b.setTokenExchanger(func(context.Context, string, string, string, string, time.Duration, *federatedConfig) (*tokenExchangeResult, error) {
+						t.Fatal("invalid request must not exchange a token")
+						return nil, nil
+					})
+					payload := map[string]interface{}{tc.field: "developer"}
+					if mode != "self-mint" {
+						// Even an invalid JWT must hit schema rejection before brokered validation.
+						payload["subject_token"] = "token123"
+					}
+					resp, err := b.HandleRequest(context.Background(), &logical.Request{
+						Operation: op, Path: tc.path, Storage: storage, Data: payload,
+					})
+					require.NoError(t, err)
+					require.NotNil(t, resp)
+					require.True(t, resp.IsError())
+					require.Contains(t, resp.Error().Error(), "invalid exchange request")
+					require.Contains(t, resp.Error().Error(), "unknown field")
+					require.Contains(t, resp.Error().Error(), tc.field)
+				})
+			}
+		}
 	}
-	_, err := b.HandleRequest(context.Background(), reqConfig)
-	require.NoError(t, err)
-
-	req := &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "exchange",
-		Storage:   storage,
-		Data: map[string]interface{}{
-			"subject_token": "token123",
-			"role":          "dev",
-		},
-	}
-
-	resp, err := b.HandleRequest(context.Background(), req)
-	require.NoError(t, err)
-	require.True(t, resp.IsError())
-	require.Contains(t, resp.Error().Error(), "token exchange failed")
 }
 
 func TestPathExchange_StrictRoleNameMatch(t *testing.T) {

@@ -50,7 +50,7 @@ These items are intentionally deferred. They are not part of the current preferr
 ### Brokered Mode Follow-Up
 
 - [ ] Decide whether brokered-only deployments should be able to read `oci/jwks` without setting `subject_token_self_mint_enabled=true`
-- [ ] Consider enforcing HTTPS-only brokered remote trust sources (`oidc_discovery` and `jwks_url`) or documenting the non-HTTPS risk more prominently
+- [x] Harden brokered remote trust: HTTPS by default, loopback-only debug HTTP, exact discovery issuer, explicit JWKS origins, no redirects, checked egress, bounded documents/keys, key suitability, and coordinated verification-key caching
 - [ ] Evaluate replay-hardening options for brokered JWTs, such as optional `jti` or nonce tracking, if operational requirements justify stateful validation
 - [ ] Keep `DESIGN_BROKERED_SUBJECT_TOKEN_MODE.md` as the design record, but treat the implemented behavior in `README.md`, `THREAT_MODEL.md`, `TEST_PLAN.md`, and `oci-backend/` as the current source of truth
 

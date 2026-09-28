@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -72,9 +70,7 @@ func validateBrokeredSubjectTokenConfig(config *federatedConfig) error {
 		if err := validateBrokeredTrustSources(config, true, false, false); err != nil {
 			return err
 		}
-		if !strings.HasPrefix(strings.TrimSpace(config.BrokeredSubjectTokenJWKSURL), "https://") && !strings.HasPrefix(strings.TrimSpace(config.BrokeredSubjectTokenJWKSURL), "http://") {
-			return fmt.Errorf("brokered_subject_token_jwks_url must start with https:// or http://")
-		}
+
 	case brokeredTrustTypeJWKSJSON:
 		if err := validateBrokeredTrustSources(config, false, true, false); err != nil {
 			return err
@@ -93,7 +89,7 @@ func validateBrokeredSubjectTokenConfig(config *federatedConfig) error {
 		return fmt.Errorf("invalid brokered_subject_token_trust_type %q", config.BrokeredSubjectTokenTrustType)
 	}
 
-	return nil
+	return validateBrokeredRemotePolicy(config)
 }
 
 func validateBrokeredTrustSources(config *federatedConfig, requireJWKSURL, requireJWKSJSON, requirePublicKeys bool) error {
@@ -169,6 +165,9 @@ func trimBrokeredPublicKeys(keys []string) []string {
 }
 
 func (b *backend) validateBrokeredSubjectToken(ctx context.Context, token string, config *federatedConfig) (map[string]interface{}, error) {
+	if len(token) > maxBrokeredDocumentBytes {
+		return nil, fmt.Errorf("brokered JWT exceeds size limit")
+	}
 	allowedAlgs := make([]jose.SignatureAlgorithm, 0, len(config.BrokeredSubjectTokenAllowedAlgs))
 	for _, alg := range config.BrokeredSubjectTokenAllowedAlgs {
 		allowedAlgs = append(allowedAlgs, brokeredSupportedAlgs[alg])
@@ -187,20 +186,18 @@ func (b *backend) validateBrokeredSubjectToken(ctx context.Context, token string
 		return nil, fmt.Errorf("unsupported JWT alg %q", headerAlg)
 	}
 
-	keys, err := b.resolveBrokeredVerificationKeys(ctx, config)
+	keys, err := b.cachedBrokeredVerificationKeys(ctx, config, false)
 	if err != nil {
 		return nil, err
 	}
 
-	var payload []byte
-	for _, key := range keys {
-		if !isBrokeredKeyCompatibleWithAlg(key, headerAlg) {
-			continue
+	payload, err := verifyBrokeredJWT(jws, keys, headerAlg, config.BrokeredSubjectTokenTrustType == brokeredTrustTypePublicKeys)
+	if err != nil && jws.Signatures[0].Header.KeyID != "" && !brokeredHasKeyID(keys, jws.Signatures[0].Header.KeyID) {
+		keys, refreshErr := b.cachedBrokeredVerificationKeys(ctx, config, true)
+		if refreshErr != nil {
+			return nil, refreshErr
 		}
-		payload, err = jws.Verify(key.Key)
-		if err == nil {
-			break
-		}
+		payload, err = verifyBrokeredJWT(jws, keys, headerAlg, config.BrokeredSubjectTokenTrustType == brokeredTrustTypePublicKeys)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify JWT signature: %w", err)
@@ -218,12 +215,38 @@ func (b *backend) validateBrokeredSubjectToken(ctx context.Context, token string
 	return claims, nil
 }
 
+func brokeredHasKeyID(keys []jose.JSONWebKey, kid string) bool {
+	for _, key := range keys {
+		if key.KeyID == kid {
+			return true
+		}
+	}
+	return false
+}
+
+func verifyBrokeredJWT(jws *jose.JSONWebSignature, keys []jose.JSONWebKey, alg string, inlinePublicKeys bool) ([]byte, error) {
+	kid := jws.Signatures[0].Header.KeyID
+	for _, key := range keys {
+		if (!inlinePublicKeys && kid != "" && key.KeyID != kid) || !isBrokeredKeyCompatibleWithAlg(key, alg) {
+			continue
+		}
+		if payload, err := jws.Verify(key.Key); err == nil {
+			return payload, nil
+		}
+	}
+	return nil, fmt.Errorf("no matching verification key accepted the signature")
+}
+
 func isBrokeredKeyCompatibleWithAlg(key jose.JSONWebKey, alg string) bool {
-	switch key.Key.(type) {
-	case *rsa.PublicKey, rsa.PublicKey:
-		return strings.HasPrefix(alg, "RS")
-	case *ecdsa.PublicKey, ecdsa.PublicKey:
-		return strings.HasPrefix(alg, "ES")
+	if !key.Valid() || !key.IsPublic() || (key.Use != "" && key.Use != "sig") || (key.Algorithm != "" && key.Algorithm != alg) {
+		return false
+	}
+	switch pub := key.Key.(type) {
+	case *rsa.PublicKey:
+		return pub.N.BitLen() >= 2048 && strings.HasPrefix(alg, "RS")
+	case *ecdsa.PublicKey:
+		bits := pub.Curve.Params().BitSize
+		return (alg == "ES256" && bits == 256) || (alg == "ES384" && bits == 384) || (alg == "ES512" && bits == 521)
 	default:
 		return false
 	}
@@ -331,7 +354,7 @@ func (b *backend) resolveBrokeredVerificationKeys(ctx context.Context, config *f
 	case brokeredTrustTypeOIDCDiscovery:
 		return b.resolveBrokeredOIDCDiscoveryKeys(ctx, config)
 	case brokeredTrustTypeJWKSURL:
-		return b.resolveBrokeredJWKSURLKeys(ctx, config.BrokeredSubjectTokenJWKSURL)
+		return b.resolveBrokeredJWKSURLKeys(ctx, config.BrokeredSubjectTokenJWKSURL, config)
 	case brokeredTrustTypeJWKSJSON:
 		keySet, err := parseBrokeredJWKS(config.BrokeredSubjectTokenJWKSJSON)
 		if err != nil {
@@ -348,47 +371,105 @@ func (b *backend) resolveBrokeredVerificationKeys(ctx context.Context, config *f
 func (b *backend) resolveBrokeredOIDCDiscoveryKeys(ctx context.Context, config *federatedConfig) ([]jose.JSONWebKey, error) {
 	var document struct {
 		JWKSURI string `json:"jwks_uri"`
+		Issuer  string `json:"issuer"`
 	}
 
 	discoveryURL := strings.TrimRight(config.BrokeredSubjectTokenIssuer, "/") + "/.well-known/openid-configuration"
-	if err := b.fetchBrokeredJSON(ctx, discoveryURL, &document); err != nil {
+	if err := b.fetchBrokeredJSON(ctx, discoveryURL, &document, config); err != nil {
 		return nil, fmt.Errorf("failed to fetch OIDC discovery document: %w", err)
+	}
+	if document.Issuer != config.BrokeredSubjectTokenIssuer {
+		return nil, fmt.Errorf("OIDC discovery issuer does not match configured issuer")
+	}
+	if err := allowedBrokeredJWKSURL(document.JWKSURI, config); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(document.JWKSURI) == "" {
 		return nil, fmt.Errorf("OIDC discovery document is missing jwks_uri")
 	}
 
-	return b.resolveBrokeredJWKSURLKeys(ctx, document.JWKSURI)
+	return b.resolveBrokeredJWKSURLKeys(ctx, document.JWKSURI, config)
 }
 
-func (b *backend) resolveBrokeredJWKSURLKeys(ctx context.Context, rawURL string) ([]jose.JSONWebKey, error) {
-	var keySet jose.JSONWebKeySet
-	if err := b.fetchBrokeredJSON(ctx, rawURL, &keySet); err != nil {
+func (b *backend) resolveBrokeredJWKSURLKeys(ctx context.Context, rawURL string, config *federatedConfig) ([]jose.JSONWebKey, error) {
+	var raw json.RawMessage
+	if err := b.fetchBrokeredJSON(ctx, rawURL, &raw, config); err != nil {
 		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
 	}
-	if len(keySet.Keys) == 0 {
-		return nil, fmt.Errorf("JWKS did not contain any keys")
+	set, err := parseBrokeredJWKS(string(raw))
+	if err != nil {
+		return nil, err
 	}
-	return keySet.Keys, nil
+	return set.Keys, nil
 }
 
 func parseBrokeredJWKS(raw string) (*jose.JSONWebKeySet, error) {
-	var keySet jose.JSONWebKeySet
-	if err := json.Unmarshal([]byte(raw), &keySet); err != nil {
+	if len(raw) > maxBrokeredDocumentBytes {
+		return nil, fmt.Errorf("JWKS exceeds size limit")
+	}
+	var doc struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
 		return nil, err
 	}
-	if len(keySet.Keys) == 0 {
-		return nil, fmt.Errorf("JWKS did not contain any keys")
+	if len(doc.Keys) == 0 || len(doc.Keys) > maxBrokeredKeys {
+		return nil, fmt.Errorf("JWKS must contain 1 to %d keys", maxBrokeredKeys)
 	}
-	return &keySet, nil
+	set := &jose.JSONWebKeySet{}
+	for _, rawKey := range doc.Keys {
+		var key jose.JSONWebKey
+		if err := json.Unmarshal(rawKey, &key); err != nil {
+			return nil, err
+		}
+		var meta struct {
+			Ops []string `json:"key_ops"`
+		}
+		if err := json.Unmarshal(rawKey, &meta); err != nil {
+			return nil, err
+		}
+		if meta.Ops != nil {
+			if len(meta.Ops) != 1 || meta.Ops[0] != "verify" {
+				continue
+			}
+		}
+		for alg := range brokeredSupportedAlgs {
+			if isBrokeredKeyCompatibleWithAlg(key, alg) {
+				set.Keys = append(set.Keys, key)
+				break
+			}
+		}
+	}
+	if len(set.Keys) == 0 {
+		return nil, fmt.Errorf("JWKS contains no suitable public signing keys (RSA >= 2048 bits or supported EC curve)")
+	}
+	return set, nil
 }
 
 func resolveBrokeredInlinePublicKeys(keys []string) ([]jose.JSONWebKey, error) {
+	if len(keys) > maxBrokeredKeys {
+		return nil, fmt.Errorf("too many public keys")
+	}
 	out := make([]jose.JSONWebKey, 0, len(keys))
+	totalBytes := 0
 	for _, keyPEM := range keys {
+		totalBytes += len(keyPEM)
+		if totalBytes > maxBrokeredDocumentBytes {
+			return nil, fmt.Errorf("public key exceeds size limit")
+		}
 		key, err := parseBrokeredPublicKey(keyPEM)
 		if err != nil {
 			return nil, err
+		}
+		usable := false
+		for alg := range brokeredSupportedAlgs {
+			if isBrokeredKeyCompatibleWithAlg(jose.JSONWebKey{Key: key}, alg) {
+				usable = true
+				break
+			}
+		}
+		if !usable {
+			return nil, fmt.Errorf("unsuitable public signing key; RSA requires at least 2048 bits")
 		}
 		out = append(out, jose.JSONWebKey{
 			Key: key,
@@ -435,24 +516,4 @@ func parseBrokeredPublicKey(keyPEM string) (interface{}, error) {
 	default:
 		return nil, fmt.Errorf("unsupported PEM block type %q", block.Type)
 	}
-}
-
-func (b *backend) fetchBrokeredJSON(ctx context.Context, rawURL string, out interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return err
-	}
-
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("unexpected status %d from %s: %s", resp.StatusCode, rawURL, strings.TrimSpace(string(body)))
-	}
-
-	return json.NewDecoder(resp.Body).Decode(out)
 }

@@ -10,7 +10,9 @@ sequenceDiagram
     V->>S: Read backend config, brokered trust config, self-mint key, optional role
     S-->>V: Config, mappings, signing key, role TTL/custom claims
     V->>V: Check `brokered_subject_token_enabled=true`
-    V->>V: Validate JWT header, alg, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
+    V->>V: Resolve bounded cached trust keys or refresh with HTTPS, issuer and origin checks
+    Note over V: HTTP allowed only with explicit loopback debug mode; redirects rejected
+    V->>V: Validate JWT header, signing key suitability, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
     V->>V: Render mapped claims from validated external claims
     V->>SV: Read trusted Vault request and identity context
     SV-->>V: Entity, alias, group, mount metadata

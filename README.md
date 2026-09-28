@@ -357,7 +357,9 @@ vault write oci/config \
 - `brokered_subject_token_allowed_audiences`: Required non-empty audience allowlist for incoming brokered-token validation
 - `brokered_subject_token_allowed_algs`: Required non-empty signing algorithm allowlist for incoming brokered-token validation. Supported values are RSA (`RS256`, `RS384`, `RS512`) and EC (`ES256`, `ES384`, `ES512`)
 - `brokered_subject_token_clock_skew_seconds`: Optional clock-skew tolerance for brokered `exp`, `nbf`, and `iat` validation (default: `0`)
-- `brokered_subject_token_jwks_url`: Required when `brokered_subject_token_trust_type=jwks_url`
+- `brokered_subject_token_jwks_url`: Required when `brokered_subject_token_trust_type=jwks_url`; must use HTTPS unless loopback-only debug HTTP is explicitly enabled
+- `debug_allow_brokered_http`: Defaults to `false`. Allows HTTP trust retrieval only from `localhost` or loopback IP literals for local testing; it does not disable HTTPS certificate verification
+- `brokered_subject_token_allowed_jwks_origins`: Additional exact origins (`https://host[:port]`, no path) allowed for discovered JWKS URLs hosted separately from the issuer. The issuer origin is allowed automatically
 - `brokered_subject_token_jwks_json`: Required when `brokered_subject_token_trust_type=jwks_json`
 - `brokered_subject_token_public_keys`: Required when `brokered_subject_token_trust_type=public_keys`; accepts one PEM public key or a JSON array of PEM public keys
 - `brokered_subject_token_claim_mappings`: Optional JSON object of output-claim to string template. Templates may reference validated incoming claims such as `{{ claims.sub }}` or `svc/{{ claims.org }}/{{ claims.user.id }}`
@@ -367,6 +369,29 @@ vault write oci/config \
 If `subject_token_self_mint_enabled=true`, OCI must be able to discover the published JWKS for the self-mint signing key. See [Self-Mint JWKS Publication Workflow](#self-mint-jwks-publication-workflow).
 
 Brokered mode also relies on the existing self-mint signing configuration because the plugin re-issues a new JWT before calling OCI. Explicit `/oci/exchange/:role` requests are still allowed in brokered mode, but role contribution is limited to the existing TTL controls and additive templated `self_mint_custom_claims`. Existing `subject_token_role_mappings` remain part of the direct pass-through flow and are not reused in brokered mode.
+
+### Brokered remote trust and key rotation
+
+Remote discovery and JWKS retrieval require HTTPS by default. Discovery must return an `issuer` exactly equal to the configured issuer, including its path/trailing slash. A discovered JWKS URL must use the issuer origin or an explicitly configured `brokered_subject_token_allowed_jwks_origins` entry. Redirects are rejected, including redirects from the OCI token endpoint.
+
+Trust retrieval uses direct connections rather than environment proxies. Resolved private, loopback, link-local, multicast, and unspecified addresses are rejected; the debug exception permits only loopback connections to `localhost` or loopback IP literals. DNS addresses are checked before dialing, and the checked IP is dialed directly. For private-network IdPs, use managed inline `jwks_json` or `public_keys`; this version does not provide a private-network remote-fetch override.
+
+Discovery/JWKS documents and incoming brokered JWTs are limited to 1 MiB. Key sets are limited to 64 keys. Verification uses suitable public signing keys only: RSA at least 2048 bits or the EC curve required by the selected algorithm. JWK `use`, `alg`, and `key_ops` metadata constrain key use. A JWT `kid` must select a matching JWKS key; explicit PEM `public_keys` have no key IDs and are tried against the signature independently of `kid`.
+
+Each mount caches one remote key set for five minutes. Concurrent misses share a refresh. An unknown `kid` can trigger a refresh after a 30-second cooldown; repeated failures also have a 30-second cooldown. Failed refreshes invalidate cached keys and fail closed rather than serving stale material. Changes to remote trust URLs, issuer, allowed origins, or debug policy cannot reuse the previous policy's cache entry.
+
+For upstream key rotation, publish old and new verification keys together using distinct key IDs before signing with the new key. Allow at least five minutes for caches to pick up the publication before switching signers. Retain the old key until old tokens and the cache window have expired. Removing a compromised key from remote JWKS is not instantaneous revocation: a cached key may remain accepted for up to five minutes. This upstream verification cache does not implement rotation of the plugin's own self-mint signing key.
+
+For a local JWKS test server, an existing backend can be updated with:
+
+```bash
+vault write oci/config \
+    debug_allow_brokered_http=true \
+    brokered_subject_token_trust_type=jwks_url \
+    brokered_subject_token_jwks_url="http://127.0.0.1:8080/jwks.json"
+```
+
+To return to production, set the remote URL to HTTPS and `debug_allow_brokered_http=false` in the same update. Existing HTTP configurations require this migration; they are no longer silently accepted. Remote key servers must return a direct HTTP 200 JSON response.
 
 The plugin keeps the private signing key in Vault plugin storage. The published JWKS contains only the public key material.
 

@@ -269,3 +269,9 @@ Future additions:
 - If `enable_plugin_issued_subject_token=false`, callers must supply `subject_token`
 - If `subject_token` is explicitly provided as an empty value, the exchange is rejected instead of falling back to plugin-issued mode
 - When the engine generates exchange key material, the response returns only `private_key`; the generated public key is not returned
+
+## Brokered remote trust hardening coverage
+
+`subject_token_broker_trust_test.go` covers URL/debug policy, configuration persistence, exact discovery issuer, separate JWKS origin allowlisting, redirect rejection, document/key limits, signing-key metadata and RSA strength, destination address checks, cache coalescing/expiry/failure behavior, cancellation, and unknown-key rotation. PEM trust accepts valid JWT key IDs without inventing an ID for the configured PEM key. OCI token POST redirects are rejected without forwarding their body.
+
+`subject_token_broker_trust_integration_test.go` exercises actual loopback HTTP retrieval: it is rejected without the debug flag, succeeds with the flag, and does not follow redirects. This suite uses the existing `integration` build tag and local mock servers, not a live IdP or OCI tenancy.

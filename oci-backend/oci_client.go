@@ -92,7 +92,10 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 		client = http.DefaultClient
 	}
 
-	resp, err := client.Do(req)
+	// Never forward a subject token in a redirected POST body.
+	requestClient := *client
+	requestClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := requestClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("unable to exchange JWT for security token: %w", err)
 	}

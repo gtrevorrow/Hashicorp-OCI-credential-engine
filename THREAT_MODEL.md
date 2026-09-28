@@ -20,7 +20,7 @@ When `subject_token` is omitted and `enable_plugin_issued_subject_token=true`, t
 
 ### The Upstream Brokered Verification Boundary (Brokered Mode)
 Brokered mode introduces a second trust surface: how the plugin validates the external JWT before re-issuing it.
-*   **The Architecture:** The plugin can trust brokered tokens using OIDC discovery, a JWKS URL, inline JWKS JSON, or inline public keys. When `brokered_subject_token_trust_type=oidc_discovery` or `jwks_url`, the plugin fetches verification material over HTTP(S) at request time.
+*   **The Architecture:** The plugin can trust brokered tokens using OIDC discovery, a JWKS URL, inline JWKS JSON, or inline public keys. When `brokered_subject_token_trust_type=oidc_discovery` or `jwks_url`, the plugin retrieves bounded verification material over HTTPS and caches one key set per mount for five minutes. HTTP is allowed only through explicit loopback debug configuration.
 *   **The Boundary Operator:** Identity Provider Administrators and whoever controls the configured discovery/JWKS endpoint or the inline trust material stored in Vault.
 
 ### Vault Configuration API Boundary (`oci/config` & `oci/role/*`)
@@ -73,7 +73,7 @@ While the trust boundaries define the "locks on the doors", the attack vectors d
 
 ### D. JWKS / Discovery Endpoint Substitution
 *   **The Attack:** An attacker hijacks or substitutes the URL used either by OCI to fetch the plugin's published JWKS, or by the plugin to fetch brokered verification keys via OIDC discovery or `brokered_subject_token_jwks_url`.
-*   **The Mitigation:** Use HTTPS endpoints wherever possible, protect DNS and hosting control, and prefer inline trust material (`jwks_json` or `public_keys`) when you want to remove runtime dependency on a remote verification endpoint. Note that the current implementation accepts `http://` as well as `https://` for `brokered_subject_token_jwks_url`, and OIDC discovery uses the configured `brokered_subject_token_issuer` URL without independently enforcing HTTPS. Operators must treat any non-HTTPS brokered trust source as explicitly weaker.
+*   **The Mitigation:** Remote retrieval enforces HTTPS, exact discovery issuer matching, an explicit discovered-JWKS origin policy, checked destination IPs, and no redirects or environment proxies. Private and local network destinations are blocked except for explicit loopback debug testing. Documents and key counts are bounded, and signing-key metadata/strength constrain verification. Protect DNS and endpoint administration; use managed inline trust material for private-network IdPs. Cache entries last five minutes, unknown-key refreshes and failed retries have a 30-second cooldown, and refresh failures fail closed. Removing a remote key can take up to five minutes to affect cached verification. `debug_allow_brokered_http=true` permits HTTP only on loopback for local testing and must be disabled in production.
 
 ### E. Exposed Generated Exchange Private Key
 *   **The Attack:** A client workload requests an OCI exchange without providing a public key. The plugin generates one and returns the private key. The workload writes this private key to a shared `/tmp` directory or exposes it in CI logs, where it is stolen by an attacker.

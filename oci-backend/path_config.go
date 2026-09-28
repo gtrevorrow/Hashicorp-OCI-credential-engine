@@ -149,6 +149,15 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Brokered Subject Token Enabled",
 					},
 				},
+				"debug_allow_brokered_http": {
+					Type:        framework.TypeBool,
+					Default:     false,
+					Description: "Debug only: allow HTTP brokered trust retrieval on localhost or loopback IPs",
+				},
+				"brokered_subject_token_allowed_jwks_origins": {
+					Type:        framework.TypeCommaStringSlice,
+					Description: "Additional exact origins allowed for discovered JWKS URLs (scheme://host[:port])",
+				},
 				"brokered_subject_token_trust_type": {
 					Type:        framework.TypeString,
 					Description: "Trust source for brokered subject_token validation: oidc_discovery, jwks_url, jwks_json, or public_keys",
@@ -265,27 +274,29 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 		"client_id":  config.ClientID,
 		// Client Secret is intentionally omitted from read
 
-		"default_ttl":                                config.DefaultTTL,
-		"max_ttl":                                    config.MaxTTL,
-		"subject_token_role_mappings":                config.SubjectTokenRoleMappings,
-		"enable_plugin_issued_subject_token":         configEnablePluginIssuedSubjectToken(config),
-		"strict_role_name_match":                     config.StrictRoleNameMatch,
-		"subject_token_self_mint_enabled":            config.SubjectTokenSelfMintEnabled,
-		"subject_token_self_mint_issuer":             config.SubjectTokenSelfMintIssuer,
-		"subject_token_self_mint_audience":           configSubjectTokenSelfMintAudience(config),
-		"subject_token_allowed_audiences":            configSubjectTokenAllowedAudiences(config),
-		"subject_token_self_mint_ttl_seconds":        configSubjectTokenSelfMintTTLSeconds(config),
-		"debug_return_resolved_subject_token_claims": config.DebugReturnResolvedSubjectTokenClaims,
-		"brokered_subject_token_enabled":             config.BrokeredSubjectTokenEnabled,
-		"brokered_subject_token_trust_type":          config.BrokeredSubjectTokenTrustType,
-		"brokered_subject_token_issuer":              config.BrokeredSubjectTokenIssuer,
-		"brokered_subject_token_allowed_audiences":   configBrokeredSubjectTokenAllowedAudiences(config),
-		"brokered_subject_token_allowed_algs":        configBrokeredSubjectTokenAllowedAlgs(config),
-		"brokered_subject_token_clock_skew_seconds":  configBrokeredSubjectTokenClockSkewSeconds(config),
-		"brokered_subject_token_jwks_url":            config.BrokeredSubjectTokenJWKSURL,
-		"brokered_subject_token_jwks_json":           config.BrokeredSubjectTokenJWKSJSON,
-		"brokered_subject_token_public_keys":         config.BrokeredSubjectTokenPublicKeys,
-		"brokered_subject_token_claim_mappings":      config.BrokeredSubjectTokenClaimMappings,
+		"default_ttl":                                 config.DefaultTTL,
+		"max_ttl":                                     config.MaxTTL,
+		"subject_token_role_mappings":                 config.SubjectTokenRoleMappings,
+		"enable_plugin_issued_subject_token":          configEnablePluginIssuedSubjectToken(config),
+		"strict_role_name_match":                      config.StrictRoleNameMatch,
+		"subject_token_self_mint_enabled":             config.SubjectTokenSelfMintEnabled,
+		"subject_token_self_mint_issuer":              config.SubjectTokenSelfMintIssuer,
+		"subject_token_self_mint_audience":            configSubjectTokenSelfMintAudience(config),
+		"subject_token_allowed_audiences":             configSubjectTokenAllowedAudiences(config),
+		"subject_token_self_mint_ttl_seconds":         configSubjectTokenSelfMintTTLSeconds(config),
+		"debug_return_resolved_subject_token_claims":  config.DebugReturnResolvedSubjectTokenClaims,
+		"debug_allow_brokered_http":                   config.DebugAllowBrokeredHTTP,
+		"brokered_subject_token_allowed_jwks_origins": config.BrokeredSubjectTokenAllowedJWKSOrigins,
+		"brokered_subject_token_enabled":              config.BrokeredSubjectTokenEnabled,
+		"brokered_subject_token_trust_type":           config.BrokeredSubjectTokenTrustType,
+		"brokered_subject_token_issuer":               config.BrokeredSubjectTokenIssuer,
+		"brokered_subject_token_allowed_audiences":    configBrokeredSubjectTokenAllowedAudiences(config),
+		"brokered_subject_token_allowed_algs":         configBrokeredSubjectTokenAllowedAlgs(config),
+		"brokered_subject_token_clock_skew_seconds":   configBrokeredSubjectTokenClockSkewSeconds(config),
+		"brokered_subject_token_jwks_url":             config.BrokeredSubjectTokenJWKSURL,
+		"brokered_subject_token_jwks_json":            config.BrokeredSubjectTokenJWKSJSON,
+		"brokered_subject_token_public_keys":          config.BrokeredSubjectTokenPublicKeys,
+		"brokered_subject_token_claim_mappings":       config.BrokeredSubjectTokenClaimMappings,
 	}
 	return &logical.Response{Data: respData}, nil
 }
@@ -355,6 +366,12 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 	if _, ok := req.Data["debug_return_resolved_subject_token_claims"]; ok {
 		config.DebugReturnResolvedSubjectTokenClaims = data.Get("debug_return_resolved_subject_token_claims").(bool)
+	}
+	if _, ok := req.Data["debug_allow_brokered_http"]; ok {
+		config.DebugAllowBrokeredHTTP = data.Get("debug_allow_brokered_http").(bool)
+	}
+	if _, ok := req.Data["brokered_subject_token_allowed_jwks_origins"]; ok {
+		config.BrokeredSubjectTokenAllowedJWKSOrigins = data.Get("brokered_subject_token_allowed_jwks_origins").([]string)
 	}
 	if _, ok := req.Data["brokered_subject_token_enabled"]; ok {
 		config.BrokeredSubjectTokenEnabled = data.Get("brokered_subject_token_enabled").(bool)
@@ -616,6 +633,8 @@ Optional:
   - subject_token_self_mint_ttl_seconds: TTL for self-minted token (default: 600)
   - subject_token_self_mint_private_key: Optional PEM RSA private key; auto-generated and stored if omitted when self-mint is enabled
   - debug_return_resolved_subject_token_claims: Development-only flag to include resolved subject token claims in exchange responses
+  - debug_allow_brokered_http: Allow HTTP only on loopback for local trust testing (default: false)
+  - brokered_subject_token_allowed_jwks_origins: Additional exact origins allowed for discovered JWKS URLs
   - brokered_subject_token_enabled: Enable brokered validation and re-issuance for caller-supplied subject_token (default: false)
   - brokered_subject_token_trust_type: Required when brokered mode is enabled; one of oidc_discovery, jwks_url, jwks_json, public_keys
   - brokered_subject_token_issuer: Required when brokered mode is enabled; expected incoming issuer and OIDC discovery issuer

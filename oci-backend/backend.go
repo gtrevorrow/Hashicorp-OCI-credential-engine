@@ -34,6 +34,8 @@ type backend struct {
 	lock                 sync.RWMutex
 	logger               hclog.Logger
 	httpClient           *http.Client
+	brokeredTrustCache   brokeredTrustCache
+	brokeredTransport    http.RoundTripper
 	subjectTokenCallback SubjectTokenCallback
 	tokenExchanger       func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error)
 }
@@ -152,16 +154,18 @@ type federatedConfig struct {
 
 	// Brokered subject token mode validates an incoming external JWT locally,
 	// maps claims into a plugin-issued JWT, and exchanges the re-issued token with OCI.
-	BrokeredSubjectTokenEnabled          bool              `json:"brokered_subject_token_enabled" mapstructure:"brokered_subject_token_enabled"`
-	BrokeredSubjectTokenTrustType        string            `json:"brokered_subject_token_trust_type,omitempty" mapstructure:"brokered_subject_token_trust_type"`
-	BrokeredSubjectTokenIssuer           string            `json:"brokered_subject_token_issuer,omitempty" mapstructure:"brokered_subject_token_issuer"`
-	BrokeredSubjectTokenAllowedAudiences []string          `json:"brokered_subject_token_allowed_audiences,omitempty" mapstructure:"brokered_subject_token_allowed_audiences"`
-	BrokeredSubjectTokenAllowedAlgs      []string          `json:"brokered_subject_token_allowed_algs,omitempty" mapstructure:"brokered_subject_token_allowed_algs"`
-	BrokeredSubjectTokenClockSkewSeconds int               `json:"brokered_subject_token_clock_skew_seconds,omitempty" mapstructure:"brokered_subject_token_clock_skew_seconds"`
-	BrokeredSubjectTokenJWKSURL          string            `json:"brokered_subject_token_jwks_url,omitempty" mapstructure:"brokered_subject_token_jwks_url"`
-	BrokeredSubjectTokenJWKSJSON         string            `json:"brokered_subject_token_jwks_json,omitempty" mapstructure:"brokered_subject_token_jwks_json"`
-	BrokeredSubjectTokenPublicKeys       []string          `json:"brokered_subject_token_public_keys,omitempty" mapstructure:"brokered_subject_token_public_keys"`
-	BrokeredSubjectTokenClaimMappings    map[string]string `json:"brokered_subject_token_claim_mappings,omitempty" mapstructure:"brokered_subject_token_claim_mappings"`
+	DebugAllowBrokeredHTTP                 bool              `json:"debug_allow_brokered_http" mapstructure:"debug_allow_brokered_http"`
+	BrokeredSubjectTokenAllowedJWKSOrigins []string          `json:"brokered_subject_token_allowed_jwks_origins,omitempty" mapstructure:"brokered_subject_token_allowed_jwks_origins"`
+	BrokeredSubjectTokenEnabled            bool              `json:"brokered_subject_token_enabled" mapstructure:"brokered_subject_token_enabled"`
+	BrokeredSubjectTokenTrustType          string            `json:"brokered_subject_token_trust_type,omitempty" mapstructure:"brokered_subject_token_trust_type"`
+	BrokeredSubjectTokenIssuer             string            `json:"brokered_subject_token_issuer,omitempty" mapstructure:"brokered_subject_token_issuer"`
+	BrokeredSubjectTokenAllowedAudiences   []string          `json:"brokered_subject_token_allowed_audiences,omitempty" mapstructure:"brokered_subject_token_allowed_audiences"`
+	BrokeredSubjectTokenAllowedAlgs        []string          `json:"brokered_subject_token_allowed_algs,omitempty" mapstructure:"brokered_subject_token_allowed_algs"`
+	BrokeredSubjectTokenClockSkewSeconds   int               `json:"brokered_subject_token_clock_skew_seconds,omitempty" mapstructure:"brokered_subject_token_clock_skew_seconds"`
+	BrokeredSubjectTokenJWKSURL            string            `json:"brokered_subject_token_jwks_url,omitempty" mapstructure:"brokered_subject_token_jwks_url"`
+	BrokeredSubjectTokenJWKSJSON           string            `json:"brokered_subject_token_jwks_json,omitempty" mapstructure:"brokered_subject_token_jwks_json"`
+	BrokeredSubjectTokenPublicKeys         []string          `json:"brokered_subject_token_public_keys,omitempty" mapstructure:"brokered_subject_token_public_keys"`
+	BrokeredSubjectTokenClaimMappings      map[string]string `json:"brokered_subject_token_claim_mappings,omitempty" mapstructure:"brokered_subject_token_claim_mappings"`
 }
 
 type subjectTokenRoleMapping struct {

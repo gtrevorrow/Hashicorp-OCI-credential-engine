@@ -26,6 +26,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    Note over V: Roles with removed filter settings require explicit cleanup
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with brokered self-minted `subject_token`
     O-->>V: OCI UPST or RPST

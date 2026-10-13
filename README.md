@@ -40,6 +40,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    Note over V: Roles with removed filter settings require explicit cleanup
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
@@ -70,6 +71,7 @@ sequenceDiagram
     S-->>V: Role TTL and local policy constraints
 
     alt Mapping rule matches
+        Note over V: Roles with removed filter settings require explicit cleanup
         V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
         V->>O: POST `/oauth2/v1/token`
         O-->>V: OCI session token
@@ -109,6 +111,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    Note over V: Roles with removed filter settings require explicit cleanup
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with plugin-issued brokered `subject_token`
     O-->>V: OCI UPST or RPST
@@ -142,6 +145,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    Note over V: Roles with removed filter settings require explicit cleanup
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
@@ -179,6 +183,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    Note over V: Roles with removed filter settings require explicit cleanup
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
@@ -458,23 +463,34 @@ On upgrade, repair invalid stored backend/role policies before exchanging tokens
 vault write oci/role/developer \
     description="Development environment access" \
     default_ttl=3600 \
-    max_ttl=14400 \
-    allowed_groups="dev-team,engineering" \
-    allowed_subjects="user1@example.com,user2@example.com"
+    max_ttl=14400
 
-# Create a production role with stricter controls
+# Create a production role with shorter TTL limits
 vault write oci/role/prod \
     description="Production environment access" \
     default_ttl=1800 \
-    max_ttl=3600 \
-    allowed_groups="sre-team"
+    max_ttl=3600
 ```
 
 **Role Parameters:**
 - `default_ttl`: Default Vault lease TTL for credentials issued under the role. Also used as the default `rpst_exp` requested from OCI for RPST exchanges when a request TTL is not supplied.
 - `max_ttl`: Maximum Vault lease TTL for credentials issued under the role. Also used as the maximum `rpst_exp` value allowed for RPST exchanges.
-- `allowed_groups`: Stored role metadata for future claim filtering
-- `allowed_subjects`: Stored role metadata for future subject filtering
+
+### Removed role filter fields and upgrade cleanup
+
+`allowed_subjects` and `allowed_groups` have been removed. They were stored metadata and never enforced authorization. They are no longer accepted role parameters, stored in new role records, or returned as role fields. Role writes now reject all unknown fields, including these two names even when their values are empty or null.
+
+Existing stored roles with nonempty values (or malformed legacy values) require explicit cleanup. Reads return the supported fields plus a warning naming the removed fields; listing and deletion remain available. Exchange through an affected named or JWT-mapped role fails, and ordinary writes cannot silently overwrite it. Missing, empty-array, or null legacy values do not block role use.
+
+Before upgrading, identify affected roles and review the actual Vault ACLs and OCI trust/authorization policies. To clean up an affected role:
+
+1. Read and retain its supported configuration: description, default/max TTLs, and `self_mint_custom_claims`. Review the warning; the removed filters never supplied access protection.
+2. Confirm the intended caller permissions are implemented through Vault and OCI controls. Direct `subject_token_role_mappings` remains supported and intentionally delegates role selection.
+3. Explicitly delete the affected role with `vault delete oci/role/<name>`.
+4. Recreate it with the retained supported parameters, omitting both removed fields. Role writes apply defaults to omitted values, so supply all settings you intend to retain.
+5. Read it back and verify exchange with an authorized caller. The role is unavailable between deletion and recreation; coordinate that window with its consumers.
+
+The plugin does not automatically delete or migrate nonempty removed settings, and no additional cleanup endpoint or bypass flag is provided. Subject/group filtering can be reconsidered only when a concrete use case defines the trusted identity and claims to constrain.
 
 ## Usage
 
@@ -949,8 +965,6 @@ Role fields:
 - `description`
 - `default_ttl`
 - `max_ttl`
-- `allowed_subjects`
-- `allowed_groups`
 - `self_mint_custom_claims`: JSON object of output claim name to string template for additive self-minted claims; supports pure string literals and trusted-context interpolation
 
 ## Architecture Details

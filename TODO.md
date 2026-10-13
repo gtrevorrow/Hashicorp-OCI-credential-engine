@@ -17,6 +17,8 @@ This file is the working backlog for the OCI credential engine plugin. It tracks
 
 - [x] Separate OCI credential expiry from Vault lease policy; cap leases to known remaining lifetime, explicitly report unknown expiry, and document nonrenewability/local-only revocation. Live OCI/Vault lifecycle validation remains outstanding.
 
+- [x] Remove never-enforced role filters; reject unsupported writes and require explicit delete/recreate cleanup for stored nonempty values. Revisit filtering only for a defined use case.
+
 ### Operational Hardening
 
 - [ ] Add metrics and telemetry for token exchange rate, error rate, and latency

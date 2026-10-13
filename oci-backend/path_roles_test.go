@@ -22,8 +22,6 @@ func TestPathRoles_CreateUpdate(t *testing.T) {
 				"description":             "A test role",
 				"default_ttl":             3600,
 				"max_ttl":                 86400,
-				"allowed_subjects":        []string{"systemA", "systemB"},
-				"allowed_groups":          []string{"dev-team"},
 				"self_mint_custom_claims": `{"oci_role":"developer","principal":"aws/{{ vault.alias.metadata.arn }}"}`,
 			},
 		}
@@ -37,7 +35,6 @@ func TestPathRoles_CreateUpdate(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, role)
 		assert.Equal(t, "A test role", role.Description)
-		assert.Contains(t, role.AllowedSubjects, "systemA")
 		assert.Equal(t, "developer", role.SelfMintCustomClaims["oci_role"])
 		assert.Equal(t, "aws/{{ vault.alias.metadata.arn }}", role.SelfMintCustomClaims["principal"])
 	})

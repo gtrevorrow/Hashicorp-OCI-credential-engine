@@ -38,16 +38,6 @@ func (b *backend) pathRoles() []*framework.Path {
 					Description: "Maximum TTL for tokens generated under this role",
 					Default:     86400,
 				},
-				"allowed_subjects": {
-					Type:        framework.TypeCommaStringSlice,
-					Description: "List of allowed subject claims (wildcards supported)",
-					Required:    false,
-				},
-				"allowed_groups": {
-					Type:        framework.TypeCommaStringSlice,
-					Description: "List of allowed groups from the subject token",
-					Required:    false,
-				},
 				"self_mint_custom_claims": {
 					Type:        framework.TypeString,
 					Description: "JSON object of additional claims to add only to self-minted subject tokens for this role",
@@ -102,26 +92,52 @@ type roleEntry struct {
 	Description          string            `json:"description"`
 	DefaultTTL           time.Duration     `json:"default_ttl"`
 	MaxTTL               time.Duration     `json:"max_ttl"`
-	AllowedSubjects      []string          `json:"allowed_subjects,omitempty"`
-	AllowedGroups        []string          `json:"allowed_groups,omitempty"`
 	SelfMintCustomClaims map[string]string `json:"self_mint_custom_claims,omitempty"`
 }
 
-func (b *backend) getRole(ctx context.Context, s logical.Storage, name string) (*roleEntry, error) {
-	entry, err := s.Get(ctx, "role/"+name)
+// readStoredRole keeps obsolete fields out of the active role model while
+// detecting configurations that require explicit operator cleanup.
+func (b *backend) readStoredRole(ctx context.Context, storage logical.Storage, name string) (*roleEntry, []string, error) {
+	entry, err := storage.Get(ctx, "role/"+name)
+	if err != nil || entry == nil {
+		return nil, nil, err
+	}
+	var raw map[string]json.RawMessage
+	if err := entry.DecodeJSON(&raw); err != nil {
+		return nil, nil, err
+	}
+	var obsolete []string
+	for _, field := range []string{"allowed_subjects", "allowed_groups"} {
+		value, ok := raw[field]
+		if !ok || strings.TrimSpace(string(value)) == "null" {
+			continue
+		}
+		var values []json.RawMessage
+		if err := json.Unmarshal(value, &values); err == nil && len(values) == 0 {
+			continue
+		}
+		obsolete = append(obsolete, field)
+	}
+	var role roleEntry
+	if err := entry.DecodeJSON(&role); err != nil {
+		return nil, nil, err
+	}
+	return &role, obsolete, nil
+}
+
+func obsoleteRoleFilterError(fields []string) error {
+	return fmt.Errorf("role contains removed, never-enforced fields %s; review the role and its Vault/OCI policies, then explicitly delete and recreate the role without these fields", strings.Join(fields, ", "))
+}
+
+func (b *backend) getRole(ctx context.Context, storage logical.Storage, name string) (*roleEntry, error) {
+	role, obsolete, err := b.readStoredRole(ctx, storage, name)
 	if err != nil {
 		return nil, err
 	}
-	if entry == nil {
-		return nil, nil
+	if len(obsolete) > 0 {
+		return nil, obsoleteRoleFilterError(obsolete)
 	}
-
-	var role roleEntry
-	if err := entry.DecodeJSON(&role); err != nil {
-		return nil, err
-	}
-
-	return &role, nil
+	return role, nil
 }
 
 func (b *backend) saveRole(ctx context.Context, s logical.Storage, role *roleEntry) error {
@@ -136,7 +152,7 @@ func (b *backend) saveRole(ctx context.Context, s logical.Storage, role *roleEnt
 func (b *backend) pathRoleRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	name := data.Get("name").(string)
 
-	role, err := b.getRole(ctx, req.Storage, name)
+	role, obsolete, err := b.readStoredRole(ctx, req.Storage, name)
 	if err != nil {
 		return nil, err
 	}
@@ -144,20 +160,26 @@ func (b *backend) pathRoleRead(ctx context.Context, req *logical.Request, data *
 		return nil, nil
 	}
 
-	return &logical.Response{
+	resp := &logical.Response{
 		Data: map[string]interface{}{
 			"name":                    role.Name,
 			"description":             role.Description,
 			"default_ttl":             int(role.DefaultTTL.Seconds()),
 			"max_ttl":                 int(role.MaxTTL.Seconds()),
-			"allowed_subjects":        role.AllowedSubjects,
-			"allowed_groups":          role.AllowedGroups,
 			"self_mint_custom_claims": role.SelfMintCustomClaims,
 		},
-	}, nil
+	}
+	if len(obsolete) > 0 {
+		resp.AddWarning(obsoleteRoleFilterError(obsolete).Error())
+	}
+	return resp, nil
 }
 
 func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	if err := data.ValidateStrict(); err != nil {
+		return logical.ErrorResponse("invalid role request: %v", err), nil
+	}
+
 	if err := validateTokenTTLInputs(data, false, "default_ttl", "max_ttl"); err != nil {
 		return logical.ErrorResponse("invalid token TTL policy: %v", err), nil
 	}
@@ -165,6 +187,14 @@ func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, data 
 	name := data.Get("name").(string)
 	if name == "" {
 		return logical.ErrorResponse("missing role name"), nil
+	}
+
+	_, obsolete, readErr := b.readStoredRole(ctx, req.Storage, name)
+	if readErr != nil {
+		return nil, readErr
+	}
+	if len(obsolete) > 0 {
+		return logical.ErrorResponse("%v", obsoleteRoleFilterError(obsolete)), nil
 	}
 
 	config, err := b.getConfig(ctx, req.Storage)
@@ -197,8 +227,6 @@ func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, data 
 		Description:          data.Get("description").(string),
 		DefaultTTL:           defaultTTL,
 		MaxTTL:               maxTTL,
-		AllowedSubjects:      data.Get("allowed_subjects").([]string),
-		AllowedGroups:        data.Get("allowed_groups").([]string),
 		SelfMintCustomClaims: selfMintCustomClaims,
 	}
 
@@ -221,11 +249,8 @@ func (b *backend) pathRoleDelete(ctx context.Context, req *logical.Request, data
 func (b *backend) pathRoleExistenceCheck(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
 	name := data.Get("name").(string)
 
-	role, err := b.getRole(ctx, req.Storage, name)
-	if err != nil {
-		return false, err
-	}
-	return role != nil, nil
+	entry, err := req.Storage.Get(ctx, "role/"+name)
+	return entry != nil, err
 }
 
 func (b *backend) pathRoleList(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
@@ -248,9 +273,7 @@ Example:
   $ vault write oci/role/developer \\
       description="Development environment access" \\
       default_ttl=3600 \\
-      max_ttl=14400 \\
-      allowed_groups="dev-team" \\
-      allowed_subjects="user1@example.com,user2@example.com"
+      max_ttl=14400
 `
 
 const pathRoleListHelpSyn = `

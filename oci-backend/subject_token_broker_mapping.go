@@ -28,10 +28,8 @@ func decodeBrokeredSubjectTokenClaimMappings(raw string) (map[string]string, err
 		if strings.TrimSpace(template) == "" {
 			return nil, fmt.Errorf("claim %q must use a non-empty string template", outputClaim)
 		}
-		if _, err := renderBrokeredClaimTemplate(template, map[string]interface{}{}); err != nil {
-			if !isBrokeredTemplateClaimLookupError(err) {
-				return nil, fmt.Errorf("claim %q: %w", outputClaim, err)
-			}
+		if _, err := parseClaimTemplate(template, validateBrokeredExpression); err != nil {
+			return nil, fmt.Errorf("claim %q: %w", outputClaim, err)
 		}
 	}
 
@@ -63,47 +61,17 @@ func renderBrokeredClaimMappings(validatedClaims map[string]interface{}, mapping
 }
 
 func renderBrokeredClaimTemplate(template string, claims map[string]interface{}) (string, error) {
-	var builder strings.Builder
-	remaining := template
-
-	for {
-		start := strings.Index(remaining, "{{")
-		endBeforeStart := strings.Index(remaining, "}}")
-		if start == -1 {
-			if endBeforeStart >= 0 {
-				return "", fmt.Errorf("invalid template syntax")
-			}
-			builder.WriteString(remaining)
-			return builder.String(), nil
-		}
-		if endBeforeStart >= 0 && endBeforeStart < start {
-			return "", fmt.Errorf("invalid template syntax")
-		}
-
-		builder.WriteString(remaining[:start])
-		remaining = remaining[start+2:]
-
-		end := strings.Index(remaining, "}}")
-		if end == -1 {
-			return "", fmt.Errorf("invalid template syntax")
-		}
-
-		expression := strings.TrimSpace(remaining[:end])
-		if !strings.HasPrefix(expression, "claims.") {
-			return "", fmt.Errorf("unsupported template expression %q", expression)
-		}
-
+	parts, err := parseClaimTemplate(template, validateBrokeredExpression)
+	if err != nil {
+		return "", err
+	}
+	return renderClaimTemplate(parts, func(expression string) (string, error) {
 		value, err := lookupBrokeredClaim(claims, strings.TrimPrefix(expression, "claims."))
 		if err != nil {
 			return "", err
 		}
-		stringValue, err := stringifyBrokeredClaimValue(value)
-		if err != nil {
-			return "", err
-		}
-		builder.WriteString(stringValue)
-		remaining = remaining[end+2:]
-	}
+		return stringifyBrokeredClaimValue(value)
+	})
 }
 
 func lookupBrokeredClaim(claims map[string]interface{}, path string) (interface{}, error) {

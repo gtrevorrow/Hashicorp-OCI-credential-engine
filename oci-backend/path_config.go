@@ -689,11 +689,11 @@ Optional:
   - strict_role_name_match: Require role names to match [A-Za-z0-9._:-]+ (default: false)
   - subject_token_identity_alias_mount_accessor: Explicit linked alias auth mount accessor; empty disables alias claims (not current login evidence)
   - subject_token_self_mint_enabled: Enable built-in callback self-mint fallback (default: false)
-  - subject_token_self_mint_issuer: Required when self-mint is enabled
+  - subject_token_self_mint_issuer: Required when self-mint or brokered mode is enabled
   - subject_token_self_mint_audience: Audience for self-minted token (default: urn:mace:oci:idcs)
   - subject_token_allowed_audiences: Optional allowlist for per-request fallback audience override
   - subject_token_self_mint_ttl_seconds: TTL for self-minted token (default: 600)
-  - subject_token_self_mint_private_key: Optional PEM RSA private key; auto-generated and stored if omitted when self-mint is enabled
+  - subject_token_self_mint_private_key: Optional PEM RSA private key; auto-generated and stored if omitted when self-mint or brokered mode is enabled
   - debug_return_resolved_subject_token_claims: Development-only flag to include resolved subject token claims in exchange responses
   - debug_allow_brokered_http: Allow HTTP only on loopback for local trust testing (default: false)
   - brokered_subject_token_allowed_jwks_origins: Additional exact origins allowed for discovered JWKS URLs
@@ -706,7 +706,7 @@ Optional:
   - brokered_subject_token_jwks_url: Required trust source when trust_type=jwks_url
   - brokered_subject_token_jwks_json: Required trust source when trust_type=jwks_json
   - brokered_subject_token_public_keys: Required trust source when trust_type=public_keys
-  - brokered_subject_token_claim_mappings: Optional JSON object of output claim name to string template
+  - brokered_subject_token_claim_mappings: Optional JSON object of output claim name to string template; complete syntax validated, 16 KiB template / 64 KiB rendered claim limits
 
 Example:
   $ vault write oci/config \

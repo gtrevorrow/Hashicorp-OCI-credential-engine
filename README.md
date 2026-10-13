@@ -40,6 +40,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
@@ -68,6 +69,7 @@ sequenceDiagram
     S-->>V: Role TTL and local policy constraints
 
     alt Mapping rule matches
+        V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
         V->>O: POST `/oauth2/v1/token`
         O-->>V: OCI session token
         V-->>C: Success response
@@ -105,6 +107,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with plugin-issued brokered `subject_token`
     O-->>V: OCI UPST or RPST
     V-->>C: Vault secret response with OCI token and generated exchange private key only when the engine generated the exchange keypair
@@ -136,6 +139,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
@@ -171,6 +175,7 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
@@ -425,6 +430,23 @@ Then configure each mount separately with its own `oci/config` and roles.
 ### Roles
 
 Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exchange does not currently let the client request token lifetime through the token-exchange call, so these TTL settings only directly shape the OCI request for RPST via `rpst_exp`. For UPST, they mainly affect Vault-side lease metadata today.
+
+TTL selection uses an explicit positive request `ttl`, otherwise the role default, otherwise the backend default. An omitted or zero request `ttl` selects the default. The result is capped at the lowest positive backend maximum, role maximum, and effective Vault mount/system maximum returned by `SystemView.MaxLeaseTTL()`. A role can tighten the backend ceiling but cannot raise it. This applies to explicit and JWT-mapped roles and to every exchange mode. The same capped duration is used for Vault lease metadata and RPST `rpst_exp`; OCI still determines the lifetime actually granted.
+
+Backend and role `default_ttl`/`max_ttl` writes require positive whole-second durations with `default_ttl <= max_ttl`. Supported duration strings such as `1h` remain accepted. Zero, negative, fractional-second, and overflowing policy values are rejected. Each value is bounded to 9,223,372,036 seconds before nanosecond conversion. Request `ttl` uses the same range, with zero additionally allowed to select the default. A fractional Vault ceiling is rounded down to whole seconds; a positive ceiling below one second fails closed.
+
+Examples of TTL validation and selection:
+
+| Input or policy | Result |
+|---|---|
+| `default_ttl=60 max_ttl=600` | Valid policy |
+| `default_ttl=3600 max_ttl=600` | Rejected: the policy's default exceeds its own maximum |
+| Configured `default_ttl=0`, `max_ttl=-60`, or `default_ttl="500ms"` | Rejected; the stored configuration is unchanged |
+| Request `ttl=0`, or no `ttl` | Select the role/backend default, then apply all ceilings |
+| Role default/max of 3600 seconds; backend default/max of 600 seconds | Valid policies; exchange TTL is capped at 600 seconds |
+| The same policies with a Vault maximum of 300 seconds | Exchange TTL is capped at 300 seconds |
+
+On upgrade, repair invalid stored backend/role policies before exchanging tokens. Partial backend updates revalidate the complete TTL pair; lowering `max_ttl` below the current default requires lowering `default_ttl` in the same write. A role default may exceed the backend or Vault maximum and is capped at exchange time, so lowering backend policy also constrains existing roles. Legacy zero role values inherit backend settings, but new role writes must use positive values. The `subject_token_self_mint_ttl_seconds` setting controls a different token and is not changed by these exchanged-credential TTL rules.
 
 ```bash
 # Create a development role
@@ -846,7 +868,7 @@ vault write oci/exchange/developer \
     res_type="resource_principal"
 ```
 
-For RPST requests, `res_type` is required and the response will include `rpst_token`. The plugin also sends `rpst_exp` to OCI based on the effective TTL after applying request, role, and backend limits.
+For RPST requests, `res_type` is required and the response will include `rpst_token`. The plugin also sends `rpst_exp` to OCI based on the effective TTL after applying request, role, backend, and Vault mount/system limits.
 
 ## API Reference
 
@@ -895,7 +917,7 @@ vault read oci/jwks
 - `urn:oci:token-type:oci-rpst` (requires `res_type`)
 
 TTL note:
-- For RPST, the plugin uses config and role TTL policy to bound the `rpst_exp` value sent to OCI.
+- For RPST, the plugin uses backend, role, and Vault mount/system ceilings to bound the `rpst_exp` value sent to OCI.
 - For UPST, OCI determines the token lifetime; plugin TTL settings affect Vault lease metadata, not OCI-side UPST expiration.
 
 ### Roles Path

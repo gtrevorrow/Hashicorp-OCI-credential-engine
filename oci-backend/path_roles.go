@@ -158,6 +158,10 @@ func (b *backend) pathRoleRead(ctx context.Context, req *logical.Request, data *
 }
 
 func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	if err := validateTokenTTLInputs(data, false, "default_ttl", "max_ttl"); err != nil {
+		return logical.ErrorResponse("invalid token TTL policy: %v", err), nil
+	}
+
 	name := data.Get("name").(string)
 	if name == "" {
 		return logical.ErrorResponse("missing role name"), nil
@@ -176,21 +180,26 @@ func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, data 
 		return logical.ErrorResponse("invalid self_mint_custom_claims: %v", err), nil
 	}
 
+	defaultTTL, ttlErr := tokenTTLDuration(data.Get("default_ttl").(int), "default_ttl")
+	if ttlErr != nil {
+		return logical.ErrorResponse("invalid role TTL policy: %v", ttlErr), nil
+	}
+	maxTTL, ttlErr := tokenTTLDuration(data.Get("max_ttl").(int), "max_ttl")
+	if ttlErr == nil {
+		ttlErr = validateTokenTTLPair(defaultTTL, maxTTL)
+	}
+	if ttlErr != nil {
+		return logical.ErrorResponse("invalid role TTL policy: %v", ttlErr), nil
+	}
+
 	role := &roleEntry{
 		Name:                 name,
 		Description:          data.Get("description").(string),
-		DefaultTTL:           time.Duration(data.Get("default_ttl").(int)) * time.Second,
-		MaxTTL:               time.Duration(data.Get("max_ttl").(int)) * time.Second,
+		DefaultTTL:           defaultTTL,
+		MaxTTL:               maxTTL,
 		AllowedSubjects:      data.Get("allowed_subjects").([]string),
 		AllowedGroups:        data.Get("allowed_groups").([]string),
 		SelfMintCustomClaims: selfMintCustomClaims,
-	}
-
-	if role.DefaultTTL == 0 {
-		role.DefaultTTL = 3600 * time.Second
-	}
-	if role.MaxTTL == 0 {
-		role.MaxTTL = 86400 * time.Second
 	}
 
 	if err := b.saveRole(ctx, req.Storage, role); err != nil {

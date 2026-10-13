@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/stretchr/testify/require"
 )
 
@@ -260,4 +261,32 @@ func newIntegrationServer(t *testing.T, handler http.Handler) *httptest.Server {
 	server.Listener = listener
 	server.Start()
 	return server
+}
+
+// Exercise the complete handler-to-HTTP path after an administrator tightens
+// backend policy below an already stored role's default and maximum.
+func TestIntegrationExchangeRPSTRespectsBackendTTLCeiling(t *testing.T) {
+	b, storage := getTestBackend(t)
+	calls := 0
+	server := newIntegrationServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		require.NoError(t, r.ParseForm())
+		require.Equal(t, "60", r.PostForm.Get("rpst_exp"))
+		require.Equal(t, ociRequestedTokenTypeRPST, r.PostForm.Get("requested_token_type"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"synthetic","token_type":"Bearer"}`))
+	}))
+	defer server.Close()
+	require.NoError(t, b.saveConfig(context.Background(), storage, &federatedConfig{DomainUrl: server.URL, ClientID: "test", ClientSecret: "test", DefaultTTL: 60, MaxTTL: 60}))
+	require.NoError(t, b.saveRole(context.Background(), storage, &roleEntry{Name: "dev", DefaultTTL: time.Hour, MaxTTL: time.Hour}))
+	key := generateTestRSAPrivateKey(t)
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{Operation: logical.UpdateOperation, Path: "exchange/dev", Storage: storage, Data: map[string]interface{}{
+		"subject_token": "synthetic", "requested_token_type": ociRequestedTokenTypeRPST, "res_type": "resource_principal", "public_key": encodeTestPublicKeyPEM(t, &key.PublicKey),
+	}})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.False(t, resp.IsError(), "%v", resp)
+	require.Equal(t, time.Minute, resp.Secret.TTL)
+	require.Equal(t, time.Minute, resp.Secret.MaxTTL)
+	require.Equal(t, 1, calls)
 }

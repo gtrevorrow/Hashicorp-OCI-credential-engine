@@ -16,6 +16,7 @@ sequenceDiagram
     S-->>V: Role TTL and local policy constraints
 
     alt Mapping rule matches
+        V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
         V->>O: POST `/oauth2/v1/token`
         O-->>V: OCI session token
         V-->>C: Success response

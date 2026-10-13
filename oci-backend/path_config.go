@@ -306,6 +306,10 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 
 // pathConfigWrite creates or updates the configuration
 func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	if err := validateTokenTTLInputs(data, false, "default_ttl", "max_ttl"); err != nil {
+		return logical.ErrorResponse("invalid token TTL policy: %v", err), nil
+	}
+
 	existingConfig, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
 		return nil, err
@@ -439,6 +443,10 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 	if config.ClientSecret == "" {
 		return logical.ErrorResponse("missing 'client_secret'"), nil
+	}
+
+	if _, _, ttlErr := configuredTokenTTLs(config); ttlErr != nil {
+		return logical.ErrorResponse("invalid token TTL policy: %v", ttlErr), nil
 	}
 
 	if config.StrictRoleNameMatch {

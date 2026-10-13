@@ -11,7 +11,7 @@ This file is the working backlog for the OCI credential engine plugin. It tracks
 - [x] Explicit brokered subject-token mode is implemented: the plugin can validate a caller-supplied JWT locally, map validated claims with templates, self-mint a plugin-issued brokered JWT, and exchange that re-issued JWT with OCI.
 - [x] Brokered trust sources support OIDC discovery, JWKS URL, inline JWKS JSON, and inline public keys, with issuer, audience, algorithm, and time-claim validation.
 - [x] Role-scoped `self_mint_custom_claims` are implemented for plugin-issued self-mint and brokered re-issue flows when an explicit `/exchange/:role` path is selected.
-- [x] RPST exchange requests send `rpst_exp` based on the effective TTL after request, role, and backend TTL policy are applied. UPST lifetime remains OCI-controlled; plugin TTLs primarily affect Vault lease metadata for UPST responses.
+- [x] RPST exchange requests send `rpst_exp` based on the effective TTL after request/default selection and the minimum backend, role, and Vault mount/system ceiling are applied. TTL writes validate positive bounded durations and default/maximum relationships. UPST lifetime remains OCI-controlled; plugin TTLs primarily affect Vault lease metadata for UPST responses.
 - [x] Single-key JWKS export is implemented at `oci/jwks` for the configured self-mint signing key, including stable `kid` and compatibility `x5c` output.
 - [x] Unit and handler-level tests cover config, roles, direct exchange validation, plugin-issued subject-token flow, self-mint claims, brokered re-issue, JWKS export, and mock OCI client integration behavior.
 

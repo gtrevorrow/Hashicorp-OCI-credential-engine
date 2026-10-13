@@ -112,6 +112,10 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		return logical.ErrorResponse("invalid exchange request: %v", err), nil
 	}
 
+	if err := validateTokenTTLInputs(data, true, "ttl"); err != nil {
+		return logical.ErrorResponse("invalid token TTL policy: %v", err), nil
+	}
+
 	// Get backend configuration
 	config, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
@@ -251,23 +255,13 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 	}
 
-	// Determine TTL
-	ttl := time.Duration(data.Get("ttl").(int)) * time.Second
-	if ttl == 0 {
-		if role != nil && role.DefaultTTL > 0 {
-			ttl = role.DefaultTTL
-		} else {
-			ttl = time.Duration(config.DefaultTTL) * time.Second
-		}
+	var vaultMax time.Duration
+	if system := b.System(); system != nil {
+		vaultMax = system.MaxLeaseTTL()
 	}
-
-	maxTTL := time.Duration(config.MaxTTL) * time.Second
-	if role != nil && role.MaxTTL > 0 {
-		maxTTL = role.MaxTTL
-	}
-
-	if ttl > maxTTL {
-		ttl = maxTTL
+	ttl, maxTTL, ttlErr := resolveTokenTTL(data.Get("ttl").(int), config, role, vaultMax)
+	if ttlErr != nil {
+		return logical.ErrorResponse("invalid token TTL policy: %v", ttlErr), nil
 	}
 
 	// Perform the token exchange

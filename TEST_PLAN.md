@@ -2,7 +2,7 @@
 
 This document tracks the functional and security test contracts for the HashiCorp Vault OCI Secrets Engine plugin. A listed case is a test requirement, not a claim that it is automated; see the coverage snapshot and outstanding work below.
 
-Last reconciled: **2026-10-13**, for integration of `feature/remove-unused-role-filters`, based on `development` at `5a39d74`. Includes removal of unsupported role filters and explicit cleanup checks alongside the prior security fixes.
+Last reconciled: **2026-10-13**, on `feature/validate-complete-claim-templates`, based on development `2198c90`. Covers all eight security fixes; live acceptance remains separate.
 
 The trust boundaries differ by mode:
 
@@ -58,7 +58,7 @@ Additional plugin-issued audience-validation cases:
 | ROL-12 | Role with reserved JWT claim override | self_mint_custom_claims includes `sub`, `iss`, `aud`, `exp`, `iat`, `nbf`, or `jti` | Error: reserved claim cannot be overridden |
 | ROL-13 | Role with reserved Vault namespace claim | self_mint_custom_claims includes `vault_*` | Error: reserved vault_ namespace |
 | ROL-14 | Role with non-string custom claim value | self_mint_custom_claims contains array, object, number, or bool | Error: claim must use a string template |
-| ROL-15 | Role with invalid self-mint template syntax | self_mint_custom_claims contains malformed template | Reject malformed syntax throughout the template; existing tests cover only a simple malformed expression (see outstanding work) |
+| ROL-15 | Role with invalid self-mint template syntax | self_mint_custom_claims contains malformed template | Reject malformed syntax anywhere, including after missing-context lookups; rejected writes preserve storage (TPL-01–02) |
 
 ### Removed role filter contracts
 
@@ -267,7 +267,7 @@ Coverage means assertions at the specified layer. Unit tests use in-memory Vault
 | CFG-01–03, CFG-05–18 | [path_config_test.go](oci-backend/path_config_test.go): creation/defaults, read/delete, partial updates, mappings, self-mint key generation/reuse, and brokered validation. CFG-04 has no dedicated test; implementation currently checks the `https://` prefix, not full URL validity |
 | CFG-19–20, EXC-19 | Integrated: `TestPathConfig_SubjectTokenAllowedAudiencesValidation` covers normalization/deduplication and blank/control/overlong entries. `TestPathExchange_SubjectTokenAudienceOverrideRejectsInvalidValue` rejects whitespace-only overrides; `TestPathExchange_DefaultCallbackSelfMintUsesAudienceOverride` and `TestPathExchange_DefaultCallbackGenerateIdentityTokenUsesAudienceOverride` assert the normalized audience reaches both issuance paths |
 | ROL-16–20 | [role_filter_removal_test.go](oci-backend/role_filter_removal_test.go): unknown-field rejection, stored-value detection, preserved state on rejected writes, warned reads, explicit deletion/recreation, empty/null compatibility, and four exchange modes |
-| ROL-01–04, ROL-06, ROL-08, ROL-10–15 | [path_roles_test.go](oci-backend/path_roles_test.go): representative creation/read/list/delete and validation. ROL-04 asserts a single listed role, not the three-role scenario; ROL-15 tests simple malformed syntax, not every expression position |
+| ROL-01–04, ROL-06, ROL-08, ROL-10–15 | [path_roles_test.go](oci-backend/path_roles_test.go): representative creation/read/list/delete and validation. ROL-04 asserts a single listed role, not the three-role scenario; ROL-15 additionally has complete-template regression tests in `claim_template_test.go` |
 | EXC-04, EXC-06–18 | [path_exchange_test.go](oci-backend/path_exchange_test.go): callback/fallback, key handling, mappings, audience constraints, brokered reissue, direct pass-through, empty-token and requested-type validation. Several tests intentionally fail at the exchange stub after checking earlier behavior; these are not full exchange success proofs |
 | EXC-01–03 | Partial: OCI client mock success cases for UPST/RPST; no full Vault-to-OCI success workflow |
 | RCM-01–07 | [subject_token_role_mappings_test.go](oci-backend/subject_token_role_mappings_test.go), config validation, and `TestPathExchange_SubjectTokenRoleMappings`; local rule evaluation, not JWT authenticity or Vault ACLs |
@@ -291,7 +291,7 @@ ROL-05 (updating an existing role) and ROL-09 (special characters with strict mo
 
 1. **Deployed authorization:** SCH-01–02 and audience cases CFG-19–20/EXC-19 are integrated and locally tested. Add non-root Vault ACL tests; direct role mapping remains intentional delegation. Extend audience coverage to exact byte boundaries, multibyte strings, and invalid previously stored allowlists on partial updates.
 2. **Live expiry and lease validation:** Finding #4 is locally implemented and covered by EXP-01–07. Verify actual OCI expiry response shapes and credential validity, and renewal/revocation/expiry through a running Vault server. The revoke callback makes no OCI call; do not infer upstream invalidation from Vault lease removal.
-3. **Role and identity contracts:** unsupported filters have been removed; verify operator cleanup and authorization in a deployed Vault environment. Verify explicit linked alias selection with multiple real auth methods, including login through a different linked alias. Confirm OCI treats selected alias data as linked identity, not current-login evidence. Add malformed-template cases after an otherwise valid missing-context lookup, where current configuration validation can stop before inspecting trailing syntax.
+3. **Role and identity contracts:** unsupported filters have been removed; verify operator cleanup and authorization in a deployed Vault environment. Verify explicit linked alias selection with multiple real auth methods, including login through a different linked alias. Confirm OCI treats selected alias data as linked identity, not current-login evidence. Complete-template validation and size boundaries are now covered by TPL-01–04; live caller-data and downstream claim compatibility remain acceptance work.
 4. **Trust boundary and resource limits:** add exact-boundary tests for 1 MiB documents/JWTs/aggregate PEM and 64 keys, malformed/missing time claims and future `nbf`/`iat`, invalid origin paths/ports, and more address classes. Existing tests reject an oversized fetched document and 65-key JWKS; they do not exhaust all implemented limits.
 5. **Transport and rotation:** exercise actual TLS, mixed public/private DNS answers, checked-address dialing, environment-proxy bypass, refresh timeouts, policy changes beyond the JWKS URL, and unknown-key floods during cooldown. Test upstream key rollover with unique key IDs and the documented publication overlap. Plugin signing-key rotation and multi-key JWKS need implementation and separate tests.
 6. **Live acceptance:** complete E2E-01–06 with a disposable OCI domain/tenancy, real Vault policies, and a trusted IdP. Verify OCI API use with the returned credential, rejection cases, and mount isolation. Validate actual Vault Enterprise identity-token behavior and any FIPS deployment claims separately from mocked tests.
@@ -323,12 +323,12 @@ Integration tests use local mock HTTP servers, not a live IdP or OCI tenancy. `n
 
 ### Latest Verification
 
-On **2026-10-13**, using the security integration, audience validation, TTL ceiling, credential-expiry, and role-filter removal changes described above:
+On **2026-10-13**, using the complete security fixes, including alias selection and full template validation described above:
 
 - `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -race -count=1 ./...` — passed, including TTL policy cases, the 18 schema-rejection subcases, and positive role-selection tests.
 - `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -count=1 -tags=integration ./oci-backend -run Integration -v` — all nine tests passed, none skipped, with loopback TCP access.
 
-`GOWORK=off GOCACHE=/tmp/oci-review-cache go vet ./...` and a native `go build -trimpath` also passed. These results include role-filter removal/cleanup, credential-expiry reconciliation, TTL ceilings, and audience validation with their regression tests. They do not establish live OCI/IdP behavior, Vault ACL enforcement, Enterprise/FIPS compatibility, or production-network readiness.
+`GOWORK=off GOCACHE=/tmp/oci-review-cache go vet ./...`, a native `go build -trimpath`, and all 14 dev-helper tests also passed. Documentation JSON examples, local links, embedded Mermaid/source consistency, shell syntax and diff checks were verified. These results include all eight local security fixes; the helper suite separately verifies mocked CLI/process boundaries. They do not establish live OCI/IdP behavior, Vault ACL enforcement, Enterprise/FIPS compatibility, or production-network readiness.
 
 ### Manual Acceptance
 
@@ -383,3 +383,14 @@ Feature: `feature/harden-dev-helpers`, based on development `768e775` (finding 6
 Run `make test-dev-helpers` (also in PR CI). Python tests mock Vault/process interfaces; no real Vault or OCI tenant is exercised. Bash syntax and `git diff --check` are also required for these script changes. Sequence diagrams are unchanged because the plugin exchange/authentication sequence is unchanged; the smoke harness now provisions isolated temporary resources around that sequence.
 
 Local verification for DEV-01–05: all 14 helper security tests passed, along with shell syntax and diff checks. DEV-06 remains unexecuted because Vault is not installed in this environment.
+
+## Complete Template Validation
+
+| ID | Contract | Automated evidence |
+|---|---|---|
+| TPL-01 | Reject invalid trailing expressions, delimiters, paths, joins and nesting before missing-data lookup | `TestTemplatesValidateEveryExpressionBeforeLookup`, both modes |
+| TPL-02 | Reject role/config template writes without modifying previous stored values | `TestTemplateWritesRejectTrailingErrorsWithoutChangingStorage` |
+| TPL-03 | Enforce 16 KiB template and 64 KiB rendered-claim limits, including concatenation and joins | `TestTemplateSizeAndRenderingLimits` |
+| TPL-04 | Valid syntax can reference runtime data absent at write time; runtime missing data still fails; escaped separators work | `TestTemplateSyntaxDoesNotRequireRuntimeData` |
+
+Existing malformed stored templates fail during exchange; update them before deployment. Limits are per template/claim, not an aggregate JWT budget.

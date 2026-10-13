@@ -18,6 +18,7 @@ sequenceDiagram
     SV-->>V: Entity, linked aliases, groups
     Note over V: Emit alias claims only for configured auth accessor; fail on missing or ambiguous match
     V->>V: Build JWT with Vault-derived claims
+    V->>V: Parse complete role templates and render bounded custom claims, if a role is selected
     V->>V: Sign self-minted JWT with plugin signing key
     alt Caller supplies `public_key`
         V->>V: Use caller public key for OCI exchange

@@ -14,7 +14,7 @@ We follow a strict branching model to ensure stability and automated releases:
 1. Create a new branch off of `development` (e.g., `git checkout -b feature/my-new-feature development`).
 2. Make your code changes and commit them using [Conventional Commits](#conventional-commits).
 3. Open a Pull Request targeting the `development` branch.
-4. Once reviewed and CI passes, your PR will be merged into `development`, which automatically triggers a **pre-release** (e.g., `v1.2.0-dev.1`).
+4. Once reviewed and CI passes, your PR will be merged into `development`, which triggers semantic-release on push; release-worthy Conventional Commits produce a **pre-release** (e.g., `v1.2.0-dev.1`).
 5. Periodically, the maintainers will open a PR from `development` to `master` to cut a new stable release.
 
 ## Conventional Commits
@@ -38,6 +38,8 @@ Common types:
 
 Our GitHub Actions PR workflow utilizes `commitlint` to enforce these rules.
 
+The current release workflow publishes semantic-release tags, release notes and GitHub releases. It does not build, sign, checksum or upload plugin binaries; build artifacts locally until artifact delivery is implemented. PR tests use a checkout of the moving OCI SDK default branch via `go.work`; also test with `GOWORK=off` against the committed module graph. Neither workflow establishes a reproducible release or FIPS validation.
+
 ## Building and Local Development
 
 We use `make` to streamline building the Vault plugin.
@@ -45,8 +47,8 @@ We use `make` to streamline building the Vault plugin.
 This document is the source of truth for contributor build, local Vault dev, and test workflows. The [README](README.md) keeps only a short install overview and links back here for contributor-facing detail.
 
 ### Prerequisites
-* Go 1.21 or later
-* Vault 1.12+ (for local testing)
+* Go 1.25.0 or later (as declared in `go.mod`)
+* Vault with external secrets-engine plugin support (validate your version/edition; no tested compatibility matrix is published)
 * Python 3.9+ on macOS or Linux (standard library only, for local dev helpers and their tests)
 
 ### Build the Plugin

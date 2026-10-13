@@ -1,373 +1,72 @@
-# Design Plan: Templated Self-Mint Claims From Trusted Vault Context
+# Design: Templated Self-Mint Claims
+
+This document describes the implemented design. It replaces the earlier proposal for literal-only custom claims. See [README](README.md#role-scoped-custom-claims-for-self-mint) for configuration and [TEST_PLAN](TEST_PLAN.md) for evidence and live-validation gaps.
+
+## Scope and Claim Assembly
+
+A named `/exchange/<role>` route may contribute `self_mint_custom_claims` when the plugin signs a JWT: either the self-mint fallback after Vault identity-token generation is unavailable, or brokered re-issue after local JWT verification. Direct pass-through and successful Vault-generated plugin identity tokens are not modified by role templates.
+
+Claims are assembled in this order:
+
+1. Standard claims: `iss`, `sub`, `aud`, `iat`, `exp`, `jti`.
+2. Vault request, entity, explicitly selected linked alias, and group attributes when available.
+3. Brokered mapped claims, when applicable.
+4. Rendered role custom claims.
+
+Later layers cannot replace an existing claim. Configured output names cannot be reserved JWT names (`iss`, `sub`, `aud`, `iat`, `exp`, `nbf`, `jti`) or start with `vault_`. The role name itself is not copied into a signed claim; an administrator can explicitly configure a literal such as `"oci_role":"developer"`. Such literals are operator assertions whose use must be constrained by role-path ACLs and OCI trust policy.
+
+## Configuration and Context
+
+`self_mint_custom_claims` is a JSON object mapping output names to string templates. Storage uses `map[string]string`; numbers, booleans, arrays and objects are not accepted as configured template values. Literal strings and interpolated strings share the same field.
+
+| Context | Available values |
+|---|---|
+| `vault.entity` | `id`, `name`, `namespace_id`, `metadata.*` |
+| `vault.alias` | `name`, `mount_accessor`, `mount_type`, `metadata.*`, `custom_metadata.*` |
+| `vault.request` | `display_name`, `mount_accessor`, `mount_type`, `client_token_accessor` |
+| `vault.groups` | List of group names; empty when no names are available |
+| `brokered.claims.*` | Verified external claims, only during brokered re-issue |
+
+Raw request-body data and merely decoded direct-flow JWT claims are not template inputs. Missing values and incompatible types fail rendering. An empty groups list can be joined to an empty string.
+
+Example role field:
+
+```json
+{
+  "self_mint_custom_claims": {
+    "environment": "development",
+    "entity_ref": "entity/{{ vault.entity.id }}",
+    "groups_csv": "{{ join(vault.groups, \",\") }}"
+  }
+}
+```
+
+The JSON above is a conceptual field object; the Vault CLI field takes the serialized JSON mapping as shown in the README.
 
 ## Linked Alias Trust Boundary
 
-Alias claims require an explicit `subject_token_identity_alias_mount_accessor` in backend configuration. Empty disables alias claims; a configured accessor must match exactly one alias on the caller's Vault entity or signing fails. This applies to self-mint and brokered signing. Request mount fields identify the secrets engine and never select an auth alias.
+Alias claims require `subject_token_identity_alias_mount_accessor` in backend configuration. Empty disables alias claims. A configured accessor must match exactly one alias on the caller's Vault entity or signing fails. There is no fallback to the first alias, mount type, or request mount.
 
-Selected alias metadata describes an operator-approved linked identity, not the authentication method used to obtain the current Vault token. An AWS ARN from this context is not proof that this exchange caller just authenticated through AWS. Downstream policies must explicitly accept linked-entity trust; use a separately verified identity flow when login-method proof is required. Existing alias templates need opt-in configuration after upgrade and fail if required context is unavailable.
+Selected metadata describes an operator-approved linked identity, not the authentication method used to obtain the current Vault token. For example, an AWS ARN in a linked alias does not prove that this request authenticated through AWS. Another login linked to the same entity can yield the same selected alias attributes. Downstream policies must accept that trust model; current-login origin attestation is not implemented.
 
-## Goal
-Allow operators to derive additional claims for plugin-issued self-minted subject tokens from trusted Vault context using constrained templates, so they can condense values such as alias metadata, entity metadata, group membership, or AWS auth-derived identity attributes into OCI-facing claims without promoting caller-supplied request fields into trust claims.
+`vault.request.mount_*` describes the secrets engine processing the exchange. It does not select the auth alias. Existing alias-dependent templates need explicit opt-in configuration after upgrade.
 
-This document is written as implementation context for future development.
+## Template Grammar and Limits
 
-## Problem Statement
-Today the plugin supports one operator-controlled additive claim layer for self-minted subject tokens:
+Templates support literal text, dotted scalar lookups, and `join(path, separator)`. Role paths begin with `vault.` or `brokered.claims.`. `join` takes exactly two arguments: a supported path and a single- or double-quoted separator. Double-quoted separators accept Go string escapes; single-quoted separators are literal and cannot contain a single quote. Delimiter sequences `{{` and `}}` cannot be embedded in expressions or separators.
 
-1. Role-scoped `self_mint_custom_claims`, which are currently literal JSON values appended after the trusted built-in claim set.
+Dotted paths require nonempty segments without whitespace, control characters, braces, brackets, parentheses, quotes, commas or backslashes. There is no bracket indexing or escaping for metadata keys containing these characters or dots. Other segment characters are treated as literal key characters, not operators.
 
-That is useful for static claim injection, but it does not help when operators need to derive claim values from trusted Vault context already available to the plugin. Examples:
+The shared parser checks the whole template independently of runtime data on config/role writes and again before rendering stored templates. A missing value cannot hide a malformed later expression. Each template is limited to 16 KiB of UTF-8 bytes; each rendered claim, including joined/interpolated text, is limited to 64 KiB. These are per-template/per-claim limits, not a total JWT size guarantee.
 
-- copy an AWS auth alias ARN from Vault alias metadata into a concise claim such as `aws_arn`
-- condense multiple trusted Vault values into a normalized subject such as `principal = aws/{{ vault.alias.metadata.arn }}`
-- map group membership into a single string-valued claim for OCI trust rules
-- copy selected entity metadata into OCI-facing claims without exposing the full `vault_entity_metadata` map
+Strings, booleans and numeric scalar values can become strings. Objects and arrays are not implicitly serialized; role templates can join scalar list elements. Functions other than `join`, loops, conditionals and scripting are unsupported. Brokered mapping templates use a narrower grammar described in the [brokered design](DESIGN_BROKERED_SUBJECT_TOKEN_MODE.md).
 
-The current literal `self_mint_custom_claims` field cannot do that because it stores values as-is and performs no interpolation or transformation.
+## Implementation and Validation
 
-## Design Decision
-Use a single role-level configuration field for custom self-mint claims, with string-template semantics sourced from trusted Vault context:
+- `claim_template.go`: complete parsing, path validation and bounded text assembly.
+- `subject_token_self_mint_templates.go`: role expression evaluation and trusted context construction.
+- `subject_token_callback.go` / `subject_token_broker_self_mint.go`: claims assembly and signing.
+- `claim_template_test.go`: trailing errors, rejected writes preserving storage, missing runtime data, quoting and size boundaries.
+- Existing template, alias and exchange tests cover rendering and signing with mocked Vault identity.
 
-- keep the field name `self_mint_custom_claims`
-- redefine it to mean output claim name -> string template
-- all configured custom self-mint claims are string-valued
-- pure literal strings remain valid by simply omitting interpolation
-- render templates during self-mint claim construction after trusted Vault context has been resolved
-- expose only explicitly approved trusted namespaces to the template renderer
-- keep the templating language intentionally narrow and fail closed
-
-This feature should apply to plugin-issued self-mint flows, including:
-
-- plugin-issued runtime token mode when the plugin self-mints because Vault identity token generation is unavailable
-- brokered mode after the plugin has validated the external token and is assembling the brokered self-minted JWT
-
-## Non-Goals
-- introducing arbitrary scripting or a general-purpose expression language
-- allowing templates to read directly from untrusted request body inputs
-- allowing templated claims to override reserved JWT claims or trusted `vault_*` claims
-- introducing broad auth-method-specific special cases where existing alias/entity metadata already carries the needed values
-- supporting non-string custom claim values in this phase
-
-## Current State
-Current self-mint claim assembly order is:
-
-1. standard JWT self-mint claims:
-   - `iss`, `sub`, `aud`, `iat`, `exp`, `jti`
-2. trusted Vault request and identity claims:
-   - `vault_entity_id`
-   - `vault_entity_name`
-   - `vault_namespace_id`
-   - `vault_entity_metadata`
-   - `vault_display_name`
-   - `vault_mount_accessor`
-   - `vault_mount_type`
-   - `vault_client_token_accessor`
-   - `vault_alias_name`
-   - `vault_alias_mount_accessor`
-   - `vault_alias_mount_type`
-   - `vault_alias_metadata`
-   - `vault_alias_custom_metadata`
-   - `vault_group_names`
-3. brokered mapped claims when brokered mode is active
-4. role-scoped literal `self_mint_custom_claims`
-
-Current behavior of `self_mint_custom_claims`:
-
-- stored as `map[string]interface{}`
-- literal only, no interpolation
-- additive only
-- cannot override reserved JWT claims
-- cannot use the `vault_*` namespace
-
-## Proposed Configuration Model
-Keep a single role-level field:
-
-- `self_mint_custom_claims`
-  - JSON object of output claim name -> string template
-  - optional
-  - rendered during self-mint claim construction
-  - all output values are strings
-
-Representative role config:
-
-```json
-{
-  "self_mint_custom_claims": {
-    "static_env": "prod",
-    "aws_arn": "{{ vault.alias.metadata.arn }}",
-    "principal": "aws/{{ vault.alias.metadata.arn }}",
-    "entity_ref": "{{ vault.entity.id }}"
-  }
-}
-```
-
-In this model:
-
-- `"prod"` is a valid literal string template
-- `"aws/{{ vault.alias.metadata.arn }}"` is a rendered template
-- there is no separate field for literal versus templated custom claims
-
-## Why A Single Field Is Enough
-For the current requirement, one field is sufficient because:
-
-- operators only need simple string-valued outputs
-- literal strings can be represented without interpolation
-- interpolated strings can use the same syntax
-- separating literal and templated fields would add configuration complexity without solving a real current need
-
-If future requirements require non-string outputs such as arrays, numbers, or objects, the config model can be revisited then.
-
-## Template Context
-Templates should read from trusted context only.
-
-Recommended namespaces:
-
-- `vault.entity.*`
-- `vault.alias.*`
-- `vault.request.*`
-- `vault.groups`
-
-When brokered mode is active, a separate brokered namespace can optionally be exposed:
-
-- `brokered.claims.*`
-
-### Proposed Vault Template Context
-
-`vault.entity`
-- `vault.entity.id`
-- `vault.entity.name`
-- `vault.entity.namespace_id`
-- `vault.entity.metadata.*`
-
-`vault.alias`
-- `vault.alias.name`
-- `vault.alias.mount_accessor`
-- `vault.alias.mount_type`
-- `vault.alias.metadata.*`
-- `vault.alias.custom_metadata.*`
-
-`vault.request`
-- `vault.request.display_name`
-- `vault.request.mount_accessor`
-- `vault.request.mount_type`
-- `vault.request.client_token_accessor`
-
-`vault.groups`
-- list of group names associated with the entity, equivalent in content to `vault_group_names`
-
-### Brokered Namespace (Optional Extension)
-When brokered mode is active and the implementation wants to support mixed trusted context rendering, expose:
-
-- `brokered.claims.sub`
-- `brokered.claims.<nested-path>`
-
-This should be a separate namespace from `vault.*` to avoid ambiguity over trust source.
-
-## Template Language
-The safest initial scope is the same narrow style used in brokered claim mappings:
-
-- string templates only
-- dotted path lookups
-- literal text around interpolations
-
-Examples:
-
-- `{{ vault.entity.id }}`
-- `{{ vault.alias.metadata.arn }}`
-- `aws/{{ vault.alias.metadata.arn }}`
-- `{{ brokered.claims.sub }}`
-
-### Missing Capability: Arrays
-Trusted Vault context includes values that are naturally arrays, especially:
-
-- group names
-
-Plain string interpolation is not enough if operators want to condense an array into a single claim. To support that safely, add a very small helper surface instead of implicit magic.
-
-Recommended minimum helper:
-
-- `join(list, separator)`
-
-Examples:
-
-- `{{ join(vault.groups, ",") }}`
-- `groups/{{ join(vault.groups, "|") }}`
-
-Explicitly defer all other helpers unless a real need appears:
-
-- `lower()`
-- `upper()`
-- conditionals
-- loops
-- arithmetic
-- scripting
-
-## Rendering Rules
-Templates should:
-
-- fail closed on invalid syntax
-- fail closed on missing references
-- fail closed on type mismatches
-- reject collisions with reserved JWT claims
-- reject collisions with trusted `vault_*` claims
-- reject collisions with earlier assembled claims
-
-Scalar interpolation rules:
-
-- strings interpolate directly
-- booleans may stringify to `true` / `false`
-- numeric values may stringify in canonical decimal form
-- arrays and maps must not stringify implicitly
-- arrays require explicit helper handling such as `join(...)`
-- final configured custom claims are always emitted as strings
-
-## Claim Assembly Order
-Recommended final order:
-
-1. standard self-mint JWT claims
-2. trusted built-in Vault claims
-3. brokered mapped claims, when brokered mode is active
-4. role-scoped rendered `self_mint_custom_claims`
-
-If any later layer collides with an earlier layer, fail closed.
-
-## Security Model
-This feature is safe only if the template input surface remains constrained to trusted data.
-
-Trusted sources:
-
-- Vault entity information returned by the system view
-- Vault alias information returned by the system view
-- Vault group information returned by the system view
-- request context already used for trusted self-mint claims
-- brokered validated claims, but only after signature and claim validation have succeeded
-
-Untrusted sources that should not be exposed directly:
-
-- raw request body fields
-- caller-selected role name as a trust-bearing identity input
-- unsigned or merely decoded caller JWT payloads
-
-Important principle:
-
-- this feature should condense or normalize trusted context already available to the plugin
-- it should not become a path for promoting caller-controlled inputs into OCI trust claims
-
-## AWS Auth Example
-One motivating use case is AWS auth where the useful identity attribute may already be in alias metadata.
-
-Example template config:
-
-```json
-{
-  "self_mint_custom_claims": {
-    "aws_arn": "{{ vault.alias.metadata.arn }}",
-    "principal": "aws/{{ vault.alias.metadata.arn }}"
-  }
-}
-```
-
-This avoids special-casing AWS in the design if the Vault alias metadata already carries the trusted ARN.
-
-If some auth methods expose useful values only through metadata maps, the template namespace should make those maps addressable rather than adding auth-method-specific code branches.
-
-## OCI Mapping Use Cases
-This feature is useful when OCI trust rules want:
-
-- a single normalized principal string
-- a compact claim copied from trusted alias metadata
-- a joined group-membership claim
-- a stable entity-based reference claim
-
-Examples:
-
-- `principal = "entity/{{ vault.entity.id }}"`
-- `aws_arn = "{{ vault.alias.metadata.arn }}"`
-- `groups_csv = "{{ join(vault.groups, ",") }}"`
-
-## Implementation Outline
-### Role Schema
-Update `path_roles.go`:
-
-- keep the field name `self_mint_custom_claims`
-- change parsing to JSON object of string -> string
-- reject non-string configured values
-- validate claim names using the same reserved-claim and `vault_*` rejection rules
-- validate template syntax on write if possible
-
-### Rendering Component
-Add a new helper file, likely something like:
-
-- `subject_token_self_mint_templates.go`
-
-Responsibilities:
-
-- build the trusted rendering context
-- parse and render templates
-- apply minimal helper functions such as `join`
-- return additive rendered claims
-
-### Claim Builder Changes
-Update self-mint assembly:
-
-- runtime self-mint path
-- brokered self-mint path
-
-New flow:
-
-1. build standard self-mint claims
-2. add trusted Vault claims
-3. add brokered mapped claims when active
-4. render role-scoped `self_mint_custom_claims`
-
-### Read Path
-Update role read responses so `self_mint_custom_claims` returns the configured string-template map.
-
-## Tests
-### Role Config Tests
-- valid template config
-- malformed JSON
-- non-string configured value rejection
-- reserved output claim rejection
-- `vault_*` output claim rejection
-- invalid template syntax
-
-### Template Rendering Tests
-- simple scalar lookup
-- nested metadata lookup
-- concatenation of literals and references
-- missing value failure
-- non-scalar interpolation failure
-- `join(vault.groups, ",")` success
-- `join()` type mismatch failure
-
-### Self-Mint Assembly Tests
-- templated claims appear in runtime self-mint flow
-- templated claims appear in brokered self-mint flow when enabled
-- collisions between templated claims and trusted claims fail
-
-## Acceptance Criteria
-- operators can define additive string-valued claims from trusted Vault context
-- templated claims never override reserved or trusted built-in claims
-- array condensation is supported only through explicit minimal helpers
-- both runtime self-mint and brokered self-mint can use the feature consistently
-
-## Risks And Mitigations
-- Risk: template language grows into a scripting surface
-  - Mitigation: keep syntax narrow and helper set minimal
-- Risk: operators accidentally depend on unstable metadata keys
-  - Mitigation: document recommended stable context paths and examples
-- Risk: confusion between trusted Vault context and brokered external claims
-  - Mitigation: keep separate namespaces such as `vault.*` and `brokered.claims.*`
-- Risk: future need for non-string custom claim values
-  - Mitigation: keep this phase string-only; if real use cases appear later, extend or refactor the config model then
-
-## Open Questions
-- Should the first implementation include `join()` immediately, or ship scalar-only templates first and add `join()` only once needed?
-- Should brokered validated claims be exposed to role templates in the first version, or should role templates start with `vault.*` only?
-
-## Out Of Scope
-- arbitrary scripting
-- conditionals and loops
-- automatic per-auth-method adapters outside normal alias/entity/request metadata
-- non-string custom claim outputs in this phase
+Existing malformed stored templates now fail complete parsing at runtime; repair them before exchange. Configuration writes cannot prove that future caller data contains the required fields. Real Vault multi-auth behavior, OCI claim matching, upgrade acceptance and supported deployment combinations remain separate live tests. Richer functions, non-string outputs and current-login origin attestation are not implemented.

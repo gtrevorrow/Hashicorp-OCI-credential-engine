@@ -19,8 +19,13 @@ This file is the working backlog for the OCI credential engine plugin. It tracks
 
 - [x] Remove never-enforced role filters; reject unsupported writes and require explicit delete/recreate cleanup for stored nonempty values. Revisit filtering only for a defined use case.
 
+- [x] Require explicit auth mount accessor for linked alias claims; remove request-mount/type and first-alias fallbacks. Validate real multi-auth entity and OCI trust migration before release (TEST_PLAN ALIAS-07).
+- [x] Harden local dev/smoke helpers: private runtime state, random root token, stdin config, managed-target checks, isolated smoke resources and cleanup. Real Vault/OCI acceptance remains in TEST_PLAN DEV-06.
+- [x] Parse complete role/brokered templates before lookup; enforce per-template and per-rendered-claim limits.
+
 ### Operational Hardening
 
+- [ ] Redact/bound OCI error details returned to callers; upstream bodies currently appear in some exchange errors
 - [ ] Add metrics and telemetry for token exchange rate, error rate, and latency
 - [ ] Build full end-to-end tests against an OCI sandbox, disposable test domain, or test tenancy
 - [ ] Add a documented operational runbook for self-mint key rollover and JWKS republishing
@@ -29,6 +34,12 @@ This file is the working backlog for the OCI credential engine plugin. It tracks
   - reject control characters
   - enforce a reasonable per-audience length limit
   - normalize `subject_token_audience` request values before comparison
+
+### Build and Release Delivery
+
+- [ ] Pin the SDK revision used by CI and release tooling for reproducibility
+- [ ] Build, checksum/sign and publish versioned plugin binaries; the current release workflow publishes notes/tags only
+- [ ] Establish a tested Vault version/edition and platform compatibility matrix
 
 ### FIPS Readiness
 
@@ -46,7 +57,7 @@ This file is the working backlog for the OCI credential engine plugin. It tracks
 
 These items are intentionally deferred. They are not part of the current preferred design, but they may become relevant later.
 
-### Optional Future Mode: Plugin-Issued Subject Tokens
+### Further Plugin-Issued Token Capabilities
 
 - [ ] Add support for multiple issuers or IdPs per backend in plugin-issued token mode
 - [ ] Add broader claims mapping or policy translation for plugin-issued token mode beyond the existing role-scoped `self_mint_custom_claims`
@@ -56,7 +67,7 @@ These items are intentionally deferred. They are not part of the current preferr
 - [ ] Decide whether brokered-only deployments should be able to read `oci/jwks` without setting `subject_token_self_mint_enabled=true`
 - [x] Harden brokered remote trust: HTTPS by default, loopback-only debug HTTP, exact discovery issuer, explicit JWKS origins, no redirects, checked egress, bounded documents/keys, key suitability, and coordinated verification-key caching
 - [ ] Evaluate replay-hardening options for brokered JWTs, such as optional `jti` or nonce tracking, if operational requirements justify stateful validation
-- [ ] Keep `DESIGN_BROKERED_SUBJECT_TOKEN_MODE.md` as the design record, but treat the implemented behavior in `README.md`, `THREAT_MODEL.md`, `TEST_PLAN.md`, and `oci-backend/` as the current source of truth
+- [x] Reconcile both design documents with implemented behavior and explicitly separate deferred capabilities.
 
 ## Explicit Non-Goals For Now
 
@@ -72,7 +83,3 @@ These items are intentionally deferred. They are not part of the current preferr
 - OCI remains the authority for token validation, token exchange trust, and final authorization mapping
 - In direct pass-through mode, OCI validates the caller-supplied subject token; in brokered mode, the plugin validates the external token and OCI validates the plugin-issued brokered JWT
 - For self-mint and brokered re-issue JWKS discovery, the plugin exports the current public key material and operators publish the JWKS to an OCI-reachable HTTPS location
-
-- [x] Require explicit auth mount accessor for linked alias claims; remove request-mount/type and first-alias fallbacks. Validate real multi-auth entity and OCI trust migration before release (TEST_PLAN ALIAS-07).
-
-- [x] Harden local dev/smoke helpers: private runtime state, random root token, stdin config, managed-target checks, isolated smoke resources and cleanup. Real Vault/OCI acceptance remains in TEST_PLAN DEV-06.

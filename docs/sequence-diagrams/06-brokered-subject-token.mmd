@@ -14,13 +14,13 @@ sequenceDiagram
     V->>V: Resolve bounded cached trust keys or refresh with HTTPS, issuer and origin checks
     Note over V: HTTP allowed only with explicit loopback debug mode; redirects rejected
     V->>V: Validate JWT header, signing key suitability, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
-    V->>V: Render mapped claims from validated external claims
+    V->>V: Parse complete templates and render bounded mapped claims from verified input
     V->>SV: Read trusted Vault request and identity context
     SV-->>V: Entity, linked aliases, groups
     Note over V: Emit alias claims only for configured auth accessor; fail on missing or ambiguous match
     V->>V: Build brokered self-minted JWT
     opt Explicit `/exchange/<role>` path used
-        V->>V: Render role `self_mint_custom_claims` templates if non-conflicting
+        V->>V: Parse complete role templates; render bounded claims and reject collisions
     end
     alt Caller supplies `public_key`
         V->>V: Use caller public key for OCI exchange

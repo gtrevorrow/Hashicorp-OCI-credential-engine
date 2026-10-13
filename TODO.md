@@ -74,3 +74,5 @@ These items are intentionally deferred. They are not part of the current preferr
 - For self-mint and brokered re-issue JWKS discovery, the plugin exports the current public key material and operators publish the JWKS to an OCI-reachable HTTPS location
 
 - [x] Require explicit auth mount accessor for linked alias claims; remove request-mount/type and first-alias fallbacks. Validate real multi-auth entity and OCI trust migration before release (TEST_PLAN ALIAS-07).
+
+- [x] Harden local dev/smoke helpers: private runtime state, random root token, stdin config, managed-target checks, isolated smoke resources and cleanup. Real Vault/OCI acceptance remains in TEST_PLAN DEV-06.

@@ -54,3 +54,6 @@ jobs:
 
       - name: Run integration tests
         run: make test-integration
+
+      - name: Run dev helper security tests
+        run: make test-dev-helpers

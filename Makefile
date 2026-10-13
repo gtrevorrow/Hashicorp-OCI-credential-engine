@@ -7,7 +7,7 @@ BUILD_DIR := bin
 VERSION ?= $(shell git describe --tags --always --dirty || echo "v0.0.0-dev")
 LDFLAGS := -X main.Version=$(VERSION)
 
-.PHONY: all build clean fmt vet test test-unit test-integration
+.PHONY: all build clean fmt vet test test-unit test-integration test-dev-helpers
 
 all: fmt vet build
 
@@ -48,3 +48,7 @@ enable:
 register:
 	@echo "Calculate SHA256 and register:"
 	@echo "vault write sys/plugins/catalog/secret/oci sha_256=\\$$(sha256sum bin/$(BINARY_NAME) | cut -d' ' -f1) command=$(BINARY_NAME)"
+
+# Test local helper security boundaries without Vault or OCI credentials.
+test-dev-helpers:
+	python3 -m unittest discover -s scripts/tests -v

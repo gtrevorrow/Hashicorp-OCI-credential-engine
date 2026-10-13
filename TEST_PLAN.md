@@ -366,3 +366,20 @@ Feature: `feature/explicit-identity-alias`, based on development `b801445`.
 | ALIAS-07 | Real multi-auth entity and OCI trust migration | Outstanding live acceptance: test tokens from both auth methods; verify same configured linked identity, ACL enforcement, default omission, and downstream rejection of missing required claims |
 
 Verified locally: full race suite, all nine mock OCI integration tests, vet, native build, shell syntax, and diff checks passed. Live Vault/OCI multi-auth acceptance is separate and is not established by mocked identity tests.
+
+## Development Helper Security Verification
+
+Feature: `feature/harden-dev-helpers`, based on development `768e775` (finding 6 merged).
+
+| ID | Contract | Automated evidence / live acceptance |
+|---|---|---|
+| DEV-01 | Secret config uses stdin; random root token uses environment; no credential-bearing arguments or printed responses | `scripts/tests/test_dev_vault.py`: payload, startup, exports, and smoke tests |
+| DEV-02 | Refuse a different address, stale/reused PID, or mismatched cluster before mutation | Target/address/stop tests |
+| DEV-03 | Owner-only files/directories; reject symlinks/shared permissions | Private-path and startup tests |
+| DEV-04 | Ignore inherited Vault routing, namespaces, proxies, OCI settings and tokens | Environment and settings tests |
+| DEV-05 | Unique smoke resources, exact claim assertions, token revocation, resource cleanup and configuration restoration | Smoke success, exchange failure, bad-claims and cleanup-failure tests |
+| DEV-06 | Real dev lifecycle and OCI exchange | Outstanding: start/env/smoke/stop with supported Vault; inspect argv and permissions; verify cleanup and restored config after success/failure; confirm no root token-helper writes |
+
+Run `make test-dev-helpers` (also in PR CI). Python tests mock Vault/process interfaces; no real Vault or OCI tenant is exercised. Bash syntax and `git diff --check` are also required for these script changes. Sequence diagrams are unchanged because the plugin exchange/authentication sequence is unchanged; the smoke harness now provisions isolated temporary resources around that sequence.
+
+Local verification for DEV-01–05: all 14 helper security tests passed, along with shell syntax and diff checks. DEV-06 remains unexecuted because Vault is not installed in this environment.

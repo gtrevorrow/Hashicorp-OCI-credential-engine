@@ -41,6 +41,8 @@ Thumbs.db
 .env.local
 dev-config.json
 .vault-dev-self-mint-key.pem
+.vault-dev/
+__pycache__/
 
 # Temporary files
 *.tmp

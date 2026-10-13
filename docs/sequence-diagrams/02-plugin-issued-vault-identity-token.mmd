@@ -7,6 +7,7 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
+    V->>V: Validate exchange schema; reject unknown fields before processing
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Check `enable_plugin_issued_subject_token=true`

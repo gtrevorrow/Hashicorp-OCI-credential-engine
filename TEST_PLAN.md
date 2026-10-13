@@ -2,7 +2,7 @@
 
 This document tracks the functional and security test contracts for the HashiCorp Vault OCI Secrets Engine plugin. A listed case is a test requirement, not a claim that it is automated; see the coverage snapshot and outstanding work below.
 
-Last reconciled: **2026-10-13**, against `feature/harden-brokered-trust` at `703d1ed` plus the existing, uncommitted audience-validation changes. Brokered remote trust hardening is committed on this branch. Strict exchange request validation is on the separate `feature/validate-exchange-request-schema` branch (`9b3b00a`) and is **not included in this checkout**.
+Last reconciled: **2026-10-13**, for the integration into `development` of brokered remote trust hardening (`703d1ed`), the test-plan update (`256abb9`), and strict exchange request validation (`9b3b00a`). Both security fixes and their regression tests are included. Separate, uncommitted audience-validation work is excluded from this integration and its verification results.
 
 The trust boundaries differ by mode:
 
@@ -33,7 +33,7 @@ The trust boundaries differ by mode:
 | CFG-17 | brokered mode reserved output claim rejection | brokered_subject_token_claim_mappings includes reserved JWT claim | Error: reserved claim cannot be overridden |
 | CFG-18 | brokered mode reserved vault namespace rejection | brokered_subject_token_claim_mappings includes `vault_*` claim | Error: reserved vault_ namespace |
 
-Additional audience-validation cases in the current working tree:
+Additional audience-validation cases planned in separate work (not included in the committed integration):
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
@@ -87,7 +87,9 @@ Additional exchange cases:
 |---|---|---|---|
 | EXC-17 | Explicit empty subject token | `subject_token=""` | Reject without plugin-issued fallback |
 | EXC-18 | Invalid requested token type or missing RPST resource type | Unsupported type, or RPST without `res_type` | Reject before exchange |
-| EXC-19 | Normalize or reject audience override | Padded allowed audience, or whitespace-only value | Normalized audience reaches self-mint/Vault identity-token callback; blank value rejected |
+| EXC-19 | Normalize or reject audience override (separate work) | Padded allowed audience, or whitespace-only value | Normalized audience reaches self-mint/Vault identity-token callback; blank value rejected |
+
+Exchange schema coverage: `TestPathExchange_RejectsUnknownFieldsBeforeTokenResolution` checks create/update requests in direct, self-mint, and brokered modes. It rejects body `role` on bare exchange and unknown fields on bare/named routes before token processing. Existing role-mapping and named-role tests preserve supported role selection.
 
 ## 4. Exchange Path - Token Content Validation
 
@@ -161,10 +163,10 @@ The two socket-based cases live in [subject_token_broker_trust_integration_test.
 
 | ID | Required behavior | Status in this checkout |
 |---|---|---|
-| SCH-01 | Reject undeclared body fields, including body `role` on bare `/exchange`, before token resolution, signing, or OCI exchange; cover create/update across direct, self-mint, and brokered modes | Pending integration of `9b3b00a`; its `TestPathExchange_RejectsUnknownFieldsBeforeTokenResolution` is absent here |
-| SCH-02 | Retain named-path role selection and intentional direct JWT-to-role mapping after strict validation | Re-run the existing positive flow tests together with SCH-01 after integration |
+| SCH-01 | Reject undeclared body fields, including body `role` on bare `/exchange`, before token resolution, signing, or OCI exchange; cover create/update across direct, self-mint, and brokered modes | `TestPathExchange_RejectsUnknownFieldsBeforeTokenResolution`: 18 combinations covering all three modes, both operations, and bare/named routes |
+| SCH-02 | Retain named-path role selection and intentional direct JWT-to-role mapping after strict validation | Existing direct role-mapping, named-role self-mint, and named-role brokered tests run together with SCH-01 |
 
-`TestPathExchange_RequestBodyRoleIsIgnored` currently tests a direct-flow request reaching a failing exchange stub. It does not prove rejection of unknown fields or protect the self-mint/brokered signing paths. EXC-15 and CLM-05 cover requests without a body `role`; they do not close SCH-01.
+Strict field validation runs before configuration lookup and token processing. SCH-01 fails if a token callback or exchange stub is invoked; brokered cases use an invalid JWT and still receive schema rejection. It replaces the earlier direct-only `TestPathExchange_RequestBodyRoleIsIgnored` test. EXC-15 and CLM-05 retain positive bare-path coverage, while SCH-01 covers the malicious body input. Deployed Vault ACL enforcement remains an E2E validation task.
 
 ## 6. Lease & TTL Management
 
@@ -231,7 +233,7 @@ Coverage means assertions at the specified layer. Unit tests use in-memory Vault
 | Area | Evidence and limits |
 |---|---|
 | CFG-01–03, CFG-05–18 | [path_config_test.go](oci-backend/path_config_test.go): creation/defaults, read/delete, partial updates, mappings, self-mint key generation/reuse, and brokered validation. CFG-04 has no dedicated test; implementation currently checks the `https://` prefix, not full URL validity |
-| CFG-19–20, EXC-19 | Existing uncommitted audience changes: `TestPathConfig_SubjectTokenAllowedAudiencesValidation`, `TestPathExchange_SubjectTokenAudienceOverrideRejectsInvalidValue`, and the two `DefaultCallback*UsesAudienceOverride` tests |
+| CFG-19–20, EXC-19 | Separate, uncommitted audience-validation work; not counted in this integration. Baseline audience allowlisting is covered by CFG-12 and EXC-10–12, but the additional normalization/rejection contracts await integration |
 | ROL-01–04, ROL-06, ROL-08, ROL-10–15 | [path_roles_test.go](oci-backend/path_roles_test.go): representative creation/read/list/delete and validation. ROL-04 asserts a single listed role, not the three-role scenario; ROL-15 tests simple malformed syntax, not every expression position |
 | EXC-04, EXC-06–18 | [path_exchange_test.go](oci-backend/path_exchange_test.go): callback/fallback, key handling, mappings, audience constraints, brokered reissue, direct pass-through, empty-token and requested-type validation. Several tests intentionally fail at the exchange stub after checking earlier behavior; these are not full exchange success proofs |
 | EXC-01–03 | Partial: OCI client mock success cases for UPST/RPST; no full Vault-to-OCI success workflow |
@@ -246,14 +248,14 @@ Coverage means assertions at the specified layer. Unit tests use in-memory Vault
 | OCI-02 | Partial: timeout is tested; DNS failure and refused connections are not |
 | OCI-04 | No explicit request-path assertion for `/oauth2/v1/token` |
 | OCI-06 | `TestOCITokenExchangeDoesNotFollowRedirect` in the brokered trust unit suite |
-| SCH-01–02 | Separate branch; not part of this branch's verified suite |
+| SCH-01–02 | Integrated: strict-schema rejection tests plus existing supported role-selection tests in [path_exchange_test.go](oci-backend/path_exchange_test.go) |
 | EXC-20–24, TTL-03–05, E2E-01–06 | No automated live OCI/Vault or lease lifecycle coverage |
 
 ROL-05 (updating an existing role) and ROL-09 (special characters with strict mode off) also lack dedicated tests. The name `TestPathRoles_CreateUpdate` does not imply that it tests an update of an existing role.
 
 ## Outstanding Work and Release Validation
 
-1. **Integrate strict request validation:** bring SCH-01 onto the integration branch and rerun positive role-path/mapping cases. Include non-root Vault ACL tests; the direct role-mapping feature remains intentional delegation.
+1. **Deployed authorization and audience validation:** SCH-01–02 are integrated and locally tested. Add non-root Vault ACL tests; direct role mapping remains intentional delegation. Integrate the separately preserved audience-validation work and verify CFG-19–20/EXC-19 before counting those cases as covered.
 2. **TTL and expiry:** test request/role/backend precedence, backend maximum as a ceiling, zero/negative/excessive TTL values, and RPST request expiry. Fix the role-max override and reconcile returned lease/expiry metadata with upstream token lifetime. Verify renewal, revocation, and expiry using a running Vault server; the revoke callback currently makes no OCI call.
 3. **Role and identity contracts:** decide and test enforcement of stored `allowed_subjects`/`allowed_groups` (currently not enforced during exchange). Test alias selection with multiple auth aliases and prove which authenticated identity supplies signing claims. Add malformed-template cases after an otherwise valid missing-context lookup, where current configuration validation can stop before inspecting trailing syntax.
 4. **Trust boundary and resource limits:** add exact-boundary tests for 1 MiB documents/JWTs/aggregate PEM and 64 keys, malformed/missing time claims and future `nbf`/`iat`, invalid origin paths/ports, and more address classes. Existing tests reject an oversized fetched document and 65-key JWKS; they do not exhaust all implemented limits.
@@ -287,12 +289,12 @@ Integration tests use local mock HTTP servers, not a live IdP or OCI tenancy. `n
 
 ### Latest Verification
 
-On **2026-10-13**, using the checkout described above:
+On **2026-10-13**, using the combined security integration described above, with unrelated audience edits set aside:
 
-- `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -count=1 ./...` — passed.
+- `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -race -count=1 ./...` — passed, including the 18 schema-rejection subcases and positive role-selection tests.
 - `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -count=1 -tags=integration ./oci-backend -run Integration -v` — all seven tests passed, none skipped, with loopback TCP access.
 
-This run includes the pre-existing audience-validation edits. It does not establish live OCI/IdP behavior, Vault ACL enforcement, Enterprise/FIPS compatibility, or production-network readiness. Build, vet, and race checks were not rerun for this documentation update.
+`GOWORK=off GOCACHE=/tmp/oci-review-cache go vet ./...` and a native `go build -trimpath` also passed. These results exclude the separately preserved audience-validation edits. They do not establish live OCI/IdP behavior, Vault ACL enforcement, Enterprise/FIPS compatibility, or production-network readiness.
 
 ### Manual Acceptance
 

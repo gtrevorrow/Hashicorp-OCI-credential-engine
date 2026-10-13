@@ -107,6 +107,11 @@ func (b *backend) buildExchangePath(pattern string, includeRole bool) *framework
 
 // pathExchangeWrite handles the token exchange
 func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	// Reject undeclared input before raw request data can reach token resolution or signing.
+	if err := data.ValidateStrict(); err != nil {
+		return logical.ErrorResponse("invalid exchange request: %v", err), nil
+	}
+
 	// Get backend configuration
 	config, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
@@ -391,6 +396,9 @@ Exchange a 3rd party OIDC/OAuth JWT for an OCI session token.
 const pathExchangeHelpDesc = `
 This endpoint accepts a JWT subject token from a configured external Identity Provider
 and exchanges it for an OCI session token via the OCI IAM token exchange API.
+
+Requests reject fields outside the endpoint schema before token processing.
+The bare exchange endpoint does not accept a role field in the request body.
 
 Subject token behavior:
   - subject_token is required when enable_plugin_issued_subject_token=false

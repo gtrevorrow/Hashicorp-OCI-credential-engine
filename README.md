@@ -801,7 +801,11 @@ Design notes:
 
 `subject_token_identity_alias_mount_accessor` on `oci/config` selects the auth mount whose linked entity alias may supply `vault_alias_*` claims and `vault.alias.*` templates. It applies to in-plugin self-mint and brokered signing. The default is empty: no alias claims are emitted, even for an entity with one alias. Templates requiring missing alias data fail before signing.
 
-To opt in, obtain the intended auth mount's accessor from `vault auth list -detailed`, review the entity links and downstream OCI trust rules, and update the existing configuration:
+To include alias claims, choose which Vault authentication method should supply them—for example, the AWS auth method mounted at `aws/`.
+
+1. Run `vault auth list -detailed`. Find that authentication method and copy its **Accessor** value. This identifies the auth mount; it is different from its path (`aws/`).
+2. Check that the caller's Vault entity has an alias for that auth mount. Confirm that your OCI trust rules should accept attributes from this linked identity, even when the caller logs in through another method linked to the same entity.
+3. Set the accessor on `oci/config`. Replace `auth_aws_example` below with the value you copied:
 
 ```bash
 vault write oci/config subject_token_identity_alias_mount_accessor=auth_aws_example

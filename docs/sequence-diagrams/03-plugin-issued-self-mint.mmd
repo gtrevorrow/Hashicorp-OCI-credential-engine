@@ -11,7 +11,7 @@ sequenceDiagram
     V->>S: Read backend config and self-mint key
     S-->>V: Config, role constraints, signing key
     V->>V: Check plugin-issued mode is enabled
-    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>V: Resolve default audience or normalize and validate `subject_token_audience` against allowlist
     V->>SV: `GenerateIdentityToken(audience)`
     SV-->>V: Identity token unavailable
     V->>SV: Read trusted Vault request and identity context

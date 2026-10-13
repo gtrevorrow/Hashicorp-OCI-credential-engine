@@ -331,7 +331,10 @@ func resolveSubjectTokenAudience(data fieldDataGetter, config *federatedConfig) 
 	if !ok || raw.(string) == "" {
 		return audience, nil
 	}
-	requestedAudience := raw.(string)
+	requestedAudience, err := normalizeSubjectTokenAudience(raw.(string))
+	if err != nil {
+		return "", fmt.Errorf("invalid subject_token_audience: %w", err)
+	}
 	allowed := configSubjectTokenAllowedAudiences(config)
 	for _, allowedAudience := range allowed {
 		if requestedAudience == allowedAudience {

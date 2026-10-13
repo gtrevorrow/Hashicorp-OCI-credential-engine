@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"unicode"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
+
+const maxSubjectTokenAudienceLength = 512
 
 // pathConfig returns the configuration path for the backend
 func (b *backend) pathConfig() []*framework.Path {
@@ -422,6 +425,11 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		}
 		config.SubjectTokenRoleMappings = mappings
 	}
+	allowedAudiences, audienceErr := validateSubjectTokenAllowedAudiences(config.SubjectTokenAllowedAudiences)
+	if audienceErr != nil {
+		return logical.ErrorResponse("invalid subject_token_allowed_audiences: %v", audienceErr), nil
+	}
+	config.SubjectTokenAllowedAudiences = allowedAudiences
 
 	if config.DomainUrl == "" {
 		return logical.ErrorResponse("missing 'domain_url'"), nil
@@ -557,6 +565,43 @@ func configSubjectTokenAllowedAudiences(config *federatedConfig) []string {
 		return nil
 	}
 	return out
+}
+
+func validateSubjectTokenAllowedAudiences(audiences []string) ([]string, error) {
+	if len(audiences) == 0 {
+		return nil, nil
+	}
+
+	out := make([]string, 0, len(audiences))
+	seen := make(map[string]struct{}, len(audiences))
+	for _, audience := range audiences {
+		normalized, err := normalizeSubjectTokenAudience(audience)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out, nil
+}
+
+func normalizeSubjectTokenAudience(audience string) (string, error) {
+	audience = strings.TrimSpace(audience)
+	if audience == "" {
+		return "", fmt.Errorf("audience must not be empty")
+	}
+	if len(audience) > maxSubjectTokenAudienceLength {
+		return "", fmt.Errorf("audience must be %d bytes or fewer", maxSubjectTokenAudienceLength)
+	}
+	for _, r := range audience {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("audience must not contain control characters")
+		}
+	}
+	return audience, nil
 }
 
 func configBrokeredSubjectTokenAllowedAudiences(config *federatedConfig) []string {

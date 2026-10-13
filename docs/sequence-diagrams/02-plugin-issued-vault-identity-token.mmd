@@ -11,7 +11,7 @@ sequenceDiagram
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Check `enable_plugin_issued_subject_token=true`
-    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>V: Resolve default audience or normalize and validate `subject_token_audience` against allowlist
     V->>SV: `GenerateIdentityToken(audience)`
     SV-->>V: Vault-issued identity token
     alt Caller supplies `public_key`

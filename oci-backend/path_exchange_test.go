@@ -1321,6 +1321,40 @@ func TestPathExchange_SubjectTokenAudienceOverrideRejectedWhenNotAllowlisted(t *
 	require.Contains(t, resp.Error().Error(), "subject_token_audience override is not enabled for this backend")
 }
 
+func TestPathExchange_SubjectTokenAudienceOverrideRejectsInvalidValue(t *testing.T) {
+	b, storage := getTestBackend(t)
+	installFailingTokenExchanger(b)
+
+	reqConfig := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"domain_url":                      "https://idcs-test.identity.oraclecloud.com",
+			"client_id":                       "test-client-id",
+			"client_secret":                   "test-client-secret",
+			"subject_token_self_mint_enabled": true,
+			"subject_token_self_mint_issuer":  "https://vault.example.com",
+		},
+	}
+	_, err := b.HandleRequest(context.Background(), reqConfig)
+	require.NoError(t, err)
+
+	req := &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "exchange",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"subject_token_audience": " ",
+		},
+	}
+
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, resp.IsError())
+	require.Contains(t, resp.Error().Error(), "invalid subject_token_audience")
+}
+
 func TestPathExchange_DefaultCallbackSelfMintUsesAudienceOverride(t *testing.T) {
 	testKey := generateTestRSAPrivateKeyPEM(t)
 
@@ -1357,7 +1391,7 @@ func TestPathExchange_DefaultCallbackSelfMintUsesAudienceOverride(t *testing.T) 
 
 	token, err := backend.defaultSubjectTokenCallback(context.Background(), &logical.Request{
 		Data: map[string]interface{}{
-			"subject_token_audience": "urn:oci:test",
+			"subject_token_audience": " urn:oci:test ",
 		},
 	}, mustGetConfig(t, backend, storage))
 	require.NoError(t, err)
@@ -1399,7 +1433,7 @@ func TestPathExchange_DefaultCallbackGenerateIdentityTokenUsesAudienceOverride(t
 
 	_, err = backend.defaultSubjectTokenCallback(context.Background(), &logical.Request{
 		Data: map[string]interface{}{
-			"subject_token_audience": "urn:oci:test",
+			"subject_token_audience": " urn:oci:test ",
 		},
 	}, mustGetConfig(t, backend, storage))
 	require.NoError(t, err)

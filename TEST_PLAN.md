@@ -2,7 +2,7 @@
 
 This document tracks the functional and security test contracts for the HashiCorp Vault OCI Secrets Engine plugin. A listed case is a test requirement, not a claim that it is automated; see the coverage snapshot and outstanding work below.
 
-Last reconciled: **2026-10-13**, for the integration into `development` of brokered remote trust hardening (`703d1ed`), the test-plan update (`256abb9`), and strict exchange request validation (`9b3b00a`). Both security fixes and their regression tests are included. Separate, uncommitted audience-validation work is excluded from this integration and its verification results.
+Last reconciled: **2026-10-13**, for the integration into `development` of brokered remote trust hardening (`703d1ed`), the test-plan update (`256abb9`), and strict exchange request validation (`9b3b00a`). Both security fixes and their regression tests are included. Plugin-issued audience allowlist validation and request normalization are also included in this revision and its verification results.
 
 The trust boundaries differ by mode:
 
@@ -33,12 +33,12 @@ The trust boundaries differ by mode:
 | CFG-17 | brokered mode reserved output claim rejection | brokered_subject_token_claim_mappings includes reserved JWT claim | Error: reserved claim cannot be overridden |
 | CFG-18 | brokered mode reserved vault namespace rejection | brokered_subject_token_claim_mappings includes `vault_*` claim | Error: reserved vault_ namespace |
 
-Additional audience-validation cases planned in separate work (not included in the committed integration):
+Additional plugin-issued audience-validation cases:
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | CFG-19 | Normalize audience allowlist | Whitespace-padded and duplicate entries | Trimmed, deduplicated values persist |
-| CFG-20 | Reject invalid audience entries | Blank, control-character, or over-limit entry | Configuration rejected |
+| CFG-20 | Reject invalid audience entries | Blank after trimming, control characters remaining after trimming, or more than 512 bytes after trimming | Configuration rejected |
 
 ## 2. Roles Path Tests
 
@@ -87,7 +87,7 @@ Additional exchange cases:
 |---|---|---|---|
 | EXC-17 | Explicit empty subject token | `subject_token=""` | Reject without plugin-issued fallback |
 | EXC-18 | Invalid requested token type or missing RPST resource type | Unsupported type, or RPST without `res_type` | Reject before exchange |
-| EXC-19 | Normalize or reject audience override (separate work) | Padded allowed audience, or whitespace-only value | Normalized audience reaches self-mint/Vault identity-token callback; blank value rejected |
+| EXC-19 | Normalize or reject audience override | Padded allowed audience, or whitespace-only value | Normalized audience reaches self-mint/Vault identity-token callback; blank value rejected |
 
 Exchange schema coverage: `TestPathExchange_RejectsUnknownFieldsBeforeTokenResolution` checks create/update requests in direct, self-mint, and brokered modes. It rejects body `role` on bare exchange and unknown fields on bare/named routes before token processing. Existing role-mapping and named-role tests preserve supported role selection.
 
@@ -233,7 +233,7 @@ Coverage means assertions at the specified layer. Unit tests use in-memory Vault
 | Area | Evidence and limits |
 |---|---|
 | CFG-01–03, CFG-05–18 | [path_config_test.go](oci-backend/path_config_test.go): creation/defaults, read/delete, partial updates, mappings, self-mint key generation/reuse, and brokered validation. CFG-04 has no dedicated test; implementation currently checks the `https://` prefix, not full URL validity |
-| CFG-19–20, EXC-19 | Separate, uncommitted audience-validation work; not counted in this integration. Baseline audience allowlisting is covered by CFG-12 and EXC-10–12, but the additional normalization/rejection contracts await integration |
+| CFG-19–20, EXC-19 | Integrated: `TestPathConfig_SubjectTokenAllowedAudiencesValidation` covers normalization/deduplication and blank/control/overlong entries. `TestPathExchange_SubjectTokenAudienceOverrideRejectsInvalidValue` rejects whitespace-only overrides; `TestPathExchange_DefaultCallbackSelfMintUsesAudienceOverride` and `TestPathExchange_DefaultCallbackGenerateIdentityTokenUsesAudienceOverride` assert the normalized audience reaches both issuance paths |
 | ROL-01–04, ROL-06, ROL-08, ROL-10–15 | [path_roles_test.go](oci-backend/path_roles_test.go): representative creation/read/list/delete and validation. ROL-04 asserts a single listed role, not the three-role scenario; ROL-15 tests simple malformed syntax, not every expression position |
 | EXC-04, EXC-06–18 | [path_exchange_test.go](oci-backend/path_exchange_test.go): callback/fallback, key handling, mappings, audience constraints, brokered reissue, direct pass-through, empty-token and requested-type validation. Several tests intentionally fail at the exchange stub after checking earlier behavior; these are not full exchange success proofs |
 | EXC-01–03 | Partial: OCI client mock success cases for UPST/RPST; no full Vault-to-OCI success workflow |
@@ -255,7 +255,7 @@ ROL-05 (updating an existing role) and ROL-09 (special characters with strict mo
 
 ## Outstanding Work and Release Validation
 
-1. **Deployed authorization and audience validation:** SCH-01–02 are integrated and locally tested. Add non-root Vault ACL tests; direct role mapping remains intentional delegation. Integrate the separately preserved audience-validation work and verify CFG-19–20/EXC-19 before counting those cases as covered.
+1. **Deployed authorization:** SCH-01–02 and audience cases CFG-19–20/EXC-19 are integrated and locally tested. Add non-root Vault ACL tests; direct role mapping remains intentional delegation. Extend audience coverage to exact byte boundaries, multibyte strings, and invalid previously stored allowlists on partial updates.
 2. **TTL and expiry:** test request/role/backend precedence, backend maximum as a ceiling, zero/negative/excessive TTL values, and RPST request expiry. Fix the role-max override and reconcile returned lease/expiry metadata with upstream token lifetime. Verify renewal, revocation, and expiry using a running Vault server; the revoke callback currently makes no OCI call.
 3. **Role and identity contracts:** decide and test enforcement of stored `allowed_subjects`/`allowed_groups` (currently not enforced during exchange). Test alias selection with multiple auth aliases and prove which authenticated identity supplies signing claims. Add malformed-template cases after an otherwise valid missing-context lookup, where current configuration validation can stop before inspecting trailing syntax.
 4. **Trust boundary and resource limits:** add exact-boundary tests for 1 MiB documents/JWTs/aggregate PEM and 64 keys, malformed/missing time claims and future `nbf`/`iat`, invalid origin paths/ports, and more address classes. Existing tests reject an oversized fetched document and 65-key JWKS; they do not exhaust all implemented limits.
@@ -289,12 +289,12 @@ Integration tests use local mock HTTP servers, not a live IdP or OCI tenancy. `n
 
 ### Latest Verification
 
-On **2026-10-13**, using the combined security integration described above, with unrelated audience edits set aside:
+On **2026-10-13**, using the combined security integration and audience validation described above:
 
 - `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -race -count=1 ./...` — passed, including the 18 schema-rejection subcases and positive role-selection tests.
 - `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -count=1 -tags=integration ./oci-backend -run Integration -v` — all seven tests passed, none skipped, with loopback TCP access.
 
-`GOWORK=off GOCACHE=/tmp/oci-review-cache go vet ./...` and a native `go build -trimpath` also passed. These results exclude the separately preserved audience-validation edits. They do not establish live OCI/IdP behavior, Vault ACL enforcement, Enterprise/FIPS compatibility, or production-network readiness.
+`GOWORK=off GOCACHE=/tmp/oci-review-cache go vet ./...` and a native `go build -trimpath` also passed. These results include the audience-validation changes and their regression tests. They do not establish live OCI/IdP behavior, Vault ACL enforcement, Enterprise/FIPS compatibility, or production-network readiness.
 
 ### Manual Acceptance
 
@@ -310,6 +310,8 @@ HTTP trust endpoints are permitted only for local testing with `debug_allow_brok
 
 - `client_secret` is not returned by configuration reads.
 - Direct `subject_token_role_mappings` is first-match-wins; rule order matters. It does not apply to brokered reissuance or plugin-issued tokens.
+- `subject_token_allowed_audiences` entries are trimmed and deduplicated on configuration writes; entries that are blank, exceed 512 bytes, or contain control characters after trimming are rejected. An empty allowlist remains valid and disables overrides. Stored entries are revalidated on partial configuration updates.
+- A supplied nonempty `subject_token_audience` is trimmed and validated before allowlist comparison. Omitted or empty-string overrides retain the configured default; whitespace-only overrides are rejected. These controls do not change incoming brokered JWT audience validation.
 - `subject_token_audience` applies only when `subject_token` is omitted and the audience is allowlisted. An explicitly empty `subject_token` fails rather than triggering fallback.
 - With `enable_plugin_issued_subject_token=false`, callers must supply `subject_token`.
 - Generated exchange key material is returned as `private_key`; the generated public key is omitted from the response.

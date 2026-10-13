@@ -128,7 +128,7 @@ sequenceDiagram
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Check `enable_plugin_issued_subject_token=true`
-    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>V: Resolve default audience or normalize and validate `subject_token_audience` against allowlist
     V->>SV: `GenerateIdentityToken(audience)`
     SV-->>V: Vault-issued identity token
     alt Caller supplies `public_key`
@@ -159,7 +159,7 @@ sequenceDiagram
     V->>S: Read backend config and self-mint key
     S-->>V: Config, role constraints, signing key
     V->>V: Check plugin-issued mode is enabled
-    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>V: Resolve default audience or normalize and validate `subject_token_audience` against allowlist
     V->>SV: `GenerateIdentityToken(audience)`
     SV-->>V: Identity token unavailable
     V->>SV: Read trusted Vault request and identity context
@@ -352,7 +352,7 @@ vault write oci/config \
 - `subject_token_self_mint_enabled`: Enables built-in self-mint in plugin-issued subject-token mode when Vault identity-token generation is unavailable (default: `false`)
 - `subject_token_self_mint_issuer`: Required when self-mint is enabled
 - `subject_token_self_mint_audience`: Audience for self-minted token (default: `urn:mace:oci:idcs`)
-- `subject_token_allowed_audiences`: Optional allowlist for request-level audience override in plugin-issued subject-token mode via `subject_token_audience`
+- `subject_token_allowed_audiences`: Optional allowlist for request-level audience override in plugin-issued subject-token mode via `subject_token_audience`. Entries are trimmed and deduplicated; blank entries, values over 512 bytes, and control characters remaining after trimming are rejected on configuration writes, including partial updates. An empty list disables overrides.
 - `subject_token_self_mint_ttl_seconds`: TTL for self-minted token in seconds (default: `600`)
 - `subject_token_self_mint_private_key`: Optional PEM RSA private key. If omitted while self-mint is enabled, the plugin generates one and stores it in Vault plugin storage
 - `debug_return_resolved_subject_token_claims`: Development-only flag that includes decoded claims from the resolved subject token in `oci/exchange` responses, including error responses
@@ -463,7 +463,7 @@ vault write oci/exchange/developer \
 Notes:
 
 - Omit `subject_token` and set `enable_plugin_issued_subject_token=true` if you want the credential engine to obtain one on the caller's behalf. On Vault Enterprise, the engine first tries Vault identity-token generation. On Vault Open Source, or if Vault cannot generate an identity token for the request, the engine can fall back to self-mint when `subject_token_self_mint_enabled=true` and the required self-mint settings are configured.
-- If the credential engine obtains a subject token on the caller's behalf, the caller may optionally provide `subject_token_audience`. That override is accepted only when the requested value is listed in `subject_token_allowed_audiences`.
+- If the credential engine obtains a subject token on the caller's behalf, the caller may optionally provide `subject_token_audience`. A nonempty override is trimmed, validated using the same 512-byte and control-character rules, and accepted only when its normalized value is listed in `subject_token_allowed_audiences`. Whitespace-only overrides are rejected; omitted or empty-string overrides retain the configured default. These rules apply to plugin-issued tokens, not the incoming brokered JWT audience allowlist.
 - Exchange requests reject fields outside the endpoint schema before token resolution, validation, or signing. Bare `oci/exchange` does not accept a `role` body field.
 - Use `oci/exchange/<role>` when you want Vault policy to control which plugin role may be used for the exchange.
 - Use bare `oci/exchange` when `subject_token_role_mappings` are configured and the engine should derive the effective Vault role from trusted JWT claims.

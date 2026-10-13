@@ -25,21 +25,21 @@ const (
 )
 
 type tokenExchangeResult struct {
-	AccessToken        string
-	SessionToken       string
-	RPSTToken          string
-	TokenType          string
-	RequestedTokenType string
-	ExpiresIn          int
-	PrivateKey         string
-	PublicKey          string
+	AccessToken         string
+	SessionToken        string
+	RPSTToken           string
+	TokenType           string
+	RequestedTokenType  string
+	CredentialExpiresAt time.Time
+	PrivateKey          string
+	PublicKey           string
 }
 
 type ociTokenExchangeResponse struct {
 	AccessToken      string `json:"access_token"`
 	Token            string `json:"token"`
 	TokenType        string `json:"token_type"`
-	ExpiresIn        int    `json:"expires_in"`
+	ExpiresIn        *int64 `json:"expires_in"`
 	Error            string `json:"error"`
 	ErrorDescription string `json:"error_description"`
 }
@@ -95,6 +95,7 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 	// Never forward a subject token in a redirected POST body.
 	requestClient := *client
 	requestClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	requestStarted := time.Now()
 	resp, err := requestClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("unable to exchange JWT for security token: %w", err)
@@ -134,15 +135,26 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 		tokenType = "Bearer"
 	}
 
+	var credentialExpiresAt time.Time
+	if tokenResp.ExpiresIn != nil {
+		seconds := *tokenResp.ExpiresIn
+		if seconds <= 0 || seconds > maxTokenTTLSeconds {
+			return nil, fmt.Errorf("OCI expires_in must be between 1 and %d seconds", maxTokenTTLSeconds)
+		}
+		// Start at request dispatch rather than receipt so network/processing
+		// latency never extends the lifetime advertised by OCI.
+		credentialExpiresAt = requestStarted.Add(time.Duration(seconds) * time.Second)
+	}
+
 	return &tokenExchangeResult{
-		AccessToken:        token,
-		SessionToken:       tokenByType(requestedTokenType, ociRequestedTokenTypeUPST, token),
-		RPSTToken:          tokenByType(requestedTokenType, ociRequestedTokenTypeRPST, token),
-		TokenType:          tokenType,
-		RequestedTokenType: requestedTokenType,
-		ExpiresIn:          tokenResp.ExpiresIn,
-		PrivateKey:         privateKeyPEM,
-		PublicKey:          publicKeyPEM,
+		AccessToken:         token,
+		SessionToken:        tokenByType(requestedTokenType, ociRequestedTokenTypeUPST, token),
+		RPSTToken:           tokenByType(requestedTokenType, ociRequestedTokenTypeRPST, token),
+		TokenType:           tokenType,
+		RequestedTokenType:  requestedTokenType,
+		CredentialExpiresAt: credentialExpiresAt,
+		PrivateKey:          privateKeyPEM,
+		PublicKey:           publicKeyPEM,
 	}, nil
 }
 

@@ -29,4 +29,5 @@ sequenceDiagram
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with brokered self-minted `subject_token`
     O-->>V: OCI UPST or RPST
+    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token and generated exchange private key only when engine generated the exchange keypair

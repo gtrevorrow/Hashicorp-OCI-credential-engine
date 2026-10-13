@@ -2,7 +2,7 @@
 
 This document tracks the functional and security test contracts for the HashiCorp Vault OCI Secrets Engine plugin. A listed case is a test requirement, not a claim that it is automated; see the coverage snapshot and outstanding work below.
 
-Last reconciled: **2026-10-13**, for integration into `development` of `feature/enforce-token-ttl-ceilings` (based on `b5bd4b7`), including the TTL ceiling fix and the previous integration of brokered remote trust hardening (`703d1ed`), the test-plan update (`256abb9`), and strict exchange request validation (`9b3b00a`). Both security fixes and their regression tests are included. Plugin-issued audience allowlist validation and request normalization are also included in this revision and its verification results.
+Last reconciled: **2026-10-13**, for integration into `development` of `feature/report-oci-credential-expiry` (based on `7ea13ce`). Includes the prior schema, remote-trust, audience, and TTL-ceiling fixes plus separate OCI credential-expiry reporting and lease reconciliation.
 
 The trust boundaries differ by mode:
 
@@ -170,14 +170,14 @@ Strict field validation runs before configuration lookup and token processing. S
 
 ## 6. Lease & TTL Management
 
-Handler tests now assert request/role/backend default selection, each limiting layer, named and mapped roles, and the TTL/MaxTTL returned to Vault for both UPST and RPST. An HTTP integration case asserts a stored role with a one-hour default/maximum sends `rpst_exp=60` under a one-minute backend ceiling. UPST lifetime is OCI-controlled. The handler currently reports locally selected TTL as `expires_in`/`expires_at` without reconciling OCI expiry.
+Handler tests now assert request/role/backend default selection, each limiting layer, named and mapped roles, and the TTL/MaxTTL returned to Vault for both UPST and RPST. An HTTP integration case asserts a stored role with a one-hour default/maximum sends `rpst_exp=60` under a one-minute backend ceiling. UPST lifetime is OCI-controlled. The handler reports upstream-derived expiry separately from lease policy. Known remaining lifetime caps the lease; missing/null upstream expiry produces `credential_expiry_known=false` with omitted expiry fields and a policy-only lease.
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | TTL-01 | Default TTL applied | No TTL specified | Uses role.default_ttl when present, otherwise backend default_ttl; RPST sends matching `rpst_exp` |
 | TTL-02 | Request TTL clamped to max | Request/default TTL exceeds a backend, role, or Vault ceiling | Clamp to the lowest positive ceiling; RPST sends clamped `rpst_exp` |
-| TTL-03 | Lease renewal | Renew valid lease | No renewal callback is registered; verify non-renewable lease behavior through a running Vault server |
-| TTL-04 | Lease revocation | Revoke lease | Current revoke callback is a no-op; verify Vault lease removal separately from OCI token validity |
+| TTL-03 | Lease renewal | Renew valid lease | Unit tests assert a nonrenewable secret and absent renewal callback; verify actual renewal rejection through a running Vault server |
+| TTL-04 | Lease revocation | Revoke lease | Unit test asserts the revoke callback makes no OCI request; deployed lease cleanup and OCI validity remain separate live checks |
 | TTL-05 | Lease expiration | Wait for TTL | Verify Vault lease expiry and OCI token expiry independently; no lifecycle automation yet |
 
 Additional TTL contracts:
@@ -189,6 +189,18 @@ Additional TTL contracts:
 | TTL-08 | Compatibility defaults | Omitted/zero request selects defaults, then applies ceilings; legacy zero role values inherit backend policy. Configuration writes with zero values are rejected (TTL-06) |
 | TTL-09 | Vault maximum precision | Round fractional ceilings down; reject positive ceilings below one second and negative ceilings |
 | TTL-10 | Conversion boundary | Accept maximum whole-second duration representable in time.Duration and reject one second more |
+
+### OCI Credential Expiry Contracts
+
+| ID | Test case | Expected result |
+|---|---|---|
+| EXP-01 | OCI lifetime shorter than policy | Report OCI remaining lifetime and deadline; cap both lease TTL and maximum |
+| EXP-02 | OCI lifetime longer than policy | Keep shorter policy lease; report longer OCI lifetime independently |
+| EXP-03 | Missing or null OCI expires_in | Mark expiry unknown; omit expiry fields; retain policy lease |
+| EXP-04 | Zero, negative, fractional, string, or overflowing expires_in | Reject without returning credential material or a lease |
+| EXP-05 | Expired or less than one second remaining | Reject; round usable remaining lifetime down, never up |
+| EXP-06 | Network and processing time | Anchor deadline before HTTP transport; subtract elapsed time at response construction |
+| EXP-07 | Lease lifecycle declaration | Explicitly nonrenewable; no renewal callback; revoke callback makes no OCI request |
 
 ## 7. JWKS Path
 
@@ -259,14 +271,15 @@ Coverage means assertions at the specified layer. Unit tests use in-memory Vault
 | OCI-04 | No explicit request-path assertion for `/oauth2/v1/token` |
 | OCI-06 | `TestOCITokenExchangeDoesNotFollowRedirect` in the brokered trust unit suite |
 | SCH-01–02 | Integrated: strict-schema rejection tests plus existing supported role-selection tests in [path_exchange_test.go](oci-backend/path_exchange_test.go) |
-| EXC-20–24, TTL-03–05, E2E-01–06 | No automated live OCI/Vault or lease lifecycle coverage |
+| EXP-01–07 | [credential_expiry_test.go](oci-backend/credential_expiry_test.go): deterministic lifetime/lease reconciliation, UPST/RPST handler responses, transport timestamp, and local revocation contract. `TestIntegrationExchangeCredentialExpiry` in [oci_client_integration_test.go](oci-backend/oci_client_integration_test.go) covers upstream JSON through handler output |
+| EXC-20–24, TTL-03–05, E2E-01–06 | No automated live OCI/Vault lifecycle coverage; local lease flags/callback behavior are covered by EXP-07 |
 
 ROL-05 (updating an existing role) and ROL-09 (special characters with strict mode off) also lack dedicated tests. The name `TestPathRoles_CreateUpdate` does not imply that it tests an update of an existing role.
 
 ## Outstanding Work and Release Validation
 
 1. **Deployed authorization:** SCH-01–02 and audience cases CFG-19–20/EXC-19 are integrated and locally tested. Add non-root Vault ACL tests; direct role mapping remains intentional delegation. Extend audience coverage to exact byte boundaries, multibyte strings, and invalid previously stored allowlists on partial updates.
-2. **Upstream expiry (finding #4):** TTL ceilings and duration validation are locally covered by the tests above. Reconcile returned lease/expiry metadata with upstream token lifetime; that separate finding remains open. Verify renewal, revocation, and expiry using a running Vault server; the revoke callback currently makes no OCI call.
+2. **Live expiry and lease validation:** Finding #4 is locally implemented and covered by EXP-01–07. Verify actual OCI expiry response shapes and credential validity, and renewal/revocation/expiry through a running Vault server. The revoke callback makes no OCI call; do not infer upstream invalidation from Vault lease removal.
 3. **Role and identity contracts:** decide and test enforcement of stored `allowed_subjects`/`allowed_groups` (currently not enforced during exchange). Test alias selection with multiple auth aliases and prove which authenticated identity supplies signing claims. Add malformed-template cases after an otherwise valid missing-context lookup, where current configuration validation can stop before inspecting trailing syntax.
 4. **Trust boundary and resource limits:** add exact-boundary tests for 1 MiB documents/JWTs/aggregate PEM and 64 keys, malformed/missing time claims and future `nbf`/`iat`, invalid origin paths/ports, and more address classes. Existing tests reject an oversized fetched document and 65-key JWKS; they do not exhaust all implemented limits.
 5. **Transport and rotation:** exercise actual TLS, mixed public/private DNS answers, checked-address dialing, environment-proxy bypass, refresh timeouts, policy changes beyond the JWKS URL, and unknown-key floods during cooldown. Test upstream key rollover with unique key IDs and the documented publication overlap. Plugin signing-key rotation and multi-key JWKS need implementation and separate tests.
@@ -281,7 +294,7 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for build and local Vault setup. From 
 # Default suite: unit and in-memory handler tests
 make test-unit
 
-# Eight integration-tagged tests: six mock OCI cases and two loopback trust cases
+# Nine integration-tagged tests: seven mock OCI cases and two loopback trust cases
 make test-integration
 
 # Uncached verification without a workstation go.work override
@@ -295,16 +308,16 @@ GOWORK=off go vet ./...
 
 `make test` currently aliases `make test-unit`; it does not run the integration suite. `GOWORK=off` verifies repository dependencies; omit it when intentionally testing a documented workspace override.
 
-Integration tests use local mock HTTP servers, not a live IdP or OCI tenancy. `newIntegrationServer` skips when TCP binding is unavailable: inspect verbose output for `SKIP`, and do not count skipped tests as validated behavior. A restricted runner needs loopback access to execute all eight cases.
+Integration tests use local mock HTTP servers, not a live IdP or OCI tenancy. `newIntegrationServer` skips when TCP binding is unavailable: inspect verbose output for `SKIP`, and do not count skipped tests as validated behavior. A restricted runner needs loopback access to execute all nine cases.
 
 ### Latest Verification
 
-On **2026-10-13**, using the security integration, audience validation, and TTL ceiling changes described above:
+On **2026-10-13**, using the security integration, audience validation, TTL ceiling, and credential-expiry changes described above:
 
 - `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -race -count=1 ./...` — passed, including TTL policy cases, the 18 schema-rejection subcases, and positive role-selection tests.
-- `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -count=1 -tags=integration ./oci-backend -run Integration -v` — all eight tests passed, none skipped, with loopback TCP access.
+- `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -count=1 -tags=integration ./oci-backend -run Integration -v` — all nine tests passed, none skipped, with loopback TCP access.
 
-`GOWORK=off GOCACHE=/tmp/oci-review-cache go vet ./...` and a native `go build -trimpath` also passed. These results include the TTL ceiling and audience-validation changes and their regression tests. They do not establish live OCI/IdP behavior, Vault ACL enforcement, Enterprise/FIPS compatibility, or production-network readiness.
+`GOWORK=off GOCACHE=/tmp/oci-review-cache go vet ./...` and a native `go build -trimpath` also passed. These results include credential-expiry reconciliation, TTL ceilings, and audience validation with their regression tests. They do not establish live OCI/IdP behavior, Vault ACL enforcement, Enterprise/FIPS compatibility, or production-network readiness.
 
 ### Manual Acceptance
 

@@ -43,6 +43,7 @@ sequenceDiagram
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
+    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
@@ -72,6 +73,7 @@ sequenceDiagram
         V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
         V->>O: POST `/oauth2/v1/token`
         O-->>V: OCI session token
+        V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
         V-->>C: Success response
     else No rule matches
         V-->>C: Error response before OCI call
@@ -110,6 +112,7 @@ sequenceDiagram
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with plugin-issued brokered `subject_token`
     O-->>V: OCI UPST or RPST
+    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token and generated exchange private key only when the engine generated the exchange keypair
 ```
 
@@ -142,6 +145,7 @@ sequenceDiagram
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
+    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
@@ -178,6 +182,7 @@ sequenceDiagram
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
+    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
@@ -431,7 +436,7 @@ Then configure each mount separately with its own `oci/config` and roles.
 
 Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exchange does not currently let the client request token lifetime through the token-exchange call, so these TTL settings only directly shape the OCI request for RPST via `rpst_exp`. For UPST, they mainly affect Vault-side lease metadata today.
 
-TTL selection uses an explicit positive request `ttl`, otherwise the role default, otherwise the backend default. An omitted or zero request `ttl` selects the default. The result is capped at the lowest positive backend maximum, role maximum, and effective Vault mount/system maximum returned by `SystemView.MaxLeaseTTL()`. A role can tighten the backend ceiling but cannot raise it. This applies to explicit and JWT-mapped roles and to every exchange mode. The same capped duration is used for Vault lease metadata and RPST `rpst_exp`; OCI still determines the lifetime actually granted.
+TTL selection uses an explicit positive request `ttl`, otherwise the role default, otherwise the backend default. An omitted or zero request `ttl` selects the default. The result is capped at the lowest positive backend maximum, role maximum, and effective Vault mount/system maximum returned by `SystemView.MaxLeaseTTL()`. A role can tighten the backend ceiling but cannot raise it. This applies to explicit and JWT-mapped roles and to every exchange mode. The capped policy duration is sent as RPST `rpst_exp`. After exchange, Vault lease duration is additionally capped to known remaining OCI credential lifetime; OCI determines the lifetime actually granted.
 
 Backend and role `default_ttl`/`max_ttl` writes require positive whole-second durations with `default_ttl <= max_ttl`. Supported duration strings such as `1h` remain accepted. Zero, negative, fractional-second, and overflowing policy values are rejected. Each value is bounded to 9,223,372,036 seconds before nanosecond conversion. Request `ttl` uses the same range, with zero additionally allowed to select the default. A fractional Vault ceiling is rounded down to whole seconds; a positive ceiling below one second fails closed.
 
@@ -502,6 +507,7 @@ Notes:
     "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE...",
     "requested_token_type": "urn:oci:token-type:oci-upst",
     "token_type": "Bearer",
+    "credential_expiry_known": true,
     "expires_in": 3600,
     "expires_at": "2024-01-15T10:30:00Z"
   },
@@ -916,6 +922,16 @@ vault read oci/jwks
 - `urn:oci:token-type:oci-upst`
 - `urn:oci:token-type:oci-rpst` (requires `res_type`)
 
+Credential expiry and Vault leases:
+
+- `credential_expiry_known=true` means the OCI response supplied a positive integer `expires_in`. The plugin derives a conservative deadline from the time the HTTP request was dispatched plus that lifetime, so network and processing time cannot extend it. `expires_at` is that UTC deadline; `expires_in` is the remaining lifetime rounded down to whole seconds when the response is built. These fields describe OCI credential lifetime, not Vault policy.
+- Vault lease TTL and its maximum are capped at both local policy and known remaining credential lifetime. For example, OCI returning 10 seconds under a one-hour policy produces a lease of at most 10 seconds (usually slightly less after elapsed time). Conversely, an OCI credential with one hour remaining can have a ten-minute Vault lease; its reported expiry still reflects OCI's lifetime.
+- If OCI omits `expires_in` or returns `null`, `credential_expiry_known=false` and both expiry fields are omitted. The Vault lease retains its policy duration, which is **not evidence of OCI expiry**. The plugin does not infer expiry from unverified JWT claims or requested RPST TTL. Clients must handle unknown expiry and credential rejection explicitly.
+- An explicit zero, negative, fractional, non-integer, or overflowing OCI `expires_in` is rejected. A known credential with less than one whole second remaining is also rejected; no credential/key response or lease is returned. Remaining lifetime is measured at response construction, not client receipt.
+- These leases are nonrenewable. Revocation completes Vault-side lease handling but makes no OCI invalidation request. Removing the Vault lease does not establish that the OCI credential has stopped working. Support for upstream revocation must be assessed per credential type before implementation.
+
+Compatibility: clients must no longer assume `expires_in`/`expires_at` are always present or equal to `lease_duration`. This response correction applies to both UPST and RPST. OCI expiry is an upper-bound lifetime estimate, not a guarantee that a credential will remain authorized until that time.
+
 TTL note:
 - For RPST, the plugin uses backend, role, and Vault mount/system ceilings to bound the `rpst_exp` value sent to OCI.
 - For UPST, OCI determines the token lifetime; plugin TTL settings affect Vault lease metadata, not OCI-side UPST expiration.
@@ -953,7 +969,7 @@ Role fields:
 - **Threat Model**: For a deep-dive into the trust architecture, attack vectors, and mitigations (especially concerning self-minted and brokered modes), see [THREAT_MODEL.md](THREAT_MODEL.md).
 - **Token Validation**: In direct pass-through mode, OCI IAM validates the caller-supplied subject token during exchange. In brokered mode, the plugin validates the external JWT locally, self-mints a new plugin-issued JWT, and OCI validates that brokered JWT during exchange.
 - **TTL Semantics**: RPST requests can be bounded by plugin TTL policy. UPST lifetime is determined by OCI; plugin TTL settings mainly control Vault lease metadata for UPST responses.
-- **Lease Management**: Vault lease lifecycle is applied to issued secrets, but OCI exchanged tokens cannot be actively revoked server-side before expiration. Vault simply drops the lease locally.
+- **Lease Management**: Vault lease lifecycle is applied to issued secrets, but this plugin does not call OCI to invalidate exchanged credentials on revocation. Leases are nonrenewable; see the expiry contract above.
 - **Audit Logging**: All token exchanges are logged to Vault audit log
 - **Self-Mint Key Handling**: When `subject_token_self_mint_enabled=true` and no private key is supplied, the plugin generates an RSA key pair and persists the private key in plugin storage. The key is never returned by `read oci/config`.
 

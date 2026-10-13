@@ -15,6 +15,8 @@ This file is the working backlog for the OCI credential engine plugin. It tracks
 - [x] Single-key JWKS export is implemented at `oci/jwks` for the configured self-mint signing key, including stable `kid` and compatibility `x5c` output.
 - [x] Unit and handler-level tests cover config, roles, direct exchange validation, plugin-issued subject-token flow, self-mint claims, brokered re-issue, JWKS export, and mock OCI client integration behavior.
 
+- [x] Separate OCI credential expiry from Vault lease policy; cap leases to known remaining lifetime, explicitly report unknown expiry, and document nonrenewability/local-only revocation. Live OCI/Vault lifecycle validation remains outstanding.
+
 ### Operational Hardening
 
 - [ ] Add metrics and telemetry for token exchange rate, error rate, and latency

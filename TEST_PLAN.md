@@ -1,18 +1,26 @@
 # Functional Test Plan: OCI Credential Engine Plugin
 
-This document outlines the functional test cases for the HashiCorp Vault OCI Secrets Engine plugin.
+This document tracks the functional and security test contracts for the HashiCorp Vault OCI Secrets Engine plugin. A listed case is a test requirement, not a claim that it is automated; see the coverage snapshot and outstanding work below.
+
+Last reconciled: **2026-10-13**, against `feature/harden-brokered-trust` at `703d1ed` plus the existing, uncommitted audience-validation changes. Brokered remote trust hardening is committed on this branch. Strict exchange request validation is on the separate `feature/validate-exchange-request-schema` branch (`9b3b00a`) and is **not included in this checkout**.
+
+The trust boundaries differ by mode:
+
+- **Direct:** the plugin reads JWT claims for configured `subject_token_role_mappings` and sends the original JWT to OCI for validation. Mapping is intentional role delegation; named-role Vault ACL access is not additionally required. Local claim parsing does not authenticate the JWT.
+- **Brokered:** the plugin verifies the incoming JWT before mapping claims and signing a replacement JWT; OCI validates that replacement. Direct `subject_token_role_mappings` do not apply.
+- **Plugin-issued:** Vault identity-token generation is attempted first, with self-mint fallback when configured. Tests using a mocked system view do not establish compatibility with a running Vault Enterprise server.
 
 ## 1. Configuration Path Tests
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
-| CFG-01 | Valid minimal config | domain, client_id, secret | Success, defaults applied |
+| CFG-01 | Valid minimal config | domain_url, client_id, client_secret | Success, defaults applied |
 | CFG-02 | Valid full config | + default_ttl, max_ttl, subject_token_role_mappings | Success, all fields stored |
 | CFG-03 | Config without required field | Missing client_secret | Error: missing required field |
 | CFG-04 | Config with invalid URL | domain_url="not-a-url" | Error: invalid URL format |
 | CFG-05 | Config read returns secrets masked | Write config, then read | client_secret not in response |
 | CFG-06 | Config partial update | Update one or more fields on existing config | Updated values persisted without rewriting unchanged fields |
-| CFG-07 | Config delete | Delete after creation | Config removed, subsequent read fails |
+| CFG-07 | Config delete | Delete after creation | Config removed; subsequent read returns no data |
 | CFG-08 | Invalid role-mapping config | Set malformed or unsupported subject_token_role_mappings | Error: invalid subject_token_role_mappings |
 | CFG-09 | strict_role_name_match enabled | Set strict_role_name_match=true | Success, strict role-name validation enabled |
 | CFG-10 | plugin-issued subject token disabled | Set enable_plugin_issued_subject_token=false | Success, subject_token becomes required unless changed |
@@ -25,6 +33,13 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | CFG-17 | brokered mode reserved output claim rejection | brokered_subject_token_claim_mappings includes reserved JWT claim | Error: reserved claim cannot be overridden |
 | CFG-18 | brokered mode reserved vault namespace rejection | brokered_subject_token_claim_mappings includes `vault_*` claim | Error: reserved vault_ namespace |
 
+Additional audience-validation cases in the current working tree:
+
+| ID | Test Case | Input | Expected Result |
+|---|---|---|---|
+| CFG-19 | Normalize audience allowlist | Whitespace-padded and duplicate entries | Trimmed, deduplicated values persist |
+| CFG-20 | Reject invalid audience entries | Blank, control-character, or over-limit entry | Configuration rejected |
+
 ## 2. Roles Path Tests
 
 | ID | Test Case | Input | Expected Result |
@@ -35,7 +50,7 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | ROL-04 | List roles | Create 3 roles, list | All 3 names returned |
 | ROL-05 | Update role | Change TTL on existing role | New values persisted |
 | ROL-06 | Delete role | Delete existing role | Role removed |
-| ROL-07 | Role with TTL exceeding config max | role.max_ttl > config.max_ttl | Role creation succeeds; TTL clamped at exchange time |
+| ROL-07 | Role with TTL exceeding config max | role.max_ttl > config.max_ttl | Desired contract: backend maximum remains a ceiling. Current implementation instead replaces it with role.max_ttl; fix and regression test outstanding |
 | ROL-08 | Role with invalid name (default mode) | Empty name | Error |
 | ROL-09 | Role with special chars (strict mode off) | name includes `@` or space | Success |
 | ROL-10 | Role with invalid chars (strict mode on) | strict_role_name_match=true, name includes `@` or space | Error |
@@ -43,15 +58,15 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | ROL-12 | Role with reserved JWT claim override | self_mint_custom_claims includes `sub`, `iss`, `aud`, `exp`, `iat`, `nbf`, or `jti` | Error: reserved claim cannot be overridden |
 | ROL-13 | Role with reserved Vault namespace claim | self_mint_custom_claims includes `vault_*` | Error: reserved vault_ namespace |
 | ROL-14 | Role with non-string custom claim value | self_mint_custom_claims contains array, object, number, or bool | Error: claim must use a string template |
-| ROL-15 | Role with invalid self-mint template syntax | self_mint_custom_claims contains malformed template | Error: invalid template syntax |
+| ROL-15 | Role with invalid self-mint template syntax | self_mint_custom_claims contains malformed template | Reject malformed syntax throughout the template; existing tests cover only a simple malformed expression (see outstanding work) |
 
 ## 3. Exchange Path - Basic Flows
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
-| EXC-01 | Exchange for UPST (default) | subject_token, role | UPST token returned |
-| EXC-02 | Exchange for RPST | + requested_token_type=oci-rpst, res_type | RPST token returned |
-| EXC-03 | Exchange with explicit UPST type | requested_token_type=oci-upst | UPST token returned |
+| EXC-01 | Exchange for UPST (default) | subject_token on `/exchange/:role` | UPST token returned |
+| EXC-02 | Exchange for RPST | + requested_token_type=`urn:oci:token-type:oci-rpst`, res_type | RPST token returned |
+| EXC-03 | Exchange with explicit UPST type | requested_token_type=`urn:oci:token-type:oci-upst` | UPST token returned |
 | EXC-04 | Exchange without subject_token (plugin-issued mode enabled) | call `/exchange/:role` or bare `/exchange`, omit subject_token, enable_plugin_issued_subject_token=true | Uses plugin-issued subject-token mode (Vault identity token first; self-mint if configured) |
 | EXC-05 | Exchange with TTL override | ttl < role.default_ttl | Custom TTL applied |
 | EXC-06 | Exchange with public_key provided | public_key in request | No generated key material in response |
@@ -63,8 +78,16 @@ This document outlines the functional test cases for the HashiCorp Vault OCI Sec
 | EXC-12 | Exchange with subject_token_audience and caller-provided JWT | subject_token and subject_token_audience set | Error: audience override only applies to plugin-issued tokens |
 | EXC-13 | Brokered mode uses re-issued token | subject_token provided, brokered_subject_token_enabled=true | OCI exchange receives plugin-issued brokered JWT, not original external token |
 | EXC-14 | Brokered mode explicit role path adds self-mint custom claims | brokered mode + `/exchange/:role` + templated role self_mint_custom_claims | Brokered JWT includes mapped claims plus rendered additive custom claims |
-| EXC-15 | Brokered bare exchange omits role-scoped custom claims | brokered mode + bare `/exchange` | Brokered JWT includes mapped claims only, without role-scoped custom claims |
+| EXC-15 | Brokered bare exchange omits role-scoped custom claims | brokered mode + bare `/exchange`, with no body `role` | Brokered JWT includes mapped claims only, without role-scoped custom claims |
 | EXC-16 | Brokered mode disabled preserves direct pass-through | subject_token provided, brokered mode off | OCI exchange receives original caller-supplied token |
+
+Additional exchange cases:
+
+| ID | Test Case | Input | Expected Result |
+|---|---|---|---|
+| EXC-17 | Explicit empty subject token | `subject_token=""` | Reject without plugin-issued fallback |
+| EXC-18 | Invalid requested token type or missing RPST resource type | Unsupported type, or RPST without `res_type` | Reject before exchange |
+| EXC-19 | Normalize or reject audience override | Padded allowed audience, or whitespace-only value | Normalized audience reaches self-mint/Vault identity-token callback; blank value rejected |
 
 ## 4. Exchange Path - Token Content Validation
 
@@ -75,7 +98,7 @@ These cases are primarily OCI-behavior or end-to-end validation scenarios unless
 | EXC-20 | Valid JWT exchange | Valid subject_token from external IdP | Valid UPST returned with lease |
 | EXC-21 | Expired JWT | subject_token expired | Error from OCI IAM / trust evaluation |
 | EXC-22 | Invalid JWT signature | Tampered subject_token | Error from OCI IAM / trust evaluation |
-| EXC-23 | Wrong audience in JWT | JWT aud doesn't match OCI client | Error from OCI IAM |
+| EXC-23 | Wrong audience in JWT | JWT aud violates the configured OCI trust requirements | Error from OCI IAM |
 | EXC-24 | Missing required claims | JWT missing claims required by OCI trust | Error from OCI IAM / trust evaluation |
 
 ## 5. Subject Token Role Mapping
@@ -113,17 +136,47 @@ These cases are primarily OCI-behavior or end-to-end validation scenarios unless
 | BRM-05 | Reserved output claim rejection | Mapping outputs reserved JWT claim | Error, fail closed |
 | BRM-06 | Vault namespace output rejection | Mapping outputs `vault_*` claim | Error, fail closed |
 
+## 5.3 Brokered Remote Trust and Key Retrieval
+
+The unit cases below use synthetic keys and an injected HTTP transport unless noted. Source: [subject_token_broker_trust_test.go](oci-backend/subject_token_broker_trust_test.go).
+
+| ID | Contract and asserted behavior | Automated evidence |
+|---|---|---|
+| BRT-01 | HTTPS by default; HTTP only with `debug_allow_brokered_http=true` for localhost/literal loopback. Reject credentials, query, fragment, and unsupported schemes | `TestBrokeredTrustURLPolicy` |
+| BRT-02 | Persist debug flag and allowed JWKS origins; reject disabling debug while HTTP trust configuration remains, preserving previous config | `TestBrokeredTrustConfigPersistsDebugAndOrigins` |
+| BRT-03 | Exact discovery issuer match, including trailing slash; discovered JWKS stays on issuer origin or an explicitly allowed origin; reject HTTP downgrade | `TestBrokeredDiscoveryIssuerAndOrigin` |
+| BRT-04 | Reject redirects, non-200 responses, documents exceeding 1 MiB, and trailing JSON; do not expose upstream error bodies | `TestBrokeredTrustRejectsRedirectsAndOversizedDocuments` |
+| BRT-05 | Reject weak RSA (<2048 bits), private/encryption keys, algorithm/EC-curve mismatch, unsuitable `key_ops`, and JWKS with >64 keys; accept tested suitable keys | `TestBrokeredSigningKeySuitability` |
+| BRT-06 | Coordinate concurrent fetches, respect 30-second forced-refresh cooldown and five-minute cache expiry, cache failures briefly, fail closed after refresh failure, invalidate on trust URL change | `TestBrokeredTrustCacheCoordinatesRefreshAndFailsClosed` |
+| BRT-07 | A caller waiting for refresh can cancel; a canceled fetch does not poison subsequent requests | `TestBrokeredTrustRefreshWaitIsCancelable`, `TestBrokeredCanceledRefreshDoesNotPoisonCache` |
+| BRT-08 | Unknown `kid` refresh accepts newly published key after cooldown; a known `kid` paired with the wrong signing key fails | `TestBrokeredUnknownKeyRefreshSupportsRotation` |
+| BRT-09 | Address-policy checks reject tested private, loopback, and link-local destinations; debug localhost must resolve to loopback | `TestBrokeredEgressAddressPolicy` |
+| BRT-10 | Inline PEM trust verifies a correctly signed JWT that carries a `kid` | `TestBrokeredInlinePublicKeysAcceptJWTKeyID` |
+| BRT-11 | Actual loopback HTTP retrieval fails without debug and succeeds with debug | `TestIntegrationBrokeredLocalHTTPRequiresDebug` (integration tag) |
+| BRT-12 | Actual loopback HTTP redirect is rejected | `TestIntegrationBrokeredHTTPRedirectIsRejected` (integration tag) |
+
+The two socket-based cases live in [subject_token_broker_trust_integration_test.go](oci-backend/subject_token_broker_trust_integration_test.go). They do not exercise production HTTPS, DNS rebinding, or environment-proxy behavior. Those remain validation tasks below. Upstream verification-key rotation in BRT-08 does not implement rotation of the plugin's own signing key.
+
+## 5.4 Exchange Request Schema Regression Gate
+
+| ID | Required behavior | Status in this checkout |
+|---|---|---|
+| SCH-01 | Reject undeclared body fields, including body `role` on bare `/exchange`, before token resolution, signing, or OCI exchange; cover create/update across direct, self-mint, and brokered modes | Pending integration of `9b3b00a`; its `TestPathExchange_RejectsUnknownFieldsBeforeTokenResolution` is absent here |
+| SCH-02 | Retain named-path role selection and intentional direct JWT-to-role mapping after strict validation | Re-run the existing positive flow tests together with SCH-01 after integration |
+
+`TestPathExchange_RequestBodyRoleIsIgnored` currently tests a direct-flow request reaching a failing exchange stub. It does not prove rejection of unknown fields or protect the self-mint/brokered signing paths. EXC-15 and CLM-05 cover requests without a body `role`; they do not close SCH-01.
+
 ## 6. Lease & TTL Management
 
-Current automated coverage is limited to TTL selection and clamping during exchange response creation. Lease renewal/revocation lifecycle tests are not yet implemented.
+Handler-level TTL selection and clamping are not directly asserted by the current tests. The RPST client integration test checks that an explicitly supplied one-hour TTL becomes `rpst_exp=3600`; it does not verify request/role/backend precedence. UPST lifetime is OCI-controlled. The handler currently reports locally selected TTL as `expires_in`/`expires_at` without reconciling OCI expiry.
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | TTL-01 | Default TTL applied | No TTL specified | Uses role.default_ttl when present, otherwise backend default_ttl; RPST sends matching `rpst_exp` |
 | TTL-02 | Request TTL clamped to max | Request TTL > role.max_ttl | Clamped to max; RPST sends clamped `rpst_exp` |
-| TTL-03 | Lease renewal | Renew valid lease | Deferred: handler behavior not yet covered by automated tests |
-| TTL-04 | Lease revocation | Revoke lease | Deferred: local lease cleanup behavior not yet covered by automated tests |
-| TTL-05 | Lease expiration | Wait for TTL | Deferred: time-based expiry behavior not yet covered by automated tests |
+| TTL-03 | Lease renewal | Renew valid lease | No renewal callback is registered; verify non-renewable lease behavior through a running Vault server |
+| TTL-04 | Lease revocation | Revoke lease | Current revoke callback is a no-op; verify Vault lease removal separately from OCI token validity |
+| TTL-05 | Lease expiration | Wait for TTL | Verify Vault lease expiry and OCI token expiry independently; no lifecycle automation yet |
 
 ## 7. JWKS Path
 
@@ -133,15 +186,17 @@ Current automated coverage is limited to TTL selection and clamping during excha
 | JWK-02 | Read JWKS when self-mint disabled | self-mint disabled | Error: subject_token_self_mint_enabled is false |
 | JWK-03 | Read JWKS when self-mint enabled | self-mint enabled (auto key or supplied key) | Returns RFC-compatible RSA JWKS with `kid`, `n`, `e`, and compatibility `x5c` |
 
+The JWKS suite also verifies a self-minted signature against the exported key (`TestSelfMintedTokenValidatesAgainstJWKS`) and stable `x5c` across reads (`TestPathJWKSRead_X5CIsStableAcrossReads`). Multi-key rollover remains unimplemented.
+
 ## 8. Self-Mint Claim Contract
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | CLM-01 | Self-mint uses Vault-derived subject | plugin-issued self-mint with `EntityID` present | `sub` is derived from Vault identity, not the selected exchange role |
 | CLM-02 | Self-mint includes entity and alias claims | plugin-issued self-mint with entity/alias metadata available | JWT contains stable Vault-derived identity claims |
-| CLM-03 | Self-mint excludes exchange role selector | plugin-issued self-mint invoked through `/exchange/:role` | JWT does not contain `vault_role` or the selected exchange role |
-| CLM-04 | Self-mint adds role-scoped custom claims only on role path | plugin-issued self-mint invoked through `/exchange/:role` and that role has self_mint_custom_claims | JWT contains the configured rendered additive custom claims |
-| CLM-05 | Bare self-mint does not infer role-scoped custom claims | plugin-issued self-mint invoked through bare `/exchange` while roles with self_mint_custom_claims exist | JWT does not contain role-scoped custom claims because no explicit role was selected |
+| CLM-03 | Self-mint excludes exchange role selector | plugin-issued self-mint invoked through `/exchange/:role` | JWT does not automatically expose the role selector as `vault_role`; configured additive custom claims are checked separately |
+| CLM-04 | Self-mint adds role-scoped custom claims on role path | plugin-issued self-mint invoked through `/exchange/:role` and that role has self_mint_custom_claims | JWT contains the configured rendered additive custom claims |
+| CLM-05 | Bare self-mint does not infer role-scoped custom claims | plugin-issued self-mint invoked through bare `/exchange`, with no body `role`, while roles with self_mint_custom_claims exist | JWT does not contain role-scoped custom claims because no explicit role was selected |
 | CLM-06 | Brokered self-mint adds mapped claims additively | brokered mode with claim mappings | JWT contains mapped external claims without overriding reserved or `vault_*` claims |
 | CLM-07 | Self-mint custom claims can render trusted Vault metadata | role self_mint_custom_claims references `vault.entity.*` or `vault.alias.*` | JWT contains rendered string claims from trusted Vault context |
 | CLM-08 | Self-mint custom claims can condense group names | role self_mint_custom_claims uses `join(vault.groups, ",")` | JWT contains joined group-name string |
@@ -152,9 +207,11 @@ Current automated coverage is limited to TTL selection and clamping during excha
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | OCI-01 | Successful token exchange | Valid config + valid JWT | OCI returns UPST with access_token |
-| OCI-02 | OCI IAM unavailable | Network failure to domain_url | Error: OCI IAM unreachable |
+| OCI-02 | OCI endpoint unavailable or slow | Connection failure, DNS failure, or timeout | Exchange fails; timeout is mock-tested, other transport failures remain untested |
 | OCI-03 | Invalid OCI client credentials | Wrong client_secret | Error: authentication failed |
 | OCI-04 | Direct OCI token endpoint | domain_url="https://idcs-xxx.identity.oraclecloud.com" | Correct `/oauth2/v1/token` endpoint used |
+| OCI-05 | Error payload with HTTP 200 | Mock endpoint returns OAuth error JSON | Error surfaced; no successful token result |
+| OCI-06 | Token POST redirect | Mock endpoint returns HTTP 307 | Error; only one request, with no redirect forwarding |
 
 ## 10. End-to-End Workflows
 
@@ -163,115 +220,95 @@ Current automated coverage is limited to TTL selection and clamping during excha
 | E2E-01 | Full Vault-Issued Token Flow | 1. Configure Vault identity token or plugin-issued self-mint mode<br>2. Configure OCI trust against Vault-derived claims<br>3. Invoke exchange via plugin without caller-supplied subject_token<br>4. Verify OCI UPST received |
 | E2E-02 | External IdP to OCI | 1. Configure plugin with OCI domain<br>2. Get JWT from Auth0/Okta<br>3. Exchange via plugin<br>4. Use UPST with OCI CLI |
 | E2E-03 | Multi-tenant setup | 1. Enable multiple plugin mounts (oci-tenant1, oci-tenant2)<br>2. Different configs per mount<br>3. Tokens isolated per tenant |
+| E2E-04 | Brokered IdP to OCI | Validate external JWT, map claims, reissue, exchange, and use resulting OCI credential; exercise IdP verification-key rollover and rejection cases |
+| E2E-05 | Vault ACL and role delegation | Use non-root callers with different bare/named path policies; verify intentional direct mapping delegation and rejection of body-controlled role selection |
+| E2E-06 | Production network trust retrieval | Use actual HTTPS discovery/JWKS endpoints and approved separate key host; verify certificate validation, egress policy, proxy bypass, and refresh during outage/rotation |
 
 ## Automated Coverage Snapshot
 
-Currently covered by automated tests:
-- `CFG-01`, `CFG-02`, `CFG-03`, `CFG-05`, `CFG-06`, `CFG-07`, `CFG-08`, `CFG-09`, `CFG-10`, `CFG-11`
-- `CFG-12`, `CFG-13`, `CFG-14`, `CFG-15`, `CFG-16`, `CFG-17`, `CFG-18`
-- `ROL-01`, `ROL-02`, `ROL-03`, `ROL-04`, `ROL-06`, `ROL-08`, `ROL-10`, `ROL-11`, `ROL-12`, `ROL-13`, `ROL-14`, `ROL-15`
-- `EXC-04`, `EXC-06`, `EXC-07`, `EXC-08`, `EXC-09`, `EXC-10`, `EXC-11`, `EXC-12`, `EXC-13`, `EXC-14`, `EXC-15`, `EXC-16`
-- Requested token-type validation for unsupported values and RPST missing `res_type`
-- `RCM-01`, `RCM-02`, `RCM-03`, `RCM-04`, `RCM-05`, `RCM-06`, `RCM-07`
-- `BRV-01`, `BRV-02`, `BRV-03`, `BRV-04`, `BRV-05`, `BRV-06`, `BRV-07`
-- `BRM-01`, `BRM-02`, `BRM-03`, `BRM-04`, `BRM-05`, `BRM-06`
-- `TTL-01`, `TTL-02`
-- `CLM-01`, `CLM-02`, `CLM-03`, `CLM-04`, `CLM-05`, `CLM-06`, `CLM-07`, `CLM-08`, `CLM-09`
-- `JWK-01`, `JWK-02`, `JWK-03`
-- `OCI-01`, `OCI-03`
+Coverage means assertions at the specified layer. Unit tests use in-memory Vault storage, mocked identity data, and stubbed exchanges. They do not exercise Vault server ACL enforcement or OCI trust evaluation.
 
-Covered partially or indirectly:
-- `EXC-01`, `EXC-02`, `EXC-03`
-  These are covered at the OCI client integration layer rather than as full `path_exchange` success-path tests.
+| Area | Evidence and limits |
+|---|---|
+| CFG-01–03, CFG-05–18 | [path_config_test.go](oci-backend/path_config_test.go): creation/defaults, read/delete, partial updates, mappings, self-mint key generation/reuse, and brokered validation. CFG-04 has no dedicated test; implementation currently checks the `https://` prefix, not full URL validity |
+| CFG-19–20, EXC-19 | Existing uncommitted audience changes: `TestPathConfig_SubjectTokenAllowedAudiencesValidation`, `TestPathExchange_SubjectTokenAudienceOverrideRejectsInvalidValue`, and the two `DefaultCallback*UsesAudienceOverride` tests |
+| ROL-01–04, ROL-06, ROL-08, ROL-10–15 | [path_roles_test.go](oci-backend/path_roles_test.go): representative creation/read/list/delete and validation. ROL-04 asserts a single listed role, not the three-role scenario; ROL-15 tests simple malformed syntax, not every expression position |
+| EXC-04, EXC-06–18 | [path_exchange_test.go](oci-backend/path_exchange_test.go): callback/fallback, key handling, mappings, audience constraints, brokered reissue, direct pass-through, empty-token and requested-type validation. Several tests intentionally fail at the exchange stub after checking earlier behavior; these are not full exchange success proofs |
+| EXC-01–03 | Partial: OCI client mock success cases for UPST/RPST; no full Vault-to-OCI success workflow |
+| RCM-01–07 | [subject_token_role_mappings_test.go](oci-backend/subject_token_role_mappings_test.go), config validation, and `TestPathExchange_SubjectTokenRoleMappings`; local rule evaluation, not JWT authenticity or Vault ACLs |
+| BRV-01–07 | `TestValidateBrokeredSubjectToken` in [subject_token_broker_validation_test.go](oci-backend/subject_token_broker_validation_test.go); local RSA/EC verification and issuer/audience/expiry/algorithm rejection |
+| BRM-01–06 | `TestRenderBrokeredClaimMappings` in [subject_token_broker_mapping_test.go](oci-backend/subject_token_broker_mapping_test.go) |
+| BRT-01–12 | Named tests in section 5.3; transport-policy units plus two loopback integration cases |
+| TTL-01–02, EXC-05, ROL-07 | No dedicated handler TTL precedence/clamping assertions. RPST client test asserts only explicitly supplied `rpst_exp=3600` |
+| JWK-01–03 | [path_jwks_test.go](oci-backend/path_jwks_test.go); also signature verification and stable certificate output |
+| CLM-01–09 | Handler/callback tests in [path_exchange_test.go](oci-backend/path_exchange_test.go) and [subject_token_self_mint_templates_test.go](oci-backend/subject_token_self_mint_templates_test.go). Identity/alias data is mocked; bare-path cases exclude a body `role` |
+| OCI-01, OCI-03, OCI-05 | [oci_client_integration_test.go](oci-backend/oci_client_integration_test.go): successful token responses, HTTP 401, and HTTP 200 error JSON |
+| OCI-02 | Partial: timeout is tested; DNS failure and refused connections are not |
+| OCI-04 | No explicit request-path assertion for `/oauth2/v1/token` |
+| OCI-06 | `TestOCITokenExchangeDoesNotFollowRedirect` in the brokered trust unit suite |
+| SCH-01–02 | Separate branch; not part of this branch's verified suite |
+| EXC-20–24, TTL-03–05, E2E-01–06 | No automated live OCI/Vault or lease lifecycle coverage |
 
-Not yet covered by automated tests:
-- `CFG-04`
-- `ROL-05`, `ROL-07`, `ROL-09`
-- `EXC-05`
-- `EXC-20`, `EXC-21`, `EXC-22`, `EXC-23`, `EXC-24`
-- `TTL-03`, `TTL-04`, `TTL-05`
-- `OCI-02`, `OCI-04`
-- `E2E-01`, `E2E-02`, `E2E-03`
+ROL-05 (updating an existing role) and ROL-09 (special characters with strict mode off) also lack dedicated tests. The name `TestPathRoles_CreateUpdate` does not imply that it tests an update of an existing role.
 
-## Priority Matrix
+## Outstanding Work and Release Validation
 
-### MVP Tests (Must Have)
-- **CFG-01, CFG-05** - Basic config write/read
-- **ROL-01, ROL-03** - Basic role create/read
-- **EXC-01, EXC-10** - Basic exchange success and allowlisted audience override
-- **RCM-01, RCM-02** - Role claim enforcement
-- **TTL-01** - Default TTL behavior
-
-### Error Handling (Should Have)
-- **CFG-03, CFG-04** - Config validation errors
-- **EXC-21, EXC-22, EXC-23, EXC-24** - Token validation errors
-- **RCM-03, RCM-04, RCM-06** - Claim matching edge cases
-
-### Advanced Features (Nice to Have)
-- **E2E-02** - External IdP integration
-- **OCI-04** - Direct domain token endpoint support
-- **EXC-04** - Plugin-issued subject-token flow
-- **E2E-03** - Multi-tenant isolation
+1. **Integrate strict request validation:** bring SCH-01 onto the integration branch and rerun positive role-path/mapping cases. Include non-root Vault ACL tests; the direct role-mapping feature remains intentional delegation.
+2. **TTL and expiry:** test request/role/backend precedence, backend maximum as a ceiling, zero/negative/excessive TTL values, and RPST request expiry. Fix the role-max override and reconcile returned lease/expiry metadata with upstream token lifetime. Verify renewal, revocation, and expiry using a running Vault server; the revoke callback currently makes no OCI call.
+3. **Role and identity contracts:** decide and test enforcement of stored `allowed_subjects`/`allowed_groups` (currently not enforced during exchange). Test alias selection with multiple auth aliases and prove which authenticated identity supplies signing claims. Add malformed-template cases after an otherwise valid missing-context lookup, where current configuration validation can stop before inspecting trailing syntax.
+4. **Trust boundary and resource limits:** add exact-boundary tests for 1 MiB documents/JWTs/aggregate PEM and 64 keys, malformed/missing time claims and future `nbf`/`iat`, invalid origin paths/ports, and more address classes. Existing tests reject an oversized fetched document and 65-key JWKS; they do not exhaust all implemented limits.
+5. **Transport and rotation:** exercise actual TLS, mixed public/private DNS answers, checked-address dialing, environment-proxy bypass, refresh timeouts, policy changes beyond the JWKS URL, and unknown-key floods during cooldown. Test upstream key rollover with unique key IDs and the documented publication overlap. Plugin signing-key rotation and multi-key JWKS need implementation and separate tests.
+6. **Live acceptance:** complete E2E-01–06 with a disposable OCI domain/tenancy, real Vault policies, and a trusted IdP. Verify OCI API use with the returned credential, rejection cases, and mount isolation. Validate actual Vault Enterprise identity-token behavior and any FIPS deployment claims separately from mocked tests.
+7. **Routine coverage gaps:** add CFG-04, ROL-05/09, multi-role listing, broader OCI transport failures, and an explicit OCI endpoint-path assertion. Keep build/release reproducibility and platform checks separate from functional test success.
 
 ## Running Tests
 
-### Manual Testing
+Follow [CONTRIBUTING.md](CONTRIBUTING.md) for build and local Vault setup. From the repository root:
 
 ```bash
-# Set environment
-export VAULT_ADDR='http://127.0.0.1:8200'
-export VAULT_TOKEN='root'
+# Default suite: unit and in-memory handler tests
+make test-unit
 
-# Test config (CFG-01)
-vault write oci/config \
-    domain_url="https://idcs-test.identity.oraclecloud.com" \
-    client_id="ocid1.oauth2client.oc1..test" \
-    client_secret="test-secret"
+# Seven integration-tagged tests: five mock OCI cases and two loopback trust cases
+make test-integration
 
-# Test read (CFG-05)
-vault read oci/config
+# Uncached verification without a workstation go.work override
+GOWORK=off go test -count=1 ./...
+GOWORK=off go test -count=1 -tags=integration ./oci-backend -run Integration -v
 
-# Test role create (ROL-01)
-vault write oci/role/dev default_ttl=3600 max_ttl=7200
-
-# Test role read (ROL-03)
-vault read oci/role/dev
-
-# Test self-mint role custom claims (ROL-02 / CLM-04 / CLM-07 / CLM-08)
-vault write oci/role/developer \
-    self_mint_custom_claims='{"oci_role":"developer","entity_ref":"{{ vault.entity.id }}","group_list":"{{ join(vault.groups, \",\") }}"}'
-
-# Test self-mint exchange with explicit role path (EXC-04 / CLM-04)
-vault write oci/exchange/developer \
-    requested_token_type="urn:oci:token-type:oci-rpst" \
-    res_type="ref_vault"
+# Additional code-change checks
+GOWORK=off go test -race -count=1 ./...
+GOWORK=off go vet ./...
 ```
 
-### Automated Testing
+`make test` currently aliases `make test-unit`; it does not run the integration suite. `GOWORK=off` verifies repository dependencies; omit it when intentionally testing a documented workspace override.
 
-Current coverage includes:
-- Unit tests in `oci-backend/*_test.go` for config, roles, subject-token role mappings, plugin-issued subject-token flow, self-mint, and JWKS behavior
-- Handler-level tests covering explicit `/exchange/:role` self-mint custom-claim rendering, bare `/exchange` omission of role-scoped custom claims, trusted Vault-context interpolation, `join(vault.groups, ...)`, and brokered-mode re-issuance behavior
-- Integration tests in [oci_client_integration_test.go](/home/gordon/clawd/projects/Hashicorp-OCI-credential-engine/oci-backend/oci_client_integration_test.go) for mock OCI token exchange behavior
+Integration tests use local mock HTTP servers, not a live IdP or OCI tenancy. `newIntegrationServer` skips when TCP binding is unavailable: inspect verbose output for `SKIP`, and do not count skipped tests as validated behavior. A restricted runner needs loopback access to execute all seven cases.
 
-Future additions:
-- Broader `path_exchange` success-path integration tests
-- Lease lifecycle tests
-- End-to-end tests with test OCI tenancy
+### Latest Verification
+
+On **2026-10-13**, using the checkout described above:
+
+- `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -count=1 ./...` — passed.
+- `GOWORK=off GOCACHE=/tmp/oci-review-cache go test -count=1 -tags=integration ./oci-backend -run Integration -v` — all seven tests passed, none skipped, with loopback TCP access.
+
+This run includes the pre-existing audience-validation edits. It does not establish live OCI/IdP behavior, Vault ACL enforcement, Enterprise/FIPS compatibility, or production-network readiness. Build, vet, and race checks were not rerun for this documentation update.
+
+### Manual Acceptance
+
+Use the dev-server and non-root smoke-test procedure in [CONTRIBUTING.md](CONTRIBUTING.md#testing-locally-with-vault). Its self-mint smoke script requires a successfully seeded configuration; it is not a substitute for OCI trust setup or a complete E2E test.
+
+For each live case, record the revision, Vault edition/version, mode, relevant non-secret configuration, caller policy, selected role source, expected claims, actual result, and cleanup. Keep credentials, private keys, and raw tokens out of committed test evidence.
+
+For direct mode, provision OCI trust for the external issuer. For self-mint/brokered mode, configure the signing key and plugin issuer and publish its verification JWKS to an OCI-reachable HTTPS endpoint; brokered mode additionally needs incoming issuer/key/audience trust and claim mappings. Use the full token-type URNs in section 3 and a tenant-appropriate RPST `res_type`. Demonstrate both allowed and rejected requests, then use the issued credential for an authorized OCI API call.
+
+HTTP trust endpoints are permitted only for local testing with `debug_allow_brokered_http=true` and loopback destinations. Production acceptance uses HTTPS with the debug exception disabled. Do not confuse this brokered trust setting with the local Vault dev server's listener URL.
 
 ## Notes
 
-- OCI IAM tokens cannot be actively revoked server-side; Vault lease revocation only drops local tracking
-- `client_secret` is write-only and never returned on read
-- `subject_token_role_mappings` applies only to caller-provided `subject_token` values; plugin-issued tokens may still use an explicit `/exchange/:role` path when one is selected
-- `subject_token_role_mappings` uses first-match-wins semantics, so rule order matters
-- `subject_token_audience` is accepted only when `subject_token` is omitted and the requested audience is present in `subject_token_allowed_audiences`
-- If `enable_plugin_issued_subject_token=false`, callers must supply `subject_token`
-- If `subject_token` is explicitly provided as an empty value, the exchange is rejected instead of falling back to plugin-issued mode
-- When the engine generates exchange key material, the response returns only `private_key`; the generated public key is not returned
-
-## Brokered remote trust hardening coverage
-
-`subject_token_broker_trust_test.go` covers URL/debug policy, configuration persistence, exact discovery issuer, separate JWKS origin allowlisting, redirect rejection, document/key limits, signing-key metadata and RSA strength, destination address checks, cache coalescing/expiry/failure behavior, cancellation, and unknown-key rotation. PEM trust accepts valid JWT key IDs without inventing an ID for the configured PEM key. OCI token POST redirects are rejected without forwarding their body.
-
-`subject_token_broker_trust_integration_test.go` exercises actual loopback HTTP retrieval: it is rejected without the debug flag, succeeds with the flag, and does not follow redirects. This suite uses the existing `integration` build tag and local mock servers, not a live IdP or OCI tenancy.
+- `client_secret` is not returned by configuration reads.
+- Direct `subject_token_role_mappings` is first-match-wins; rule order matters. It does not apply to brokered reissuance or plugin-issued tokens.
+- `subject_token_audience` applies only when `subject_token` is omitted and the audience is allowlisted. An explicitly empty `subject_token` fails rather than triggering fallback.
+- With `enable_plugin_issued_subject_token=false`, callers must supply `subject_token`.
+- Generated exchange key material is returned as `private_key`; the generated public key is omitted from the response.
+- The current revoke callback is a no-op. Vault lease removal must not be reported as verified OCI credential invalidation.

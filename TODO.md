@@ -72,3 +72,5 @@ These items are intentionally deferred. They are not part of the current preferr
 - OCI remains the authority for token validation, token exchange trust, and final authorization mapping
 - In direct pass-through mode, OCI validates the caller-supplied subject token; in brokered mode, the plugin validates the external token and OCI validates the plugin-issued brokered JWT
 - For self-mint and brokered re-issue JWKS discovery, the plugin exports the current public key material and operators publish the JWKS to an OCI-reachable HTTPS location
+
+- [x] Require explicit auth mount accessor for linked alias claims; remove request-mount/type and first-alias fallbacks. Validate real multi-auth entity and OCI trust migration before release (TEST_PLAN ALIAS-07).

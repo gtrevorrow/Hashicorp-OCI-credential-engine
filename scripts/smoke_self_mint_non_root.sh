@@ -36,6 +36,10 @@ if ! vault auth list -format=json | jq -e 'has("userpass/")' >/dev/null; then
     vault auth enable userpass >/dev/null
 fi
 
+echo "Selecting the userpass linked alias for this dev smoke test..."
+ALIAS_ACCESSOR="$(vault auth list -format=json | jq -er '.["userpass/"].accessor')"
+vault write oci/config subject_token_identity_alias_mount_accessor="${ALIAS_ACCESSOR}" >/dev/null
+
 echo "Writing policy oci-smoke-self-mint..."
 vault policy write oci-smoke-self-mint - <<EOF >/dev/null
 path "oci/exchange/${ROLE_NAME}" {
@@ -108,7 +112,7 @@ echo "- entity_ref is non-empty"
 echo "- entity_name is non-empty when Vault identity has a name for the entity"
 echo "- display_name matches the userpass login display name"
 echo "- mount_type should be oci because it comes from vault.request.mount_type on the exchange request"
-echo "- vault_alias_mount_type should be userpass because the caller authenticated through userpass"
+echo "- vault_alias_mount_type should be userpass because this smoke test explicitly selects the linked userpass alias; this is not current-login evidence"
 echo "- group_list should include ${GROUP_NAME}"
 echo
 echo "Smoke test completed."

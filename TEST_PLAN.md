@@ -227,7 +227,7 @@ The JWKS suite also verifies a self-minted signature against the exported key (`
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
 | CLM-01 | Self-mint uses Vault-derived subject | plugin-issued self-mint with `EntityID` present | `sub` is derived from Vault identity, not the selected exchange role |
-| CLM-02 | Self-mint includes entity and alias claims | plugin-issued self-mint with entity/alias metadata available | JWT contains stable Vault-derived identity claims |
+| CLM-02 | Self-mint includes entity and alias claims | plugin-issued self-mint with entity metadata and explicitly configured linked alias accessor | JWT contains stable Vault-derived identity claims |
 | CLM-03 | Self-mint excludes exchange role selector | plugin-issued self-mint invoked through `/exchange/:role` | JWT does not automatically expose the role selector as `vault_role`; configured additive custom claims are checked separately |
 | CLM-04 | Self-mint adds role-scoped custom claims on role path | plugin-issued self-mint invoked through `/exchange/:role` and that role has self_mint_custom_claims | JWT contains the configured rendered additive custom claims |
 | CLM-05 | Bare self-mint does not infer role-scoped custom claims | plugin-issued self-mint invoked through bare `/exchange`, with no body `role`, while roles with self_mint_custom_claims exist | JWT does not contain role-scoped custom claims because no explicit role was selected |
@@ -291,7 +291,7 @@ ROL-05 (updating an existing role) and ROL-09 (special characters with strict mo
 
 1. **Deployed authorization:** SCH-01–02 and audience cases CFG-19–20/EXC-19 are integrated and locally tested. Add non-root Vault ACL tests; direct role mapping remains intentional delegation. Extend audience coverage to exact byte boundaries, multibyte strings, and invalid previously stored allowlists on partial updates.
 2. **Live expiry and lease validation:** Finding #4 is locally implemented and covered by EXP-01–07. Verify actual OCI expiry response shapes and credential validity, and renewal/revocation/expiry through a running Vault server. The revoke callback makes no OCI call; do not infer upstream invalidation from Vault lease removal.
-3. **Role and identity contracts:** unsupported filters have been removed; verify operator cleanup and authorization in a deployed Vault environment. Test alias selection with multiple auth aliases and prove which authenticated identity supplies signing claims. Add malformed-template cases after an otherwise valid missing-context lookup, where current configuration validation can stop before inspecting trailing syntax.
+3. **Role and identity contracts:** unsupported filters have been removed; verify operator cleanup and authorization in a deployed Vault environment. Verify explicit linked alias selection with multiple real auth methods, including login through a different linked alias. Confirm OCI treats selected alias data as linked identity, not current-login evidence. Add malformed-template cases after an otherwise valid missing-context lookup, where current configuration validation can stop before inspecting trailing syntax.
 4. **Trust boundary and resource limits:** add exact-boundary tests for 1 MiB documents/JWTs/aggregate PEM and 64 keys, malformed/missing time claims and future `nbf`/`iat`, invalid origin paths/ports, and more address classes. Existing tests reject an oversized fetched document and 65-key JWKS; they do not exhaust all implemented limits.
 5. **Transport and rotation:** exercise actual TLS, mixed public/private DNS answers, checked-address dialing, environment-proxy bypass, refresh timeouts, policy changes beyond the JWKS URL, and unknown-key floods during cooldown. Test upstream key rollover with unique key IDs and the documented publication overlap. Plugin signing-key rotation and multi-key JWKS need implementation and separate tests.
 6. **Live acceptance:** complete E2E-01–06 with a disposable OCI domain/tenancy, real Vault policies, and a trusted IdP. Verify OCI API use with the returned credential, rejection cases, and mount isolation. Validate actual Vault Enterprise identity-token behavior and any FIPS deployment claims separately from mocked tests.
@@ -350,3 +350,19 @@ HTTP trust endpoints are permitted only for local testing with `debug_allow_brok
 - With `enable_plugin_issued_subject_token=false`, callers must supply `subject_token`.
 - Generated exchange key material is returned as `private_key`; the generated public key is omitted from the response.
 - The current revoke callback is a no-op. Vault lease removal must not be reported as verified OCI credential invalidation.
+
+## Explicit Linked Alias Selection Verification
+
+Feature: `feature/explicit-identity-alias`, based on development `b801445`.
+
+| ID | Contract | Evidence / acceptance |
+|---|---|---|
+| ALIAS-01 | Empty accessor emits no alias claims despite available aliases or matching request mount | `TestSignedAliasClaimsRequireExplicitUniqueMount`, both signing flows |
+| ALIAS-02 | Explicit accessor selects the same linked alias regardless of order; nil entries are safe; request body cannot override selection | Same test, both signing flows |
+| ALIAS-03 | Missing entity/match or duplicate match fails without a signed token | Same test, both signing flows; nil entity checked separately |
+| ALIAS-04 | Alias-dependent templates fail when alias context is absent | `TestAliasTemplatesFailWithoutSelectedAlias` |
+| ALIAS-05 | Config create/read, partial update preservation, and explicit clearing work | `TestAliasConfigurationPersistsPreservesAndClears` |
+| ALIAS-06 | Exchange mount remains the secrets engine; selected alias mount is distinct | `TestDefaultCallbackSelfMintUsesTrustedVaultIdentityClaims` |
+| ALIAS-07 | Real multi-auth entity and OCI trust migration | Outstanding live acceptance: test tokens from both auth methods; verify same configured linked identity, ACL enforcement, default omission, and downstream rejection of missing required claims |
+
+Verified locally: full race suite, all nine mock OCI integration tests, vet, native build, shell syntax, and diff checks passed. Live Vault/OCI multi-auth acceptance is separate and is not established by mocked identity tests.

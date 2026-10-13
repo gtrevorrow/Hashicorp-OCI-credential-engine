@@ -16,7 +16,8 @@ sequenceDiagram
     V->>V: Validate JWT header, signing key suitability, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
     V->>V: Render mapped claims from validated external claims
     V->>SV: Read trusted Vault request and identity context
-    SV-->>V: Entity, alias, group, mount metadata
+    SV-->>V: Entity, linked aliases, groups
+    Note over V: Emit alias claims only for configured auth accessor; fail on missing or ambiguous match
     V->>V: Build brokered self-minted JWT
     opt Explicit `/exchange/<role>` path used
         V->>V: Render role `self_mint_custom_claims` templates if non-conflicting

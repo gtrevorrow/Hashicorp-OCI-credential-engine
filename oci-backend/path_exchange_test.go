@@ -1503,18 +1503,19 @@ func TestDefaultCallbackSelfMintUsesTrustedVaultIdentityClaims(t *testing.T) {
 	backend := b.(*backend)
 
 	config := &federatedConfig{
-		SubjectTokenSelfMintEnabled:    true,
-		SubjectTokenSelfMintIssuer:     "https://vault.example.com",
-		SubjectTokenSelfMintAudience:   "urn:mace:oci:idcs",
-		SubjectTokenSelfMintTTLSeconds: 600,
-		SubjectTokenSelfMintPrivateKey: testKey,
+		SubjectTokenIdentityAliasMountAccessor: "auth_kubernetes_123",
+		SubjectTokenSelfMintEnabled:            true,
+		SubjectTokenSelfMintIssuer:             "https://vault.example.com",
+		SubjectTokenSelfMintAudience:           "urn:mace:oci:idcs",
+		SubjectTokenSelfMintTTLSeconds:         600,
+		SubjectTokenSelfMintPrivateKey:         testKey,
 	}
 
 	req := &logical.Request{
 		EntityID:            "entity-123",
 		DisplayName:         "kubernetes-app",
-		MountAccessor:       "auth_kubernetes_123",
-		MountType:           "kubernetes",
+		MountAccessor:       "oci_mount_123",
+		MountType:           "oci",
 		ClientTokenAccessor: "hmac-token-accessor",
 	}
 
@@ -1527,8 +1528,8 @@ func TestDefaultCallbackSelfMintUsesTrustedVaultIdentityClaims(t *testing.T) {
 	require.Equal(t, "deployer", claims["vault_entity_name"])
 	require.Equal(t, "root", claims["vault_namespace_id"])
 	require.Equal(t, "kubernetes-app", claims["vault_display_name"])
-	require.Equal(t, "auth_kubernetes_123", claims["vault_mount_accessor"])
-	require.Equal(t, "kubernetes", claims["vault_mount_type"])
+	require.Equal(t, "oci_mount_123", claims["vault_mount_accessor"])
+	require.Equal(t, "oci", claims["vault_mount_type"])
 	require.Equal(t, "sa:default:app", claims["vault_alias_name"])
 	require.Equal(t, "auth_kubernetes_123", claims["vault_alias_mount_accessor"])
 	require.Equal(t, "kubernetes", claims["vault_alias_mount_type"])

@@ -103,7 +103,8 @@ sequenceDiagram
     V->>V: Validate JWT signature, `iss`, `aud`, `exp`, `nbf`, `iat`
     V->>V: Render mapped claims from validated external claims
     V->>SV: Read trusted Vault request and identity context
-    SV-->>V: Entity, alias, group, mount metadata
+    SV-->>V: Entity, linked aliases, groups
+    Note over V: Emit alias claims only for configured auth accessor; fail on missing or ambiguous match
     V->>V: Build brokered self-minted JWT
     V->>V: Render role `self_mint_custom_claims` templates only when `/exchange/<role>` is used
     alt Caller supplies `public_key`
@@ -175,7 +176,8 @@ sequenceDiagram
     V->>SV: `GenerateIdentityToken(audience)`
     SV-->>V: Identity token unavailable
     V->>SV: Read trusted Vault request and identity context
-    SV-->>V: Entity, alias, group, mount metadata
+    SV-->>V: Entity, linked aliases, groups
+    Note over V: Emit alias claims only for configured auth accessor; fail on missing or ambiguous match
     V->>V: Build JWT with Vault-derived claims
     V->>V: Sign self-minted JWT with plugin signing key
     alt Caller supplies `public_key`
@@ -794,6 +796,22 @@ Design notes:
 - When the caller request is backed by a Vault Identity entity, `vault_entity_id` is the preferred stable trust-mapping claim.
 - When the caller is using a token flow without an attached entity, the self-minted JWT still includes token-context claims such as `vault_display_name`, `vault_mount_accessor`, `vault_mount_type`, and `vault_client_token_accessor`, and OCI trust can map on those if needed.
 - Claims like `vault_display_name` and `vault_client_token_accessor` are a weaker trust anchor than `vault_entity_id` because they identify token context rather than a durable Vault identity. Prefer `vault_entity_id` whenever it is available.
+
+### Explicit Linked Alias Selection
+
+`subject_token_identity_alias_mount_accessor` on `oci/config` selects the auth mount whose linked entity alias may supply `vault_alias_*` claims and `vault.alias.*` templates. It applies to in-plugin self-mint and brokered signing. The default is empty: no alias claims are emitted, even for an entity with one alias. Templates requiring missing alias data fail before signing.
+
+To opt in, obtain the intended auth mount's accessor from `vault auth list -detailed`, review the entity links and downstream OCI trust rules, and update the existing configuration:
+
+```bash
+vault write oci/config subject_token_identity_alias_mount_accessor=auth_aws_example
+```
+
+The entity must have exactly one alias with that accessor. Missing entity, missing match, and duplicate matches fail issuance. There is no fallback by mount type, alias order, or request mount. `vault_mount_*` describes the OCI secrets engine handling the request; `vault_alias_mount_*` describes the explicitly selected linked auth mount.
+
+**Trust boundary:** This selection asserts a linked identity attribute. It does not prove that the current Vault token was authenticated through that auth method. Callers authenticating through another alias of the same entity can still receive the configured linked alias claims when permitted to exchange. If downstream authorization requires proof of a particular login method, do not use these claims as that proof; use an independently verified identity flow and appropriate Vault policies.
+
+**Upgrade:** Automatic alias selection has been removed. Review existing alias-dependent OCI mappings and templates before upgrading. Opt in only when linked-identity trust is intended, or switch to stable entity claims. Clear the setting with `subject_token_identity_alias_mount_accessor=""` to disable alias emission. Direct token pass-through and Vault-generated plugin identity tokens are unchanged.
 
 ### Role-Scoped Custom Claims For Self-Mint
 

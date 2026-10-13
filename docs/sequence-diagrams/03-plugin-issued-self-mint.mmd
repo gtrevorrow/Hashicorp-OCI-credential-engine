@@ -15,7 +15,8 @@ sequenceDiagram
     V->>SV: `GenerateIdentityToken(audience)`
     SV-->>V: Identity token unavailable
     V->>SV: Read trusted Vault request and identity context
-    SV-->>V: Entity, alias, group, mount metadata
+    SV-->>V: Entity, linked aliases, groups
+    Note over V: Emit alias claims only for configured auth accessor; fail on missing or ambiguous match
     V->>V: Build JWT with Vault-derived claims
     V->>V: Sign self-minted JWT with plugin signing key
     alt Caller supplies `public_key`

@@ -87,6 +87,10 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Strict Role Name Match",
 					},
 				},
+				"subject_token_identity_alias_mount_accessor": {
+					Type:        framework.TypeString,
+					Description: "Explicit auth mount accessor for linked entity alias claims; empty disables alias claims. Does not identify the current login method.",
+				},
 				"subject_token_self_mint_enabled": {
 					Type:        framework.TypeBool,
 					Description: "Enable built-in callback fallback to self-mint subject_token when plugin identity token is unavailable",
@@ -273,6 +277,7 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 	}
 
 	respData := map[string]interface{}{
+		"subject_token_identity_alias_mount_accessor": config.SubjectTokenIdentityAliasMountAccessor,
 		"domain_url": config.DomainUrl,
 		"client_id":  config.ClientID,
 		// Client Secret is intentionally omitted from read
@@ -352,6 +357,9 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 	if _, ok := req.Data["strict_role_name_match"]; ok {
 		config.StrictRoleNameMatch = data.Get("strict_role_name_match").(bool)
+	}
+	if _, ok := req.Data["subject_token_identity_alias_mount_accessor"]; ok {
+		config.SubjectTokenIdentityAliasMountAccessor = strings.TrimSpace(data.Get("subject_token_identity_alias_mount_accessor").(string))
 	}
 	if _, ok := req.Data["subject_token_self_mint_enabled"]; ok {
 		config.SubjectTokenSelfMintEnabled = data.Get("subject_token_self_mint_enabled").(bool)
@@ -679,6 +687,7 @@ Optional:
   - subject_token_role_mappings: JSON array of ordered rules used to derive a Vault role from a caller-supplied subject_token
   - enable_plugin_issued_subject_token: Allow the plugin to resolve or mint subject_token when omitted by the caller (default: true)
   - strict_role_name_match: Require role names to match [A-Za-z0-9._:-]+ (default: false)
+  - subject_token_identity_alias_mount_accessor: Explicit linked alias auth mount accessor; empty disables alias claims (not current login evidence)
   - subject_token_self_mint_enabled: Enable built-in callback self-mint fallback (default: false)
   - subject_token_self_mint_issuer: Required when self-mint is enabled
   - subject_token_self_mint_audience: Audience for self-minted token (default: urn:mace:oci:idcs)

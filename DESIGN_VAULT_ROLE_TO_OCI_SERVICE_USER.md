@@ -1,5 +1,11 @@
 # Design Plan: Templated Self-Mint Claims From Trusted Vault Context
 
+## Linked Alias Trust Boundary
+
+Alias claims require an explicit `subject_token_identity_alias_mount_accessor` in backend configuration. Empty disables alias claims; a configured accessor must match exactly one alias on the caller's Vault entity or signing fails. This applies to self-mint and brokered signing. Request mount fields identify the secrets engine and never select an auth alias.
+
+Selected alias metadata describes an operator-approved linked identity, not the authentication method used to obtain the current Vault token. An AWS ARN from this context is not proof that this exchange caller just authenticated through AWS. Downstream policies must explicitly accept linked-entity trust; use a separately verified identity flow when login-method proof is required. Existing alias templates need opt-in configuration after upgrade and fail if required context is unavailable.
+
 ## Goal
 Allow operators to derive additional claims for plugin-issued self-minted subject tokens from trusted Vault context using constrained templates, so they can condense values such as alias metadata, entity metadata, group membership, or AWS auth-derived identity attributes into OCI-facing claims without promoting caller-supplied request fields into trust claims.
 

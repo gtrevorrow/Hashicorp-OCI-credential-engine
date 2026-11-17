@@ -6,200 +6,78 @@ A HashiCorp Vault secrets engine plugin that exchanges 3rd party OIDC/OAuth JWT 
 
 This plugin enables **federated identity** workflows by allowing users to exchange JWT tokens from external Identity Providers (IdPs) for temporary OCI session tokens. This eliminates the need to store long-lived OCI API keys in Vault.
 
-### Sequence Diagrams (Current Implemented Flows)
+### Exchange Modes (Client View)
 
-These diagrams describe the implemented request flows. Maintainable sources are in [docs/sequence-diagrams](docs/sequence-diagrams/README.md); obsolete SVGs describing retired fields have been removed.
+These sequences show what a client supplies and receives. The client has already authenticated to Vault, and an operator has configured the engine and OCI trust. The engine's configuration determines the exchange mode.
 
-Actor definitions used in diagrams:
+| Mode | Client supplies | Subject token sent to OCI |
+|---|---|---|
+| Direct exchange | External JWT as `subject_token` | The original external JWT |
+| Brokered exchange | External JWT as `subject_token` | A new engine-signed JWT |
+| Plugin-issued exchange | No `subject_token` | A Vault-issued or self-minted JWT |
 
-- **Client/Workload**: The caller (app, CI job, script, or human) that invokes `vault write oci/exchange` or `vault write oci/exchange/<role>`.
-- **Vault OCI Credential Engine**: This secrets-engine plugin instance mounted in Vault.
-- **Vault Storage**: Plugin storage view used for reading config and role entries.
-- **Vault System View**: Vault runtime interface available to plugins; used by the default subject-token callback to call `GenerateIdentityToken` when available.
-- **Subject Token Callback**: Plugin hook used when `subject_token` is omitted and `enable_plugin_issued_subject_token=true`. This is the plugin-issued subject-token mode. The default callback tries Vault identity-token generation first, then self-mints only if needed and configured.
-- **OCI Token Endpoint**: OCI Identity Domain OAuth token exchange endpoint (`/oauth2/v1/token`).
+All three modes return OCI credentials and Vault lease metadata. Choose UPST or RPST with `requested_token_type`; RPST also requires `res_type`. If the client omits `public_key`, the response includes an engine-generated exchange private key. If the client supplies its public key, it keeps the corresponding private key.
 
-#### 1) Subject Token Exchange (Caller Provides `subject_token`)
+#### 1) Direct Exchange: Client Supplies the JWT
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor C as Client / Workload
+    participant I as External Identity Provider
     participant V as Vault OCI Credential Engine
-    participant S as Vault Storage
-    participant O as OCI Token Endpoint
+    participant O as OCI Identity Domain
 
-    C->>V: `vault write oci/exchange[/<role>]` with `subject_token`
-    V->>V: Validate exchange schema#59; reject unknown fields before processing
-    V->>S: Read backend config and optional plugin role
-    S-->>V: Config and role constraints
-    V->>V: Validate request fields and TTL
-    V->>V: If direct mappings exist, require bare path and select role from decoded JWT
-    alt Caller supplies `public_key`
-        V->>V: Use caller public key for OCI exchange
-    else `public_key` omitted
-        V->>V: Generate exchange RSA keypair
-    end
-    Note over V: Roles with removed filter settings require explicit cleanup
-    V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
-    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
+    C->>I: Obtain a JWT
+    I-->>C: External JWT
+    C->>V: Request OCI credentials<br/>with subject_token
+    V->>O: Exchange the original JWT
     O-->>V: OCI UPST or RPST
-    V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
-    V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
+    V-->>C: Credentials and Vault lease
 ```
 
-Client sends `subject_token`; when a role-specific route is used, the plugin loads that role's constraints before performing token exchange against OCI.
+The engine passes the original JWT to OCI, which validates it before issuing credentials. Use `oci/exchange` or `oci/exchange/<role>` as configured by the operator. With JWT-to-role mapping, use the bare `oci/exchange` path; the engine selects a role while passing the original JWT to OCI.
 
-#### 1.1) Caller JWT Role Mapping Variant
+#### 2) Brokered Exchange: Engine Reissues the Identity
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor C as Client / Workload
+    participant I as External Identity Provider
     participant V as Vault OCI Credential Engine
-    participant S as Vault Storage
-    participant O as OCI Token Endpoint
+    participant O as OCI Identity Domain
 
-    C->>V: `vault write oci/exchange` with caller JWT
-    V->>V: Validate exchange schema#59; reject unknown fields before processing
-    V->>S: Read backend config and role policy
-    S-->>V: `subject_token_role_mappings`, role entries
-    V->>V: Parse caller JWT payload only
-    V->>V: Evaluate ordered role-mapping rules
-    V->>V: First matching rule selects Vault role
-    V->>S: Read derived Vault role entry
-    S-->>V: Role TTL and local policy constraints
-
-    alt Mapping rule matches
-        Note over V: Roles with removed filter settings require explicit cleanup
-        V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
-        V->>O: POST `/oauth2/v1/token`
-        O-->>V: OCI session token
-        V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
-        V-->>C: Success response
-    else No rule matches
-        V-->>C: Error response before OCI call
-    end
-```
-
-This is a caller-supplied `subject_token` variant of flow 1. When `subject_token_role_mappings` are configured, the engine reads decoded JWT claims to select the effective role. This is intentional delegation: the plugin does not authenticate that JWT locally, and OCI must validate the unchanged token before issuing credentials.
-
-#### 1.2) Brokered Caller JWT Variant
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor C as Client / Workload
-    participant V as Vault OCI Credential Engine
-    participant S as Vault Storage
-    participant SV as Vault System View
-    participant O as OCI Token Endpoint
-
-    C->>V: `vault write oci/exchange[/<role>]` with external `subject_token`
-    V->>V: Validate exchange schema#59; reject unknown fields before processing
-    V->>S: Read backend config, brokered trust config, self-mint key, optional role
-    S-->>V: Config, mappings, signing key, role TTL/custom claims
-    V->>V: Check `brokered_subject_token_enabled=true`
-    V->>V: Resolve bounded cached trust keys or refresh with HTTPS, issuer and origin checks
-    Note over V: HTTP allowed only with explicit loopback debug mode#59; redirects rejected
-    V->>V: Validate JWT header, signing key suitability, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
-    Note over V: JOSE bounds JSON nesting and RSA JWK moduli before signature verification
-    V->>V: Parse complete templates and render bounded mapped claims from verified input
-    V->>SV: Read trusted Vault request and identity context
-    SV-->>V: Entity, linked aliases, groups
-    Note over V: Emit alias claims only for configured auth accessor#59; fail on missing or ambiguous match
-    V->>V: Build brokered self-minted JWT
-    opt Explicit `/exchange/<role>` path used
-        V->>V: Parse complete role templates#59; render bounded claims and reject collisions
-    end
-    alt Caller supplies `public_key`
-        V->>V: Use caller public key for OCI exchange
-    else `public_key` omitted
-        V->>V: Generate exchange RSA keypair
-    end
-    Note over V: Roles with removed filter settings require explicit cleanup
-    V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
-    V->>O: POST `/oauth2/v1/token` with brokered self-minted `subject_token`
+    C->>I: Obtain a JWT
+    I-->>C: External JWT
+    C->>V: Request OCI credentials<br/>with subject_token
+    V->>V: Reissue the verified identity<br/>as an engine-signed JWT
+    V->>O: Exchange the engine-issued JWT
     O-->>V: OCI UPST or RPST
-    V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
-    V-->>C: Vault secret response with OCI token and generated exchange private key only when engine generated the exchange keypair
+    V-->>C: Credentials and Vault lease
 ```
 
-This flow is intentionally separate from direct pass-through. When `brokered_subject_token_enabled=true` and the caller supplies `subject_token`, the plugin validates the external JWT locally, maps claims into a normalized claim set, self-mints a plugin-issued JWT, and exchanges that re-issued token with OCI.
+The client supplies an external JWT just as in direct mode. With brokered mode configured, the engine verifies that token and issues a new JWT containing the configured identity claims. OCI trusts the engine's issuer for this exchange.
 
-#### 2) Exchange Without `subject_token` (Plugin-Issued Subject Token Mode)
+#### 3) Plugin-Issued Exchange: Client Omits the JWT
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor C as Client / Workload
     participant V as Vault OCI Credential Engine
-    participant S as Vault Storage
-    participant SV as Vault System View
-    participant O as OCI Token Endpoint
+    participant O as OCI Identity Domain
 
-    C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
-    V->>V: Validate exchange schema#59; reject unknown fields before processing
-    V->>S: Read backend config and optional plugin role
-    S-->>V: Config and role constraints
-    V->>V: Check `enable_plugin_issued_subject_token=true`
-    V->>V: Resolve default audience or normalize and validate `subject_token_audience` against allowlist
-    V->>SV: `GenerateIdentityToken(audience)`
-    SV-->>V: Vault-issued identity token
-    alt Caller supplies `public_key`
-        V->>V: Use caller public key for OCI exchange
-    else `public_key` omitted
-        V->>V: Generate exchange RSA keypair
-    end
-    Note over V: Roles with removed filter settings require explicit cleanup
-    V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
-    V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
+    C->>V: Request OCI credentials<br/>without subject_token
+    V->>V: Use a Vault-issued JWT<br/>or configured self-mint
+    V->>O: Exchange the generated JWT
     O-->>V: OCI UPST or RPST
-    V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
-    V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
+    V-->>C: Credentials and Vault lease
 ```
 
-Client omits `subject_token`; plugin uses its plugin-issued subject-token mode when enabled. Default callback behavior is: `GenerateIdentityToken` first, then self-mint JWT only if needed and configured.
+The client requests credentials without obtaining an external JWT. Plugin-issued mode must be enabled. The engine prefers Vault identity-token generation where available and can fall back to explicitly configured self-minting. If neither token source is available, the exchange fails.
 
-#### 2.1) Plugin-Issued Self-Mint Variant
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor C as Client / Workload
-    participant V as Vault OCI Credential Engine
-    participant S as Vault Storage
-    participant SV as Vault System View
-    participant O as OCI Token Endpoint
-
-    C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
-    V->>V: Validate exchange schema#59; reject unknown fields before processing
-    V->>S: Read backend config and self-mint key
-    S-->>V: Config, role constraints, signing key
-    V->>V: Check plugin-issued mode is enabled
-    V->>V: Resolve default audience or normalize and validate `subject_token_audience` against allowlist
-    V->>SV: `GenerateIdentityToken(audience)`
-    SV-->>V: Identity token unavailable
-    V->>SV: Read trusted Vault request and identity context
-    SV-->>V: Entity, linked aliases, groups
-    Note over V: Emit alias claims only for configured auth accessor#59; fail on missing or ambiguous match
-    V->>V: Build JWT with Vault-derived claims
-    V->>V: Parse complete role templates and render bounded custom claims, if a role is selected
-    V->>V: Sign self-minted JWT with plugin signing key
-    alt Caller supplies `public_key`
-        V->>V: Use caller public key for OCI exchange
-    else `public_key` omitted
-        V->>V: Generate exchange RSA keypair
-    end
-    Note over V: Roles with removed filter settings require explicit cleanup
-    V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
-    V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
-    O-->>V: OCI UPST or RPST
-    V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
-    V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
-```
-
-Client omits `subject_token`; Vault identity-token generation is unavailable, so the plugin self-mints the subject token from trusted Vault context and then exchanges it with OCI.
+See [Usage](#usage) for request examples and response details, and [Configuration](#configuration) for operator settings. The [diagram index](docs/sequence-diagrams/README.md) links to these client views and the separate detailed maintainer diagrams.
 
 ### Terminology
 When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC 8693) and OCI Identity nomenclature:

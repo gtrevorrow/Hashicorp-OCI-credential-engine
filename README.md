@@ -103,6 +103,7 @@ sequenceDiagram
     V->>V: Resolve bounded cached trust keys or refresh with HTTPS, issuer and origin checks
     Note over V: HTTP allowed only with explicit loopback debug mode; redirects rejected
     V->>V: Validate JWT header, signing key suitability, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
+    Note over V: JOSE bounds JSON nesting and RSA JWK moduli before signature verification
     V->>V: Parse complete templates and render bounded mapped claims from verified input
     V->>SV: Read trusted Vault request and identity context
     SV-->>V: Entity, linked aliases, groups
@@ -220,7 +221,7 @@ When referring to token exchanges in this plugin, we use standard OAuth 2.0 (RFC
 
 ## Prerequisites
 
-- Go 1.25.0 or later (the minimum declared in `go.mod`)
+- Go 1.26.11 or later (the minimum declared in `go.mod`); build with a supported, patched Go release
 - HashiCorp Vault with external secrets-engine plugin support; validate version/edition compatibility for your deployment
 - OCI tenancy with Identity Domain configured
 - External Identity Provider (IdP) integrated with OCI IAM
@@ -408,7 +409,7 @@ Remote discovery and JWKS retrieval require HTTPS by default. Discovery must ret
 
 Trust retrieval uses direct connections rather than environment proxies. Resolved private, loopback, link-local, multicast, and unspecified addresses are rejected; the debug exception permits only loopback connections to `localhost` or loopback IP literals. DNS addresses are checked before dialing, and the checked IP is dialed directly. For private-network IdPs, use managed inline `jwks_json` or `public_keys`; this version does not provide a private-network remote-fetch override.
 
-Discovery/JWKS documents and incoming brokered JWTs are limited to 1 MiB. Key sets are limited to 64 keys. Verification uses suitable public signing keys only: RSA at least 2048 bits or the EC curve required by the selected algorithm. JWK `use`, `alg`, and `key_ops` metadata constrain key use. A JWT `kid` must select a matching JWKS key; explicit PEM `public_keys` have no key IDs and are tried against the signature independently of `kid`.
+Discovery/JWKS documents and incoming brokered JWTs are limited to 1 MiB. Key sets are limited to 64 keys. Verification uses suitable public signing keys only: RSA at least 2048 bits or the EC curve required by the selected algorithm. The JOSE parser additionally limits RSA moduli in JWKs to 4096 bits and rejects excessive JSON nesting before signature verification. This JWK limit applies to inline and remote JWKS, and to embedded JWK headers; it does not change the explicit PEM `public_keys` parser. JWK `use`, `alg`, and `key_ops` metadata constrain key use. A JWT `kid` must select a matching JWKS key; explicit PEM `public_keys` have no key IDs and are tried against the signature independently of `kid`.
 
 Each mount caches one remote key set for five minutes. Concurrent misses share a refresh. An unknown `kid` can trigger a refresh after a 30-second cooldown; repeated failures also have a 30-second cooldown. Failed refreshes invalidate cached keys and fail closed rather than serving stale material. Changes to remote trust URLs, issuer, allowed origins, or debug policy cannot reuse the previous policy's cache entry.
 

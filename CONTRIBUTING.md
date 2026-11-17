@@ -38,7 +38,7 @@ Common types:
 
 Our GitHub Actions PR workflow utilizes `commitlint` to enforce these rules.
 
-The current release workflow publishes semantic-release tags, release notes and GitHub releases. It does not build, sign, checksum or upload plugin binaries; build artifacts locally until artifact delivery is implemented. PR tests use a checkout of the moving OCI SDK default branch via `go.work`; also test with `GOWORK=off` against the committed module graph. Neither workflow establishes a reproducible release or FIPS validation.
+The current release workflow publishes semantic-release tags, release notes and GitHub releases. It does not build, sign, checksum or upload plugin binaries; build artifacts locally until artifact delivery is implemented. PR tests cover the committed module graph with `GOWORK=off` and a checkout of the moving OCI SDK default branch via `go.work`. Neither workflow establishes a reproducible release or FIPS validation.
 
 ## Building and Local Development
 
@@ -47,7 +47,7 @@ We use `make` to streamline building the Vault plugin.
 This document is the source of truth for contributor build, local Vault dev, and test workflows. The [README](README.md) keeps only a short install overview and links back here for contributor-facing detail.
 
 ### Prerequisites
-* Go 1.25.0 or later (as declared in `go.mod`)
+* Go 1.26.11 or later (as declared in `go.mod`); use a supported, patched Go release because its standard library is compiled into the plugin
 * Vault with external secrets-engine plugin support (validate your version/edition; no tested compatibility matrix is published)
 * Python 3.9+ on macOS or Linux (standard library only, for local dev helpers and their tests)
 
@@ -172,6 +172,7 @@ These use mocked CLI/process boundaries to verify secret handling, target checks
   - `make test-integration`
   - `make test-dev-helpers`
 - CI configures a temporary local `go.work` replacement for `github.com/oracle/oci-go-sdk/v65`.
+- Before configuring that workspace, CI runs `GOWORK=off go test -tags=integration ./...` against the committed dependency versions. Run the same command locally when updating dependencies, in addition to the workspace checks above.
 
 ### Notes
 

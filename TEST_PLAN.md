@@ -166,6 +166,7 @@ The unit cases below use synthetic keys and an injected HTTP transport unless no
 | BRT-10 | Inline PEM trust verifies a correctly signed JWT that carries a `kid` | `TestBrokeredInlinePublicKeysAcceptJWTKeyID` |
 | BRT-11 | Actual loopback HTTP retrieval fails without debug and succeeds with debug | `TestIntegrationBrokeredLocalHTTPRequiresDebug` (integration tag) |
 | BRT-12 | Actual loopback HTTP redirect is rejected | `TestIntegrationBrokeredHTTPRedirectIsRejected` (integration tag) |
+| BRT-13 | Reject excessive JWT-header JSON nesting and RSA JWK moduli over 4096 bits during parsing, before signature verification; cover embedded headers and JWKS | `TestBrokeredSubjectTokenRejectsUnsafeHeaders`, `TestBrokeredJWKSRejectsOversizedRSAKeys` in `subject_token_input_limits_test.go` |
 
 The two socket-based cases live in [subject_token_broker_trust_integration_test.go](oci-backend/subject_token_broker_trust_integration_test.go). They do not exercise production HTTPS, DNS rebinding, or environment-proxy behavior. Those remain validation tasks below. Upstream verification-key rotation in BRT-08 does not implement rotation of the plugin's own signing key.
 

@@ -1,0 +1,12 @@
+flowchart TD
+    Token{"Client supplies<br/>subject_token?"}
+    Token -->|Yes| Broker{"Brokered mode<br/>enabled?"}
+    Broker -->|false| Direct["Direct exchange<br/>Original JWT"]
+    Broker -->|true| Brokered["Brokered exchange<br/>Engine-signed JWT"]
+    Token -->|No| Plugin{"Plugin-issued mode<br/>enabled?"}
+    Plugin -->|false| Disabled["Reject<br/>JWT required"]
+    Plugin -->|true| Vault{"Vault plugin JWT<br/>available?"}
+    Vault -->|Yes| Native["Plugin-issued exchange<br/>Vault-generated JWT"]
+    Vault -->|No| Self{"Self-mint fallback<br/>enabled?"}
+    Self -->|true| Mint["Plugin-issued exchange<br/>Self-minted JWT"]
+    Self -->|false| Unavailable["Reject<br/>No JWT source"]

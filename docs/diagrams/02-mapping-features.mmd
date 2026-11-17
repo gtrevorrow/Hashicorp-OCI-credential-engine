@@ -1,0 +1,10 @@
+flowchart TD
+    Incoming["Caller JWT<br/>Direct mode"] --> Rules["JWT-to-role rules"]
+    Rules --> Role["Local Vault role<br/>TTL policy"]
+    Incoming -->|Original JWT| Trust
+    External["Verified external claims<br/>Brokered mode"] --> Mappings["Brokered claim templates"]
+    Mappings --> Signed["Engine-signed JWT"]
+    Context["Vault identity context<br/>Optional verified brokered claims"] --> Templates["Role claim templates<br/>Engine signing only"]
+    Templates --> Signed
+    Signed --> Trust["OCI trust and identity mapping<br/>Service user / principal"]
+    Trust --> Permissions["OCI IAM policies<br/>Allowed OCI operations"]

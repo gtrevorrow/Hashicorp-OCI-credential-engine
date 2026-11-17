@@ -1,0 +1,14 @@
+sequenceDiagram
+    autonumber
+    actor C as Client / Workload
+    participant I as External Identity Provider
+    participant V as Vault OCI Credential Engine
+    participant O as OCI Identity Domain
+
+    C->>I: Obtain a JWT
+    I-->>C: External JWT
+    C->>V: Request OCI credentials<br/>with subject_token
+    V->>V: Reissue the verified identity<br/>as an engine-signed JWT
+    V->>O: Exchange the engine-issued JWT
+    O-->>V: OCI UPST or RPST
+    V-->>C: Credentials and Vault lease

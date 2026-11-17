@@ -1,6 +1,6 @@
 # Design: Templated Self-Mint Claims
 
-This document describes the implemented design. It replaces the earlier proposal for literal-only custom claims. See [README](README.md#role-scoped-custom-claims-for-self-mint) for configuration and [TEST_PLAN](TEST_PLAN.md) for evidence and live-validation gaps.
+This document describes the implemented design. It replaces the earlier proposal for literal-only custom claims. See the [mapping overview](README.md#mapping-features) and [role template recipes](docs/usage.md#role-scoped-custom-claims-for-self-mint) for configuration, and [TEST_PLAN](TEST_PLAN.md) for evidence and live-validation gaps.
 
 ## Scope and Claim Assembly
 

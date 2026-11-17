@@ -25,11 +25,11 @@ The implemented fields are flat:
 - `brokered_subject_token_claim_mappings`: JSON object of output claim names to string templates.
 - `brokered_subject_token_allowed_jwks_origins` and `debug_allow_brokered_http`: remote retrieval policy.
 
-There are no `brokered_subject_token_trust`, `brokered_subject_token_role_mappings`, or `brokered_subject_token_default_audience` fields. Shared `subject_token_self_mint_*` fields configure the replacement JWT. See the [README parameter reference](README.md#oci-federated-identity-setup).
+There are no `brokered_subject_token_trust`, `brokered_subject_token_role_mappings`, or `brokered_subject_token_default_audience` fields. Shared `subject_token_self_mint_*` fields configure the replacement JWT. See the [configuration field reference](docs/configuration.md#configuration-field-reference).
 
 Incoming signatures use go-jose with configured RSA (`RS256/384/512`) or EC (`ES256/384/512`) algorithms and suitable public signing keys. Validation checks issuer, allowed audience, required expiration, and `nbf`/`iat` when supplied, with configured skew. The plugin has no persistent one-time-use replay tracking.
 
-Remote retrieval requires HTTPS, exact discovery issuer matching, approved discovered-JWKS origins, checked public destination addresses, and no redirects or environment proxies. Only explicit loopback debug mode allows HTTP/local destinations. Private-network IdPs need managed inline keys in this version. Documents and brokered JWTs are bounded to 1 MiB and key sets to 64 keys. Remote keys are cached for five minutes with coordinated refresh and a 30-second refresh/failure cooldown. Refresh failures fail closed; removal of a cached key is not immediate revocation. See [remote trust and rotation](README.md#brokered-remote-trust-and-key-rotation).
+Remote retrieval requires HTTPS, exact discovery issuer matching, approved discovered-JWKS origins, checked public destination addresses, and no redirects or environment proxies. Only explicit loopback debug mode allows HTTP/local destinations. Private-network IdPs need managed inline keys in this version. Documents and brokered JWTs are bounded to 1 MiB and key sets to 64 keys. Remote keys are cached for five minutes with coordinated refresh and a 30-second refresh/failure cooldown. Refresh failures fail closed; removal of a cached key is not immediate revocation. See [remote trust and rotation](docs/configuration.md#brokered-remote-trust-and-key-rotation).
 
 ## Role Selection and Claim Assembly
 

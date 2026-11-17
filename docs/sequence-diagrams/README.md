@@ -1,6 +1,15 @@
 # Sequence Diagram Sources
 
-The repository README presents exchange modes from the client perspective. Its three embedded diagrams match the sources under [client/](client/). They show where the subject token comes from, what the client sends, which token is exchanged with OCI, and what the client receives. Assume Vault authentication and operator configuration are already complete.
+The README also includes two operator views with sources in [../diagrams/](../diagrams/):
+
+| Operator view | Source |
+|---|---|
+| How request fields and configuration select an exchange mode | [Mode selection](../diagrams/01-exchange-mode-selection.mmd) |
+| Role selection, claim mapping, and OCI identity mapping | [Mapping features](../diagrams/02-mapping-features.mmd) |
+
+Keep these views at the level of configuration choices and their effects. Detailed request processing belongs in the maintainer sequences below.
+
+The repository README presents exchange modes from the client perspective. Its three sequence diagrams match the sources under [client/](client/). They show where the subject token comes from, what the client sends, which token is exchanged with OCI, and what the client receives. Assume Vault authentication and operator configuration are already complete.
 
 | Client view | Source |
 |---|---|
@@ -21,7 +30,7 @@ The detailed sources in this directory remain available for developers and maint
 | JWKS publication by an operator | [05-jwks-publication-workflow.mmd](05-jwks-publication-workflow.mmd) |
 | Brokered caller-token exchange | [06-brokered-subject-token.mmd](06-brokered-subject-token.mmd) |
 
-When exchange behavior changes, review both views and keep the README's embedded blocks synchronized with the client sources.
+When exchange behavior changes, review the client, operator, and maintainer views. Keep all README Mermaid blocks synchronized with their matching sources.
 
 Escape literal semicolons in diagram labels as `#59;`. Mermaid treats unescaped semicolons as statement separators, which can make GitHub reject an otherwise readable diagram. Validate both the embedded README diagrams and these sources with a Mermaid renderer after editing them.
 

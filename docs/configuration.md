@@ -35,59 +35,59 @@ All fields below belong to `oci/config`. Defaults are implementation defaults; t
 
 | Field | Meaning and default |
 |---|---|
-| `domain_url` | OCI Identity Domain URL (for example: `https://idcs-xxxxx.identity.oraclecloud.com`) |
-| `client_id` | OAuth Confidential Application client ID in the OCI Identity Domain |
-| `client_secret` | OAuth Confidential Application client secret in the OCI Identity Domain |
-| `default_ttl` | Default Vault lease TTL for exchanged credentials, and the default `rpst_exp` requested from OCI for RPST exchanges when a request TTL is not supplied (default: 3600) |
-| `max_ttl` | Maximum Vault lease TTL for exchanged credentials, and the maximum `rpst_exp` value allowed for RPST exchanges (default: 86400) |
+| <a id="config-domain-url"></a>`domain_url` | OCI Identity Domain URL (for example: `https://idcs-xxxxx.identity.oraclecloud.com`) |
+| <a id="config-client-id"></a>`client_id` | OAuth Confidential Application client ID in the OCI Identity Domain |
+| <a id="config-client-secret"></a>`client_secret` | OAuth Confidential Application client secret in the OCI Identity Domain |
+| <a id="config-default-ttl"></a>`default_ttl` | Default Vault lease TTL for exchanged credentials, and the default `rpst_exp` requested from OCI for RPST exchanges when a request TTL is not supplied (default: 3600) |
+| <a id="config-max-ttl"></a>`max_ttl` | Maximum Vault lease TTL for exchanged credentials, and the maximum `rpst_exp` value allowed for RPST exchanges (default: 86400) |
 
 ### Mode selection and role routing
 
 | Field | Meaning and default |
 |---|---|
-| `brokered_subject_token_enabled` | Enables explicit brokered mode for caller-supplied `subject_token` values (default: `false`) |
-| `enable_plugin_issued_subject_token` | When true, plugin-issued subject-token mode is enabled when the caller omits `subject_token` (default: `true`) |
-| `subject_token_self_mint_enabled` | Enables built-in self-mint in plugin-issued subject-token mode when Vault identity-token generation is unavailable (default: `false`) |
-| `subject_token_role_mappings` | Ordered JWT-claim rules selecting a Vault role in direct mode. Each rule has `claim`, `op` (`eq`, `co`, `sw`), `value`, and `role`. See [role mapping](usage.md#caller-supplied-subject-token-flow-jwt-claim-to-vault-role-mapping). |
-| `strict_role_name_match` | When true, requires role names to match `[A-Za-z0-9._:-]+` (default: `false`) |
+| <a id="config-brokered-subject-token-enabled"></a>`brokered_subject_token_enabled` | Enables explicit brokered mode for caller-supplied `subject_token` values (default: `false`) |
+| <a id="config-enable-plugin-issued-subject-token"></a>`enable_plugin_issued_subject_token` | When true, plugin-issued subject-token mode is enabled when the caller omits `subject_token` (default: `true`) |
+| <a id="config-subject-token-self-mint-enabled"></a>`subject_token_self_mint_enabled` | Enables built-in self-mint in plugin-issued subject-token mode when Vault identity-token generation is unavailable (default: `false`) |
+| <a id="config-subject-token-role-mappings"></a>`subject_token_role_mappings` | Ordered JWT-claim rules selecting a Vault role in direct mode. Each rule has `claim`, `op` (`eq`, `co`, `sw`), `value`, and `role`. See [role mapping](usage.md#caller-supplied-subject-token-flow-jwt-claim-to-vault-role-mapping). |
+| <a id="config-strict-role-name-match"></a>`strict_role_name_match` | When true, requires role names to match `[A-Za-z0-9._:-]+` (default: `false`) |
 
 ### Engine signing and Vault identity
 
 | Field | Meaning and default |
 |---|---|
-| `subject_token_self_mint_issuer` | Required when self-mint or brokered mode is enabled |
-| `subject_token_self_mint_audience` | Audience for self-minted token (default: `urn:mace:oci:idcs`) |
-| `subject_token_self_mint_ttl_seconds` | TTL for self-minted token in seconds (default: `600`) |
-| `subject_token_self_mint_private_key` | Optional PEM RSA private key. If omitted while self-mint or brokered mode is enabled, the plugin generates one and stores it in Vault plugin storage |
-| `subject_token_allowed_audiences` | Optional allowlist for request-level audience override in plugin-issued subject-token mode via `subject_token_audience`. Entries are trimmed and deduplicated; blank entries, values over 512 bytes, and control characters remaining after trimming are rejected on configuration writes, including partial updates. An empty list disables overrides. |
-| `subject_token_identity_alias_mount_accessor` | Explicit auth mount accessor for linked-alias claims; empty disables them. This does not attest the current login method. |
+| <a id="config-subject-token-self-mint-issuer"></a>`subject_token_self_mint_issuer` | Required when self-mint or brokered mode is enabled |
+| <a id="config-subject-token-self-mint-audience"></a>`subject_token_self_mint_audience` | Audience for self-minted token (default: `urn:mace:oci:idcs`) |
+| <a id="config-subject-token-self-mint-ttl-seconds"></a>`subject_token_self_mint_ttl_seconds` | TTL for self-minted token in seconds (default: `600`) |
+| <a id="config-subject-token-self-mint-private-key"></a>`subject_token_self_mint_private_key` | Optional PEM RSA private key. If omitted while self-mint or brokered mode is enabled, the plugin generates one and stores it in Vault plugin storage |
+| <a id="config-subject-token-allowed-audiences"></a>`subject_token_allowed_audiences` | Optional allowlist for request-level audience override in plugin-issued subject-token mode via `subject_token_audience`. Entries are trimmed and deduplicated; blank entries, values over 512 bytes, and control characters remaining after trimming are rejected on configuration writes, including partial updates. An empty list disables overrides. |
+| <a id="config-subject-token-identity-alias-mount-accessor"></a>`subject_token_identity_alias_mount_accessor` | Explicit auth mount accessor for linked-alias claims; empty disables them. This does not attest the current login method. |
 
 ### Incoming brokered JWT trust
 
 | Field | Meaning and default |
 |---|---|
-| `brokered_subject_token_trust_type` | Required when brokered mode is enabled. Supported values: `oidc_discovery`, `jwks_url`, `jwks_json`, `public_keys` |
-| `brokered_subject_token_issuer` | Required when brokered mode is enabled. This is the expected incoming `iss` claim and the OIDC discovery issuer when `brokered_subject_token_trust_type=oidc_discovery` |
-| `brokered_subject_token_allowed_audiences` | Required non-empty audience allowlist for incoming brokered-token validation |
-| `brokered_subject_token_allowed_algs` | Required non-empty signing algorithm allowlist for incoming brokered-token validation. Supported values are RSA (`RS256`, `RS384`, `RS512`) and EC (`ES256`, `ES384`, `ES512`) |
-| `brokered_subject_token_clock_skew_seconds` | Optional clock-skew tolerance for brokered `exp`, `nbf`, and `iat` validation (default: `0`) |
-| `brokered_subject_token_jwks_url` | Required when `brokered_subject_token_trust_type=jwks_url`; must use HTTPS unless loopback-only debug HTTP is explicitly enabled |
-| `brokered_subject_token_allowed_jwks_origins` | Additional exact origins (`https://host[:port]`, no path) allowed for discovered JWKS URLs hosted separately from the issuer. The issuer origin is allowed automatically |
-| `brokered_subject_token_jwks_json` | Required when `brokered_subject_token_trust_type=jwks_json` |
-| `brokered_subject_token_public_keys` | Required when `brokered_subject_token_trust_type=public_keys`; accepts one PEM public key or a JSON array of PEM public keys |
+| <a id="config-brokered-subject-token-trust-type"></a>`brokered_subject_token_trust_type` | Required when brokered mode is enabled. Supported values: `oidc_discovery`, `jwks_url`, `jwks_json`, `public_keys` |
+| <a id="config-brokered-subject-token-issuer"></a>`brokered_subject_token_issuer` | Required when brokered mode is enabled. This is the expected incoming `iss` claim and the OIDC discovery issuer when `brokered_subject_token_trust_type=oidc_discovery` |
+| <a id="config-brokered-subject-token-allowed-audiences"></a>`brokered_subject_token_allowed_audiences` | Required non-empty audience allowlist for incoming brokered-token validation |
+| <a id="config-brokered-subject-token-allowed-algs"></a>`brokered_subject_token_allowed_algs` | Required non-empty signing algorithm allowlist for incoming brokered-token validation. Supported values are RSA (`RS256`, `RS384`, `RS512`) and EC (`ES256`, `ES384`, `ES512`) |
+| <a id="config-brokered-subject-token-clock-skew-seconds"></a>`brokered_subject_token_clock_skew_seconds` | Optional clock-skew tolerance for brokered `exp`, `nbf`, and `iat` validation (default: `0`) |
+| <a id="config-brokered-subject-token-jwks-url"></a>`brokered_subject_token_jwks_url` | Required when `brokered_subject_token_trust_type=jwks_url`; must use HTTPS unless loopback-only debug HTTP is explicitly enabled |
+| <a id="config-brokered-subject-token-allowed-jwks-origins"></a>`brokered_subject_token_allowed_jwks_origins` | Additional exact origins (`https://host[:port]`, no path) allowed for discovered JWKS URLs hosted separately from the issuer. The issuer origin is allowed automatically |
+| <a id="config-brokered-subject-token-jwks-json"></a>`brokered_subject_token_jwks_json` | Required when `brokered_subject_token_trust_type=jwks_json` |
+| <a id="config-brokered-subject-token-public-keys"></a>`brokered_subject_token_public_keys` | Required when `brokered_subject_token_trust_type=public_keys`; accepts one PEM public key or a JSON array of PEM public keys |
 
 ### Brokered claim mapping
 
 | Field | Meaning and default |
 |---|---|
-| `brokered_subject_token_claim_mappings` | Optional JSON object of output-claim to string template. Templates may reference validated incoming claims such as `{{ claims.sub }}` or `svc/{{ claims.org }}/{{ claims.user.id }}` |
+| <a id="config-brokered-subject-token-claim-mappings"></a>`brokered_subject_token_claim_mappings` | Optional JSON object of output-claim to string template. Templates may reference validated incoming claims such as `{{ claims.sub }}` or `svc/{{ claims.org }}/{{ claims.user.id }}` |
 
 ### Development diagnostics
 
 | Field | Meaning and default |
 |---|---|
-| `debug_allow_brokered_http` | Defaults to `false`. Allows HTTP trust retrieval only from `localhost` or loopback IP literals for local testing; it does not disable HTTPS certificate verification |
-| `debug_return_resolved_subject_token_claims` | Development-only flag that includes decoded claims from the resolved subject token in `oci/exchange` responses, including error responses |
+| <a id="config-debug-allow-brokered-http"></a>`debug_allow_brokered_http` | Defaults to `false`. Allows HTTP trust retrieval only from `localhost` or loopback IP literals for local testing; it does not disable HTTPS certificate verification |
+| <a id="config-debug-return-resolved-subject-token-claims"></a>`debug_return_resolved_subject_token_claims` | Development-only flag that includes decoded claims from the resolved subject token in `oci/exchange` responses, including error responses |
 
 `oci/config` supports incremental updates. After the initial configuration is created, later `vault write oci/config ...` calls may update only the fields you want to change.
 

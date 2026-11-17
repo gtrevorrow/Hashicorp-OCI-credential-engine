@@ -1,10 +1,12 @@
 # HashiCorp Vault OCI Secrets Engine
 
-A HashiCorp Vault secrets engine that exchanges JWTs for temporary Oracle Cloud Infrastructure (OCI) credentials. Clients can supply an external JWT or ask the engine to obtain a subject token using Vault.
+A HashiCorp Vault secrets engine that lets clients obtain [short-lived Oracle Cloud Infrastructure (OCI) session tokens](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm) using an external JWT or Vault-backed token issuance.
 
 ## Overview
 
 Use this engine to obtain OCI User Principal Session Tokens (UPST) or Resource Principal Session Tokens (RPST) without storing long-lived OCI API keys in Vault. Vault controls who can request credentials; OCI trust and IAM policies determine the resulting OCI identity and permissions.
+
+The engine can [select Vault roles from JWT claims](#1-map-jwt-claims-to-a-vault-role), [normalize verified external claims](#2-map-external-claims-into-a-brokered-jwt), and [add Vault-derived claims](#3-add-claims-from-vault-identity-context). These mapping features select local policy or shape the identity claims presented to OCI.
 
 | I want to… | Start here |
 |---|---|
@@ -19,13 +21,15 @@ Use this engine to obtain OCI User Principal Session Tokens (UPST) or Resource P
 
 These sequences show what a client supplies and receives. The client has already authenticated to Vault, and an operator has configured the engine and OCI trust. The engine's configuration determines the exchange mode.
 
-| Mode | Client supplies | Subject token sent to OCI |
+| Mode | Client supplies | Subject token sent to OCI token exchange |
 |---|---|---|
-| Direct exchange | External JWT as `subject_token` | The original external JWT |
-| Brokered exchange | External JWT as `subject_token` | A new engine-signed JWT |
-| Plugin-issued exchange | No `subject_token` | A Vault-issued or self-minted JWT |
+| Direct exchange | External JWT as [`subject_token`][param-subject-token] | The original external JWT |
+| Brokered exchange | External JWT as [`subject_token`][param-subject-token] | A new engine-signed JWT |
+| Plugin-issued exchange | No [`subject_token`][param-subject-token] | A Vault-issued or self-minted JWT |
 
-All three modes return OCI credentials and Vault lease metadata. Choose UPST or RPST with `requested_token_type`; RPST also requires `res_type`. If the client omits `public_key`, the response includes an engine-generated exchange private key. If the client supplies its public key, it keeps the corresponding private key.
+All three modes return OCI credentials and Vault lease metadata. Choose UPST or RPST with [`requested_token_type`][param-requested-token-type]; RPST also requires [`res_type`][param-res-type].
+
+OCI API requests use the session token together with a matching signing keypair.[^oci-request-signing] If the client omits [`public_key`][param-public-key], the engine generates the keypair and returns its [`private_key`][response-private-key]. If the client supplies its public key, it retains the corresponding private key for signing requests.
 
 #### 1) Direct Exchange: Client Supplies the JWT
 
@@ -90,7 +94,7 @@ See [Usage](#usage) for request examples and response details, and [Configuratio
 
 ## How Configuration Selects the Mode
 
-A mount can support more than one mode. The presence of `subject_token` in each request determines which settings apply. The following decision tree assumes valid configuration, an authorized request, and a nonempty JWT when one is supplied. The table below identifies the configuration flags for each choice.
+A mount can support more than one mode. The presence of [`subject_token`][param-subject-token] in each request determines which settings apply. The following decision tree assumes valid configuration, an authorized request, and a nonempty JWT when one is supplied. The table below identifies the configuration flags for each choice.
 
 ```mermaid
 flowchart TD
@@ -109,16 +113,16 @@ flowchart TD
 
 | Desired behavior | Configuration | Mapping and trust |
 |---|---|---|
-| Pass the caller JWT through to OCI | `brokered_subject_token_enabled=false` | Optional `subject_token_role_mappings` selects a local role; OCI trusts the original issuer |
-| Verify and reissue the caller JWT | `brokered_subject_token_enabled=true`, incoming JWT trust, and `subject_token_self_mint_issuer` | Optional brokered claim mappings and explicit-role templates; OCI trusts the engine issuer |
-| Accept requests without a caller JWT | `enable_plugin_issued_subject_token=true` | Vault-generated plugin token first; OCI trusts that token's issuer and claims |
-| Allow self-mint when Vault cannot issue a token | Also set `subject_token_self_mint_enabled=true` and configure the signing issuer | Vault identity claims and optional explicit-role templates; OCI trusts the engine issuer |
+| Pass the caller JWT through to OCI | [`brokered_subject_token_enabled=false`][config-brokered-subject-token-enabled] | Optional [`subject_token_role_mappings`][config-subject-token-role-mappings] selects a local role; OCI trusts the original issuer |
+| Verify and reissue the caller JWT | [`brokered_subject_token_enabled=true`][config-brokered-subject-token-enabled], incoming JWT trust, and [`subject_token_self_mint_issuer`][config-subject-token-self-mint-issuer] | Optional brokered claim mappings and explicit-role templates; OCI trusts the engine issuer |
+| Accept requests without a caller JWT | [`enable_plugin_issued_subject_token=true`][config-enable-plugin-issued-subject-token] | Vault-generated plugin token first; OCI trusts that token's issuer and claims |
+| Allow self-mint when Vault cannot issue a token | Also set [`subject_token_self_mint_enabled=true`][config-subject-token-self-mint-enabled] and configure the signing issuer | Vault identity claims and optional explicit-role templates; OCI trusts the engine issuer |
 
-`brokered_subject_token_enabled` applies only when a JWT is supplied. `enable_plugin_issued_subject_token` applies only when it is omitted. If both are enabled, the same mount can serve brokered and plugin-issued requests. A failed brokered verification does not fall back to direct exchange.
+[`brokered_subject_token_enabled`][config-brokered-subject-token-enabled] applies only when a JWT is supplied. [`enable_plugin_issued_subject_token`][config-enable-plugin-issued-subject-token] applies only when it is omitted. If both are enabled, the same mount can serve brokered and plugin-issued requests. A failed brokered verification does not fall back to direct exchange.
 
 Self-mint is a fallback for omitted-token requests; enabling it does not override a successful Vault-generated token. Brokered reissue uses the shared signing settings independently of the self-mint fallback flag. See the [signing and JWKS configuration](docs/configuration.md#self-mint-jwks-publication-workflow) for setup.
 
-The implementation defaults are **brokered off**, **plugin-issued on**, and **self-mint off**. The [base configuration below](#configuration) explicitly turns plugin-issued mode off until it is needed. `requested_token_type` selects UPST or RPST in any mode; it does not select the exchange mode.
+The implementation defaults are **brokered off**, **plugin-issued on**, and **self-mint off**. The [base configuration below](#configuration) explicitly turns plugin-issued mode off until it is needed. [`requested_token_type`][param-requested-token-type] selects UPST or RPST in any mode; it does not select the exchange mode.
 
 ## Mapping Features
 
@@ -126,9 +130,9 @@ There are three engine mapping features, followed by a separate OCI-side identit
 
 | Goal | Setting and location | Input → result | Applies to |
 |---|---|---|---|
-| Select local lease and RPST TTL policy | `subject_token_role_mappings` on `oci/config` | Decoded JWT claim → existing Vault role | Direct caller-token exchange only |
-| Normalize external identity claims | `brokered_subject_token_claim_mappings` on `oci/config` | Verified `claims.*` → added claims in a new JWT | Brokered exchange only |
-| Add workload-specific identity claims | `self_mint_custom_claims` on `oci/role/<name>` | `vault.*`, literals, and optionally `brokered.claims.*` → added claims in a new JWT | Explicit role with self-mint fallback or brokered reissue |
+| Select local lease and RPST TTL policy | [`subject_token_role_mappings`][config-subject-token-role-mappings] on `oci/config` | Decoded JWT claim → existing Vault role | Direct caller-token exchange only |
+| Normalize external identity claims | [`brokered_subject_token_claim_mappings`][config-brokered-subject-token-claim-mappings] on `oci/config` | Verified `claims.*` → added claims in a new JWT | Brokered exchange only |
+| Add workload-specific identity claims | [`self_mint_custom_claims`][role-self-mint-custom-claims] on `oci/role/<name>` | `vault.*`, literals, and optionally `brokered.claims.*` → added claims in a new JWT | Explicit role with self-mint fallback or brokered reissue |
 | Choose the OCI principal and permissions | OCI Identity Domain trust/mapping and OCI IAM policies | JWT issuer, audience, and claims → OCI identity and allowed operations | Every mode; configured outside this engine |
 
 ```mermaid
@@ -193,7 +197,7 @@ Call `oci/exchange/<role>`. The templates apply when the engine signs a JWT, inc
 
 Brokered and role claim templates are additive: they cannot replace standard JWT claims, `vault_*` claims, or another assembled claim. Missing template values and claim collisions reject the exchange. The role name is not automatically copied into a JWT. Operator-configured literal claims must be protected by role-path ACLs and OCI trust rules. [Template recipes and inputs](docs/usage.md#role-scoped-custom-claims-for-self-mint).
 
-Linked alias data requires explicit `subject_token_identity_alias_mount_accessor` configuration. It describes an identity linked to the Vault entity and does not attest how the current Vault token logged in. [Alias selection and trust boundary](docs/usage.md#explicit-linked-alias-selection).
+Linked alias data requires explicit [`subject_token_identity_alias_mount_accessor`][config-subject-token-identity-alias-mount-accessor] configuration. It describes an identity linked to the Vault entity and does not attest how the current Vault token logged in. [Alias selection and trust boundary](docs/usage.md#explicit-linked-alias-selection).
 
 ### Terminology
 
@@ -202,7 +206,7 @@ Linked alias data requires explicit `subject_token_identity_alias_mount_accessor
 | Subject token | JWT presented to OCI for exchange: the original caller token, a Vault-generated plugin token, or an engine-signed token |
 | Vault role | Local policy and optional claim templates stored at `oci/role/<name>` |
 | OCI principal | Identity selected by OCI trust and mapping rules; its IAM policies control OCI access |
-| UPST / RPST | OCI User Principal Session Token / Resource Principal Session Token; RPST requests also require `res_type` |
+| UPST / RPST | OCI User Principal Session Token / Resource Principal Session Token; RPST requests also require [`res_type`][param-res-type] |
 
 ## Prerequisites
 
@@ -267,12 +271,12 @@ Configuration reads omit the client secret and signing private key. Later writes
 
 | Configure… | Settings | Guide |
 |---|---|---|
-| OCI connection | `domain_url`, `client_id`, `client_secret` | [Connection reference](docs/configuration.md#oci-connection-and-lease-policy) |
-| Mode and token source | `brokered_subject_token_enabled`, `enable_plugin_issued_subject_token`, `subject_token_self_mint_enabled` | [Decision tree](#how-configuration-selects-the-mode) |
-| Incoming brokered trust | `brokered_subject_token_trust_type`, issuer, audiences, algorithms, and verification keys | [Brokered trust reference](docs/configuration.md#incoming-brokered-jwt-trust) |
-| Outgoing engine-signed JWT | `subject_token_self_mint_*` issuer, audience, TTL, and signing key | [Signing and identity reference](docs/configuration.md#engine-signing-and-vault-identity) |
+| OCI connection | [`domain_url`][config-domain-url], [`client_id`][config-client-id], [`client_secret`][config-client-secret] | [Connection reference](docs/configuration.md#oci-connection-and-lease-policy) |
+| Mode and token source | [`brokered_subject_token_enabled`][config-brokered-subject-token-enabled], [`enable_plugin_issued_subject_token`][config-enable-plugin-issued-subject-token], [`subject_token_self_mint_enabled`][config-subject-token-self-mint-enabled] | [Decision tree](#how-configuration-selects-the-mode) |
+| Incoming brokered trust | [`brokered_subject_token_trust_type`][config-brokered-subject-token-trust-type], issuer, audiences, algorithms, and verification keys | [Brokered trust reference](docs/configuration.md#incoming-brokered-jwt-trust) |
+| Outgoing engine-signed JWT | [`subject_token_self_mint_*`][config-engine-signing] issuer, audience, TTL, and signing key | [Signing and identity reference](docs/configuration.md#engine-signing-and-vault-identity) |
 | Local role and claim mappings | Role rules, brokered templates, and role custom claims | [Mapping features](#mapping-features) |
-| Credential lifetime | Backend/role `default_ttl`, `max_ttl`, request `ttl` | [Role and TTL policy](docs/configuration.md#roles) |
+| Credential lifetime | Backend/role [`default_ttl`][config-default-ttl], [`max_ttl`][config-max-ttl], request [`ttl`][param-ttl] | [Role and TTL policy](docs/configuration.md#roles) |
 
 For engine-signed tokens, [publish the signing JWKS](docs/configuration.md#self-mint-jwks-publication-workflow) at an HTTPS location OCI can reach and configure OCI trust for the engine issuer. `oci/jwks` is an operator export point. Remote brokered trust has separate [network and rotation requirements](docs/configuration.md#brokered-remote-trust-and-key-rotation).
 
@@ -287,13 +291,13 @@ vault write oci/role/developer \
     max_ttl=3600
 ```
 
-Request TTL takes precedence over defaults, then backend, role, and Vault ceilings cap it. OCI determines the lifetime actually granted. For UPST, plugin TTL settings affect the Vault lease; for RPST, they also bound the requested OCI `rpst_exp`. Known OCI expiry further caps the lease. See [complete TTL rules](docs/configuration.md#roles).
+Request TTL takes precedence over defaults, then backend, role, and Vault ceilings cap it. OCI determines the lifetime actually granted. For UPST, plugin TTL settings affect the Vault lease; for RPST, they also bound the requested OCI [`rpst_exp`][oci-rpst-exp]. Known OCI expiry further caps the lease. See [complete TTL rules](docs/configuration.md#roles).
 
 **Upgrading:** `allowed_subjects` and `allowed_groups` were never enforced and have been removed. Affected stored roles require [explicit cleanup](docs/configuration.md#removed-role-filter-fields-and-upgrade-cleanup) before exchange. Review [alias selection](docs/usage.md#explicit-linked-alias-selection) and [template validation](docs/usage.md#template-validation-and-limits) when upgrading older configuration.
 
 ## Usage
 
-Prepare an owner-only JSON request file. For a supplied JWT, include `subject_token`; for plugin-issued mode, omit it. Then capture the credential response in a private directory:
+Prepare an owner-only JSON request file. For a supplied JWT, include [`subject_token`][param-subject-token]; for plugin-issued mode, omit it. Then capture the credential response in a private directory:
 
 ```bash
 umask 077
@@ -302,7 +306,7 @@ vault write -format=json oci/exchange/developer - \
     < /private/path/exchange-request.json > "$CREDENTIAL_DIR/response.json"
 ```
 
-Use the path permitted by the workload's Vault ACL. Direct JWT-to-role mapping requires bare `oci/exchange`. Requesting RPST requires `requested_token_type=urn:oci:token-type:oci-rpst` and `res_type`.
+Use the path permitted by the workload's Vault ACL. Direct JWT-to-role mapping requires bare `oci/exchange`. Requesting RPST requires [`requested_token_type=urn:oci:token-type:oci-rpst`][param-requested-token-type] and [`res_type`][param-res-type].
 
 | Task | Recipe |
 |---|---|
@@ -314,7 +318,7 @@ Use the path permitted by the workload's Vault ACL. Direct JWT-to-role mapping r
 | Use resource-principal tokens | [RPST exchange](docs/usage.md#exchange-a-jwt-for-oci-rpst) |
 | Integrate an OCI client | [Returned credentials and key handling](docs/usage.md#using-returned-credentials-with-oci-clients) |
 
-Responses contain an OCI token, nonrenewable Vault lease metadata, and the generated private key when the engine created the exchange keypair. If you supply `public_key`, retain its private key yourself. Use token and key together with a compatible OCI client; the plugin does not configure a client credential provider. Protect response files, avoid logging credentials, and remove them after use.
+Responses contain an OCI token, nonrenewable Vault lease metadata, and the generated private key when the engine created the exchange keypair. If you supply [`public_key`][param-public-key], retain its private key yourself. Use token and key together with a compatible OCI client; the plugin does not configure a client credential provider. Protect response files, avoid logging credentials, and remove them after use.
 
 OCI expiry is reported only when known and can differ from the Vault lease duration. Revoking a Vault lease does not invalidate the token in OCI. Clients must handle credential expiry or rejection. See the [full response and expiry contract](docs/usage.md#exchange-path).
 
@@ -370,3 +374,28 @@ Please see our [Contributing Guide](CONTRIBUTING.md) for details on branching st
 ## Support
 
 For issues and questions, please open a GitHub issue or contact the maintainers.
+
+[^oci-request-signing]: **Why the keypair?** UPST and RPST are OCI-signed session tokens that bind an OCI identity to the public key supplied during exchange. For OCI API calls, they require proof of the matching private key, rather than acting as standalone bearer credentials. The client signs each API request with that private key and includes the session token as `keyId="ST$<session-token>"` in the `Authorization` signature header. OCI validates the token and uses its embedded public key to verify the request signature. See [session tokens and request signing](docs/usage.md#session-tokens-and-request-signing) and Oracle's [UPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm) and [RPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/token_exchange_grant_type_workload_id-federation.htm) documentation.
+
+[config-brokered-subject-token-claim-mappings]: docs/configuration.md#config-brokered-subject-token-claim-mappings
+[config-brokered-subject-token-enabled]: docs/configuration.md#config-brokered-subject-token-enabled
+[config-brokered-subject-token-trust-type]: docs/configuration.md#config-brokered-subject-token-trust-type
+[config-client-id]: docs/configuration.md#config-client-id
+[config-client-secret]: docs/configuration.md#config-client-secret
+[config-default-ttl]: docs/configuration.md#config-default-ttl
+[config-domain-url]: docs/configuration.md#config-domain-url
+[config-enable-plugin-issued-subject-token]: docs/configuration.md#config-enable-plugin-issued-subject-token
+[config-engine-signing]: docs/configuration.md#engine-signing-and-vault-identity
+[config-max-ttl]: docs/configuration.md#config-max-ttl
+[config-subject-token-identity-alias-mount-accessor]: docs/configuration.md#config-subject-token-identity-alias-mount-accessor
+[config-subject-token-role-mappings]: docs/configuration.md#config-subject-token-role-mappings
+[config-subject-token-self-mint-enabled]: docs/configuration.md#config-subject-token-self-mint-enabled
+[config-subject-token-self-mint-issuer]: docs/configuration.md#config-subject-token-self-mint-issuer
+[oci-rpst-exp]: docs/usage.md#oci-rpst-exp
+[param-public-key]: docs/usage.md#request-public-key
+[param-requested-token-type]: docs/usage.md#request-requested-token-type
+[param-res-type]: docs/usage.md#request-res-type
+[param-subject-token]: docs/usage.md#request-subject-token
+[param-ttl]: docs/usage.md#request-ttl
+[response-private-key]: docs/usage.md#response-private-key
+[role-self-mint-custom-claims]: docs/usage.md#role-self-mint-custom-claims

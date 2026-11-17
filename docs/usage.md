@@ -43,8 +43,8 @@ Notes:
 }
 ```
 
-If `public_key` is provided in the request, the plugin will not return `private_key` or `public_key` in the response.
-This applies to both caller-supplied `subject_token` mode and plugin-issued self-mint mode: if the caller supplies `public_key`, the plugin uses that key in the OCI token exchange payload and does not generate or return exchange key material.
+<a id="response-private-key"></a>
+The `private_key` response field contains the generated PEM-encoded exchange private key, used to sign OCI API requests with the returned session token. It is present only when the engine generates the exchange keypair. If the caller supplies `public_key`, the response contains neither `private_key` nor `public_key`; the caller retains its own matching private key. This applies to all exchange modes. See [session tokens and request signing](#session-tokens-and-request-signing).
 
 ## Caller-Supplied Subject Token Flow (JWT Claim to Vault Role Mapping)
 
@@ -432,6 +432,20 @@ Existing malformed or oversized stored templates must be repaired before exchang
 
 Configure the returned OCI token and exchange private key together in a client that supports that credential type. UPST and RPST client setup differs; the plugin does not configure OCI CLI profiles or implement a client credential provider. Live OCI API use is part of the outstanding acceptance tests.
 
+### Session Tokens and Request Signing
+
+UPST and RPST are OCI-signed session tokens containing the OCI principal's identity context and the exchange client's public key. To call OCI APIs, the client needs both the session token and the matching private key:
+
+1. Sign the API request with the private key.
+2. Include the session token in the `keyId` parameter of the `Authorization: Signature ...` header, using `keyId="ST$<session-token>"`.
+3. OCI validates the session token, resolves the principal, and verifies the request signature with the public key carried in the token. OCI IAM policies determine whether the operation is allowed.
+
+The token alone is insufficient for this signed-request authentication. A `token_type` value of `Bearer` in the exchange response does not change how session tokens authenticate OCI API requests. This exchange keypair is separate from the issuer signing key used to sign subject JWTs.
+
+Oracle documents the public-key binding in its [UPST exchange](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/json_web_token_exchange.htm) and [RPST exchange](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/token_exchange_grant_type_workload_id-federation.htm) guides. See also [OCI request signatures](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/signingrequests.htm) and the SDK's [security-token signer](https://docs.oracle.com/en-us/iaas/tools/ruby/latest/OCI/Auth/Signers/SecurityTokenSigner.html) for the token-and-private-key signing contract.
+
+### Capture and Use the Response
+
 To capture a response without displaying credentials, send an owner-only request file through stdin and protect the output from creation:
 
 ```bash
@@ -473,6 +487,19 @@ For RPST requests, `res_type` is required and the response will include `rpst_to
 | `POST/PUT` | `/oci/exchange` | Exchange JWT subject token for OCI credentials; when `brokered_subject_token_enabled=true`, a caller-supplied `subject_token` is validated and re-issued before OCI exchange |
 | `POST/PUT` | `/oci/exchange/:role` | Exchange JWT subject token for OCI credentials using an explicit plugin role selected from the path; in brokered mode the role contributes existing TTL policy and additive templated `self_mint_custom_claims` only |
 
+#### Request Parameters
+
+| Parameter | Definition |
+|---|---|
+| <a id="request-subject-token"></a>`subject_token` | External JWT to exchange. Direct mode forwards it unchanged; brokered mode verifies and reissues it. Omit it only when plugin-issued mode is enabled and a token source is available. An explicitly supplied empty token is rejected. |
+| <a id="request-requested-token-type"></a>`requested_token_type` | OCI token type: `urn:oci:token-type:oci-upst` (default) or `urn:oci:token-type:oci-rpst`. |
+| <a id="request-res-type"></a>`res_type` | OCI resource type for an RPST exchange. Required by this engine when requesting `urn:oci:token-type:oci-rpst`; its value must match the OCI trust configuration. |
+| <a id="request-public-key"></a>`public_key` | Optional PEM-encoded SubjectPublicKeyInfo public key (`BEGIN PUBLIC KEY`) to bind into the session token. Keep its matching private key for signing OCI API requests. If omitted, the engine generates an RSA keypair and returns the private key. See [request signing](#session-tokens-and-request-signing). |
+| <a id="request-subject-token-audience"></a>`subject_token_audience` | Optional audience override, only when `subject_token` is omitted. It must be allowed by `subject_token_allowed_audiences`. Omission or an empty string keeps the configured default; whitespace-only values are rejected. |
+| <a id="request-ttl"></a>`ttl` | Optional positive whole-second duration, as seconds or a supported duration string. Omission or zero selects the role/backend default. Backend, role, and Vault limits cap the result. It bounds the Vault lease and RPST requested lifetime; it does not set UPST expiry. See [TTL policy](configuration.md#roles). |
+
+Unknown request fields are rejected. Select a role through `/oci/exchange/:role`; `role` is not a body parameter.
+
 **Request Body:**
 ```json
 {
@@ -500,6 +527,7 @@ Credential expiry and Vault leases:
 
 Compatibility: clients must no longer assume `expires_in`/`expires_at` are always present or equal to `lease_duration`. This response correction applies to both UPST and RPST. OCI expiry is an upper-bound lifetime estimate, not a guarantee that a credential will remain authorized until that time.
 
+<a id="oci-rpst-exp"></a>
 TTL note:
 
 - For RPST, the plugin uses backend, role, and Vault mount/system ceilings to bound the `rpst_exp` value sent to OCI.
@@ -531,4 +559,4 @@ Role fields:
 - `description`
 - `default_ttl`
 - `max_ttl`
-- `self_mint_custom_claims`: JSON object of output claim name to string template for additive self-minted claims; supports pure string literals and trusted-context interpolation
+- <a id="role-self-mint-custom-claims"></a>`self_mint_custom_claims`: JSON object of output claim name to string template for additive self-minted claims; supports pure string literals and trusted-context interpolation. See [role-scoped templates](#role-scoped-custom-claims-for-self-mint).

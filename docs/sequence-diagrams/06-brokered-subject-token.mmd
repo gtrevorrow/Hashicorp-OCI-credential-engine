@@ -14,6 +14,7 @@ sequenceDiagram
     V->>V: Resolve bounded cached trust keys or refresh with HTTPS, issuer and origin checks
     Note over V: HTTP allowed only with explicit loopback debug mode; redirects rejected
     V->>V: Validate JWT header, signing key suitability, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
+    Note over V: JOSE bounds JSON nesting and RSA JWK moduli before signature verification
     V->>V: Parse complete templates and render bounded mapped claims from verified input
     V->>SV: Read trusted Vault request and identity context
     SV-->>V: Entity, linked aliases, groups

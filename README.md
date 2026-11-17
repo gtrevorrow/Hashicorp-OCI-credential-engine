@@ -30,7 +30,7 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange[/<role>]` with `subject_token`
-    V->>V: Validate exchange schema; reject unknown fields before processing
+    V->>V: Validate exchange schema#59; reject unknown fields before processing
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Validate request fields and TTL
@@ -44,7 +44,7 @@ sequenceDiagram
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
-    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
+    V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
@@ -61,7 +61,7 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange` with caller JWT
-    V->>V: Validate exchange schema; reject unknown fields before processing
+    V->>V: Validate exchange schema#59; reject unknown fields before processing
     V->>S: Read backend config and role policy
     S-->>V: `subject_token_role_mappings`, role entries
     V->>V: Parse caller JWT payload only
@@ -75,7 +75,7 @@ sequenceDiagram
         V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
         V->>O: POST `/oauth2/v1/token`
         O-->>V: OCI session token
-        V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
+        V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
         V-->>C: Success response
     else No rule matches
         V-->>C: Error response before OCI call
@@ -96,21 +96,21 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange[/<role>]` with external `subject_token`
-    V->>V: Validate exchange schema; reject unknown fields before processing
+    V->>V: Validate exchange schema#59; reject unknown fields before processing
     V->>S: Read backend config, brokered trust config, self-mint key, optional role
     S-->>V: Config, mappings, signing key, role TTL/custom claims
     V->>V: Check `brokered_subject_token_enabled=true`
     V->>V: Resolve bounded cached trust keys or refresh with HTTPS, issuer and origin checks
-    Note over V: HTTP allowed only with explicit loopback debug mode; redirects rejected
+    Note over V: HTTP allowed only with explicit loopback debug mode#59; redirects rejected
     V->>V: Validate JWT header, signing key suitability, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
     Note over V: JOSE bounds JSON nesting and RSA JWK moduli before signature verification
     V->>V: Parse complete templates and render bounded mapped claims from verified input
     V->>SV: Read trusted Vault request and identity context
     SV-->>V: Entity, linked aliases, groups
-    Note over V: Emit alias claims only for configured auth accessor; fail on missing or ambiguous match
+    Note over V: Emit alias claims only for configured auth accessor#59; fail on missing or ambiguous match
     V->>V: Build brokered self-minted JWT
     opt Explicit `/exchange/<role>` path used
-        V->>V: Parse complete role templates; render bounded claims and reject collisions
+        V->>V: Parse complete role templates#59; render bounded claims and reject collisions
     end
     alt Caller supplies `public_key`
         V->>V: Use caller public key for OCI exchange
@@ -121,7 +121,7 @@ sequenceDiagram
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with brokered self-minted `subject_token`
     O-->>V: OCI UPST or RPST
-    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
+    V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token and generated exchange private key only when engine generated the exchange keypair
 ```
 
@@ -139,7 +139,7 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
-    V->>V: Validate exchange schema; reject unknown fields before processing
+    V->>V: Validate exchange schema#59; reject unknown fields before processing
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Check `enable_plugin_issued_subject_token=true`
@@ -155,7 +155,7 @@ sequenceDiagram
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
-    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
+    V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 
@@ -173,7 +173,7 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
-    V->>V: Validate exchange schema; reject unknown fields before processing
+    V->>V: Validate exchange schema#59; reject unknown fields before processing
     V->>S: Read backend config and self-mint key
     S-->>V: Config, role constraints, signing key
     V->>V: Check plugin-issued mode is enabled
@@ -182,7 +182,7 @@ sequenceDiagram
     SV-->>V: Identity token unavailable
     V->>SV: Read trusted Vault request and identity context
     SV-->>V: Entity, linked aliases, groups
-    Note over V: Emit alias claims only for configured auth accessor; fail on missing or ambiguous match
+    Note over V: Emit alias claims only for configured auth accessor#59; fail on missing or ambiguous match
     V->>V: Build JWT with Vault-derived claims
     V->>V: Parse complete role templates and render bounded custom claims, if a role is selected
     V->>V: Sign self-minted JWT with plugin signing key
@@ -195,7 +195,7 @@ sequenceDiagram
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
-    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
+    V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
 ```
 

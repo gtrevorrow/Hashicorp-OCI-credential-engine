@@ -41,6 +41,11 @@ jobs:
         with:
           go-version-file: "go.mod"
 
+      - name: Test committed dependencies
+        env:
+          GOWORK: "off"
+        run: go test -tags=integration ./...
+
       - name: Checkout OCI Go SDK
         run: git clone --depth 1 https://github.com/oracle/oci-go-sdk.git /tmp/oci-go-sdk
 
@@ -54,3 +59,6 @@ jobs:
 
       - name: Run integration tests
         run: make test-integration
+
+      - name: Run dev helper security tests
+        run: make test-dev-helpers

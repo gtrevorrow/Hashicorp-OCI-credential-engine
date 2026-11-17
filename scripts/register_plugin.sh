@@ -1,13 +1,16 @@
 #!/bin/bash
 # Calculate SHA256 and register the OCI plugin with Vault
+set +x
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGIN_BIN="$REPO_ROOT/bin/vault-plugin-secrets-oci"
 
-# Check if VAULT_ADDR is set, default to dev server if not
-export VAULT_ADDR=${VAULT_ADDR:-"http://127.0.0.1:8200"}
-export VAULT_TOKEN=${VAULT_TOKEN:-"root"}
+# Manual registration requires an explicitly selected target and credential.
+: "${VAULT_ADDR:?Set VAULT_ADDR explicitly or load dev_vault.sh env}"
+: "${VAULT_TOKEN:?Set VAULT_TOKEN explicitly or load dev_vault.sh env}"
+export VAULT_ADDR VAULT_TOKEN
 
 if [ ! -f "$PLUGIN_BIN" ]; then
     echo "Error: Plugin binary not found at $PLUGIN_BIN"
@@ -30,16 +33,14 @@ fi
 echo "SHA256: $SHA256"
 echo "Registering plugin with Vault at $VAULT_ADDR..."
 
-vault write sys/plugins/catalog/secret/oci \
+if vault write sys/plugins/catalog/secret/oci \
     sha_256="$SHA256" \
-    command="vault-plugin-secrets-oci"
-
-if [ $? -eq 0 ]; then
+    command="vault-plugin-secrets-oci" >/dev/null 2>&1; then
     echo "Plugin registered successfully."
     echo ""
     echo "You can now enable it with:"
     echo "vault secrets enable -path=oci -plugin-name=oci plugin"
 else
-    echo "Failed to register plugin. Ensure Vault is running and VAULT_ADDR is accessible."
+    echo "Failed to register plugin. Check the selected Vault target and permissions; raw output suppressed."
     exit 1
 fi

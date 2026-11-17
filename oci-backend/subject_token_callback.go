@@ -57,7 +57,7 @@ func (b *backend) selfMintSubjectToken(req *logical.Request, config *federatedCo
 
 	claims := buildBaseSelfMintClaims(req, config, audience)
 	addSelfMintRequestClaims(claims, req)
-	if err := b.addSelfMintIdentityClaims(claims, req); err != nil {
+	if err := b.addSelfMintIdentityClaims(claims, req, config); err != nil {
 		return "", err
 	}
 	if err := b.addSelfMintRoleCustomClaims(context.Background(), claims, req, nil); err != nil {
@@ -151,14 +151,22 @@ func addSelfMintRequestClaims(claims map[string]interface{}, req *logical.Reques
 	}
 }
 
-func (b *backend) addSelfMintIdentityClaims(claims map[string]interface{}, req *logical.Request) error {
+func (b *backend) addSelfMintIdentityClaims(claims map[string]interface{}, req *logical.Request, config *federatedConfig) error {
+	accessor := config.SubjectTokenIdentityAliasMountAccessor
 	if req == nil || req.EntityID == "" {
+		if accessor != "" {
+			return fmt.Errorf("configured identity alias requires a Vault entity")
+		}
 		return nil
 	}
 
 	entity, err := b.System().EntityInfo(req.EntityID)
 	if err != nil {
 		return fmt.Errorf("failed to lookup entity info for self-mint claims: %w", err)
+	}
+	alias, err := selectEntityAlias(entity, accessor)
+	if err != nil {
+		return err
 	}
 	if entity != nil {
 		if entity.Name != "" {
@@ -170,7 +178,7 @@ func (b *backend) addSelfMintIdentityClaims(claims map[string]interface{}, req *
 		if len(entity.Metadata) > 0 {
 			claims["vault_entity_metadata"] = copyStringMap(entity.Metadata)
 		}
-		if alias := selectEntityAliasForRequest(entity, req); alias != nil {
+		if alias != nil {
 			if alias.Name != "" {
 				claims["vault_alias_name"] = alias.Name
 			}
@@ -209,24 +217,28 @@ func (b *backend) addSelfMintIdentityClaims(claims map[string]interface{}, req *
 	return nil
 }
 
-func selectEntityAliasForRequest(entity *logical.Entity, req *logical.Request) *logical.Alias {
-	if entity == nil || req == nil || len(entity.Aliases) == 0 {
-		return nil
+// selectEntityAlias selects explicitly trusted linked identity data, never the
+// current login identity. The request mount describes this secrets engine.
+func selectEntityAlias(entity *logical.Entity, accessor string) (*logical.Alias, error) {
+	if accessor == "" {
+		return nil, nil
 	}
-
-	for _, alias := range entity.Aliases {
-		if alias != nil && req.MountAccessor != "" && alias.MountAccessor == req.MountAccessor {
-			return alias
+	var selected *logical.Alias
+	if entity != nil {
+		for _, alias := range entity.Aliases {
+			if alias == nil || alias.MountAccessor != accessor {
+				continue
+			}
+			if selected != nil {
+				return nil, fmt.Errorf("configured identity alias mount matches multiple aliases")
+			}
+			selected = alias
 		}
 	}
-
-	for _, alias := range entity.Aliases {
-		if alias != nil && req.MountType != "" && alias.MountType == req.MountType {
-			return alias
-		}
+	if selected == nil {
+		return nil, fmt.Errorf("configured identity alias mount has no matching entity alias")
 	}
-
-	return entity.Aliases[0]
+	return selected, nil
 }
 
 func copyStringMap(in map[string]string) map[string]string {

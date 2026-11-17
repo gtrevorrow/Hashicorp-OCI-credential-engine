@@ -183,6 +183,65 @@ func TestPathConfig_SubjectTokenRoleMappings(t *testing.T) {
 	assert.Equal(t, 900, resp.Data["subject_token_self_mint_ttl_seconds"])
 }
 
+func TestPathConfig_SubjectTokenAllowedAudiencesValidation(t *testing.T) {
+	baseData := func() map[string]interface{} {
+		return map[string]interface{}{
+			"domain_url":    "https://idcs-test.identity.oraclecloud.com",
+			"client_id":     "test-client-id",
+			"client_secret": "test-client-secret",
+		}
+	}
+
+	t.Run("Normalizes And Deduplicates Audiences", func(t *testing.T) {
+		b, storage := getTestBackend(t)
+		data := baseData()
+		data["subject_token_allowed_audiences"] = []string{" urn:oci:test ", "urn:oci:test", "urn:oci:prod"}
+
+		resp, err := b.HandleRequest(context.Background(), &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      "config",
+			Storage:   storage,
+			Data:      data,
+		})
+		require.NoError(t, err)
+		require.False(t, resp != nil && resp.IsError(), "expected no error, got: %v", resp)
+
+		readResp, err := b.HandleRequest(context.Background(), &logical.Request{
+			Operation: logical.ReadOperation,
+			Path:      "config",
+			Storage:   storage,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, readResp)
+		require.Equal(t, []string{"urn:oci:test", "urn:oci:prod"}, readResp.Data["subject_token_allowed_audiences"])
+	})
+
+	testCases := map[string][]string{
+		"Rejects Empty Audience":             {"urn:oci:test", " "},
+		"Rejects Control Character Audience": {"urn:oci:\ntest"},
+		"Rejects Overlong Audience":          {strings.Repeat("a", maxSubjectTokenAudienceLength+1)},
+	}
+
+	for name, audiences := range testCases {
+		t.Run(name, func(t *testing.T) {
+			b, storage := getTestBackend(t)
+			data := baseData()
+			data["subject_token_allowed_audiences"] = audiences
+
+			resp, err := b.HandleRequest(context.Background(), &logical.Request{
+				Operation: logical.UpdateOperation,
+				Path:      "config",
+				Storage:   storage,
+				Data:      data,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			require.True(t, resp.IsError())
+			require.Contains(t, resp.Error().Error(), "invalid subject_token_allowed_audiences")
+		})
+	}
+}
+
 func TestPathConfig_SubjectTokenRoleMappingsValidation(t *testing.T) {
 	b, storage := getTestBackend(t)
 

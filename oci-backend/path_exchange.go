@@ -107,6 +107,15 @@ func (b *backend) buildExchangePath(pattern string, includeRole bool) *framework
 
 // pathExchangeWrite handles the token exchange
 func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	// Reject undeclared input before raw request data can reach token resolution or signing.
+	if err := data.ValidateStrict(); err != nil {
+		return logical.ErrorResponse("invalid exchange request: %v", err), nil
+	}
+
+	if err := validateTokenTTLInputs(data, true, "ttl"); err != nil {
+		return logical.ErrorResponse("invalid token TTL policy: %v", err), nil
+	}
+
 	// Get backend configuration
 	config, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
@@ -246,23 +255,13 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		}
 	}
 
-	// Determine TTL
-	ttl := time.Duration(data.Get("ttl").(int)) * time.Second
-	if ttl == 0 {
-		if role != nil && role.DefaultTTL > 0 {
-			ttl = role.DefaultTTL
-		} else {
-			ttl = time.Duration(config.DefaultTTL) * time.Second
-		}
+	var vaultMax time.Duration
+	if system := b.System(); system != nil {
+		vaultMax = system.MaxLeaseTTL()
 	}
-
-	maxTTL := time.Duration(config.MaxTTL) * time.Second
-	if role != nil && role.MaxTTL > 0 {
-		maxTTL = role.MaxTTL
-	}
-
-	if ttl > maxTTL {
-		ttl = maxTTL
+	ttl, maxTTL, ttlErr := resolveTokenTTL(data.Get("ttl").(int), config, role, vaultMax)
+	if ttlErr != nil {
+		return logical.ErrorResponse("invalid token TTL policy: %v", ttlErr), nil
 	}
 
 	// Perform the token exchange
@@ -280,13 +279,22 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		return logical.ErrorResponse("token exchange failed: %v", err), nil
 	}
 
+	now := time.Now()
+	leaseTTL, leaseMaxTTL, remaining, expiryErr := reconcileCredentialExpiry(ttl, maxTTL, exchangeResult.CredentialExpiresAt, now)
+	if expiryErr != nil {
+		return logical.ErrorResponse("invalid OCI credential expiry: %v", expiryErr), nil
+	}
+
 	// Prepare the response with OCI session token
 	respData := map[string]interface{}{
-		"access_token":         exchangeResult.AccessToken,
-		"token_type":           exchangeResult.TokenType,
-		"requested_token_type": exchangeResult.RequestedTokenType,
-		"expires_in":           int(ttl.Seconds()),
-		"expires_at":           time.Now().Add(ttl).Format(time.RFC3339),
+		"access_token":            exchangeResult.AccessToken,
+		"token_type":              exchangeResult.TokenType,
+		"requested_token_type":    exchangeResult.RequestedTokenType,
+		"credential_expiry_known": !exchangeResult.CredentialExpiresAt.IsZero(),
+	}
+	if !exchangeResult.CredentialExpiresAt.IsZero() {
+		respData["expires_in"] = int64(remaining / time.Second)
+		respData["expires_at"] = exchangeResult.CredentialExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	if resolvedSubjectTokenClaims != nil {
 		respData["resolved_subject_token_claims"] = resolvedSubjectTokenClaims
@@ -306,8 +314,9 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		"role": roleName,
 	})
 
-	resp.Secret.TTL = ttl
-	resp.Secret.MaxTTL = maxTTL
+	resp.Secret.TTL = leaseTTL
+	resp.Secret.MaxTTL = leaseMaxTTL
+	resp.Secret.Renewable = false
 
 	return resp, nil
 }
@@ -326,7 +335,10 @@ func resolveSubjectTokenAudience(data fieldDataGetter, config *federatedConfig) 
 	if !ok || raw.(string) == "" {
 		return audience, nil
 	}
-	requestedAudience := raw.(string)
+	requestedAudience, err := normalizeSubjectTokenAudience(raw.(string))
+	if err != nil {
+		return "", fmt.Errorf("invalid subject_token_audience: %w", err)
+	}
 	allowed := configSubjectTokenAllowedAudiences(config)
 	for _, allowedAudience := range allowed {
 		if requestedAudience == allowedAudience {
@@ -344,6 +356,9 @@ func (b *backend) ociTokenSecret() *framework.Secret {
 	return &framework.Secret{
 		Type: "oci_token",
 		Fields: map[string]*framework.FieldSchema{
+			"credential_expiry_known": {Type: framework.TypeBool, Description: "Whether OCI supplied a usable expires_in"},
+			"expires_in":              {Type: framework.TypeInt64, Description: "Remaining OCI credential lifetime in whole seconds; omitted if unknown"},
+			"expires_at":              {Type: framework.TypeString, Description: "Conservative OCI expiry deadline; omitted if unknown"},
 			"access_token": {
 				Type:        framework.TypeString,
 				Description: "OCI access token",
@@ -377,10 +392,10 @@ func (b *backend) ociTokenSecret() *framework.Secret {
 	}
 }
 
-// tokenRevoke handles revocation of OCI tokens
+// tokenRevoke completes Vault lease cleanup; it does not invalidate OCI credentials.
 func (b *backend) tokenRevoke(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	// TODO: Implement token revocation via OCI API
-	// This would call the OCI Identity service to invalidate the session token
+	// No OCI revocation request is implemented. Credential validity at OCI is
+	// independent of this local lease; callers must not treat revocation as logout.
 	return nil, nil
 }
 
@@ -391,6 +406,9 @@ Exchange a 3rd party OIDC/OAuth JWT for an OCI session token.
 const pathExchangeHelpDesc = `
 This endpoint accepts a JWT subject token from a configured external Identity Provider
 and exchanges it for an OCI session token via the OCI IAM token exchange API.
+
+Requests reject fields outside the endpoint schema before token processing.
+The bare exchange endpoint does not accept a role field in the request body.
 
 Subject token behavior:
   - subject_token is required when enable_plugin_issued_subject_token=false
@@ -414,5 +432,10 @@ The response includes:
 	- private_key: PEM-encoded private key for OCI request signing (omitted when public_key is provided)
 	- requested_token_type: The OCI token type requested/returned
   - token_type: Bearer
-  - expires_in: Token lifetime in seconds
+  - credential_expiry_known: Whether OCI supplied expires_in
+  - expires_in: Conservative remaining OCI lifetime in whole seconds (omitted if unknown)
+  - expires_at: Conservative deadline derived from OCI expires_in (omitted if unknown)
+
+Vault lease duration is bounded by local policy and known remaining OCI lifetime.
+Leases are nonrenewable. Revoking a lease does not invalidate the OCI credential.
 `

@@ -17,7 +17,7 @@ func (b *backend) selfMintBrokeredSubjectToken(ctx context.Context, req *logical
 
 	claims := buildBaseSelfMintClaims(req, config, audience)
 	addSelfMintRequestClaims(claims, req)
-	if err := b.addSelfMintIdentityClaims(claims, req); err != nil {
+	if err := b.addSelfMintIdentityClaims(claims, req, config); err != nil {
 		return "", err
 	}
 	if err := addBrokeredMappedClaims(claims, mappedClaims); err != nil {

@@ -34,6 +34,8 @@ type backend struct {
 	lock                 sync.RWMutex
 	logger               hclog.Logger
 	httpClient           *http.Client
+	brokeredTrustCache   brokeredTrustCache
+	brokeredTransport    http.RoundTripper
 	subjectTokenCallback SubjectTokenCallback
 	tokenExchanger       func(ctx context.Context, subjectToken, requestedTokenType, resType, publicKey string, ttl time.Duration, config *federatedConfig) (*tokenExchangeResult, error)
 }
@@ -142,26 +144,29 @@ type federatedConfig struct {
 	StrictRoleNameMatch bool `json:"strict_role_name_match" mapstructure:"strict_role_name_match"`
 
 	// Built-in callback fallback controls for self-minting subject_token.
-	SubjectTokenSelfMintEnabled           bool     `json:"subject_token_self_mint_enabled" mapstructure:"subject_token_self_mint_enabled"`
-	SubjectTokenSelfMintIssuer            string   `json:"subject_token_self_mint_issuer" mapstructure:"subject_token_self_mint_issuer"`
-	SubjectTokenSelfMintAudience          string   `json:"subject_token_self_mint_audience" mapstructure:"subject_token_self_mint_audience"`
-	SubjectTokenAllowedAudiences          []string `json:"subject_token_allowed_audiences" mapstructure:"subject_token_allowed_audiences"`
-	SubjectTokenSelfMintTTLSeconds        int      `json:"subject_token_self_mint_ttl_seconds" mapstructure:"subject_token_self_mint_ttl_seconds"`
-	SubjectTokenSelfMintPrivateKey        string   `json:"subject_token_self_mint_private_key" mapstructure:"subject_token_self_mint_private_key"`
-	DebugReturnResolvedSubjectTokenClaims bool     `json:"debug_return_resolved_subject_token_claims" mapstructure:"debug_return_resolved_subject_token_claims"`
+	SubjectTokenIdentityAliasMountAccessor string   `json:"subject_token_identity_alias_mount_accessor" mapstructure:"subject_token_identity_alias_mount_accessor"`
+	SubjectTokenSelfMintEnabled            bool     `json:"subject_token_self_mint_enabled" mapstructure:"subject_token_self_mint_enabled"`
+	SubjectTokenSelfMintIssuer             string   `json:"subject_token_self_mint_issuer" mapstructure:"subject_token_self_mint_issuer"`
+	SubjectTokenSelfMintAudience           string   `json:"subject_token_self_mint_audience" mapstructure:"subject_token_self_mint_audience"`
+	SubjectTokenAllowedAudiences           []string `json:"subject_token_allowed_audiences" mapstructure:"subject_token_allowed_audiences"`
+	SubjectTokenSelfMintTTLSeconds         int      `json:"subject_token_self_mint_ttl_seconds" mapstructure:"subject_token_self_mint_ttl_seconds"`
+	SubjectTokenSelfMintPrivateKey         string   `json:"subject_token_self_mint_private_key" mapstructure:"subject_token_self_mint_private_key"`
+	DebugReturnResolvedSubjectTokenClaims  bool     `json:"debug_return_resolved_subject_token_claims" mapstructure:"debug_return_resolved_subject_token_claims"`
 
 	// Brokered subject token mode validates an incoming external JWT locally,
 	// maps claims into a plugin-issued JWT, and exchanges the re-issued token with OCI.
-	BrokeredSubjectTokenEnabled          bool              `json:"brokered_subject_token_enabled" mapstructure:"brokered_subject_token_enabled"`
-	BrokeredSubjectTokenTrustType        string            `json:"brokered_subject_token_trust_type,omitempty" mapstructure:"brokered_subject_token_trust_type"`
-	BrokeredSubjectTokenIssuer           string            `json:"brokered_subject_token_issuer,omitempty" mapstructure:"brokered_subject_token_issuer"`
-	BrokeredSubjectTokenAllowedAudiences []string          `json:"brokered_subject_token_allowed_audiences,omitempty" mapstructure:"brokered_subject_token_allowed_audiences"`
-	BrokeredSubjectTokenAllowedAlgs      []string          `json:"brokered_subject_token_allowed_algs,omitempty" mapstructure:"brokered_subject_token_allowed_algs"`
-	BrokeredSubjectTokenClockSkewSeconds int               `json:"brokered_subject_token_clock_skew_seconds,omitempty" mapstructure:"brokered_subject_token_clock_skew_seconds"`
-	BrokeredSubjectTokenJWKSURL          string            `json:"brokered_subject_token_jwks_url,omitempty" mapstructure:"brokered_subject_token_jwks_url"`
-	BrokeredSubjectTokenJWKSJSON         string            `json:"brokered_subject_token_jwks_json,omitempty" mapstructure:"brokered_subject_token_jwks_json"`
-	BrokeredSubjectTokenPublicKeys       []string          `json:"brokered_subject_token_public_keys,omitempty" mapstructure:"brokered_subject_token_public_keys"`
-	BrokeredSubjectTokenClaimMappings    map[string]string `json:"brokered_subject_token_claim_mappings,omitempty" mapstructure:"brokered_subject_token_claim_mappings"`
+	DebugAllowBrokeredHTTP                 bool              `json:"debug_allow_brokered_http" mapstructure:"debug_allow_brokered_http"`
+	BrokeredSubjectTokenAllowedJWKSOrigins []string          `json:"brokered_subject_token_allowed_jwks_origins,omitempty" mapstructure:"brokered_subject_token_allowed_jwks_origins"`
+	BrokeredSubjectTokenEnabled            bool              `json:"brokered_subject_token_enabled" mapstructure:"brokered_subject_token_enabled"`
+	BrokeredSubjectTokenTrustType          string            `json:"brokered_subject_token_trust_type,omitempty" mapstructure:"brokered_subject_token_trust_type"`
+	BrokeredSubjectTokenIssuer             string            `json:"brokered_subject_token_issuer,omitempty" mapstructure:"brokered_subject_token_issuer"`
+	BrokeredSubjectTokenAllowedAudiences   []string          `json:"brokered_subject_token_allowed_audiences,omitempty" mapstructure:"brokered_subject_token_allowed_audiences"`
+	BrokeredSubjectTokenAllowedAlgs        []string          `json:"brokered_subject_token_allowed_algs,omitempty" mapstructure:"brokered_subject_token_allowed_algs"`
+	BrokeredSubjectTokenClockSkewSeconds   int               `json:"brokered_subject_token_clock_skew_seconds,omitempty" mapstructure:"brokered_subject_token_clock_skew_seconds"`
+	BrokeredSubjectTokenJWKSURL            string            `json:"brokered_subject_token_jwks_url,omitempty" mapstructure:"brokered_subject_token_jwks_url"`
+	BrokeredSubjectTokenJWKSJSON           string            `json:"brokered_subject_token_jwks_json,omitempty" mapstructure:"brokered_subject_token_jwks_json"`
+	BrokeredSubjectTokenPublicKeys         []string          `json:"brokered_subject_token_public_keys,omitempty" mapstructure:"brokered_subject_token_public_keys"`
+	BrokeredSubjectTokenClaimMappings      map[string]string `json:"brokered_subject_token_claim_mappings,omitempty" mapstructure:"brokered_subject_token_claim_mappings"`
 }
 
 type subjectTokenRoleMapping struct {

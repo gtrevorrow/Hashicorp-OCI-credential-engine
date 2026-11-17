@@ -7,22 +7,30 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange[/<role>]` with external `subject_token`
+    V->>V: Validate exchange schema; reject unknown fields before processing
     V->>S: Read backend config, brokered trust config, self-mint key, optional role
     S-->>V: Config, mappings, signing key, role TTL/custom claims
     V->>V: Check `brokered_subject_token_enabled=true`
-    V->>V: Validate JWT header, alg, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
-    V->>V: Render mapped claims from validated external claims
+    V->>V: Resolve bounded cached trust keys or refresh with HTTPS, issuer and origin checks
+    Note over V: HTTP allowed only with explicit loopback debug mode; redirects rejected
+    V->>V: Validate JWT header, signing key suitability, signature, `iss`, `aud`, `exp`, `nbf`, `iat`
+    Note over V: JOSE bounds JSON nesting and RSA JWK moduli before signature verification
+    V->>V: Parse complete templates and render bounded mapped claims from verified input
     V->>SV: Read trusted Vault request and identity context
-    SV-->>V: Entity, alias, group, mount metadata
+    SV-->>V: Entity, linked aliases, groups
+    Note over V: Emit alias claims only for configured auth accessor; fail on missing or ambiguous match
     V->>V: Build brokered self-minted JWT
     opt Explicit `/exchange/<role>` path used
-        V->>V: Render role `self_mint_custom_claims` templates if non-conflicting
+        V->>V: Parse complete role templates; render bounded claims and reject collisions
     end
     alt Caller supplies `public_key`
         V->>V: Use caller public key for OCI exchange
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    Note over V: Roles with removed filter settings require explicit cleanup
+    V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with brokered self-minted `subject_token`
     O-->>V: OCI UPST or RPST
+    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token and generated exchange private key only when engine generated the exchange keypair

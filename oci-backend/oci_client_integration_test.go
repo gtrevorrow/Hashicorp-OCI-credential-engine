@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/stretchr/testify/require"
 )
 
@@ -260,4 +261,86 @@ func newIntegrationServer(t *testing.T, handler http.Handler) *httptest.Server {
 	server.Listener = listener
 	server.Start()
 	return server
+}
+
+// Exercise the complete handler-to-HTTP path after an administrator tightens
+// backend policy below an already stored role's default and maximum.
+func TestIntegrationExchangeRPSTRespectsBackendTTLCeiling(t *testing.T) {
+	b, storage := getTestBackend(t)
+	calls := 0
+	server := newIntegrationServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		require.NoError(t, r.ParseForm())
+		require.Equal(t, "60", r.PostForm.Get("rpst_exp"))
+		require.Equal(t, ociRequestedTokenTypeRPST, r.PostForm.Get("requested_token_type"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"synthetic","token_type":"Bearer"}`))
+	}))
+	defer server.Close()
+	require.NoError(t, b.saveConfig(context.Background(), storage, &federatedConfig{DomainUrl: server.URL, ClientID: "test", ClientSecret: "test", DefaultTTL: 60, MaxTTL: 60}))
+	require.NoError(t, b.saveRole(context.Background(), storage, &roleEntry{Name: "dev", DefaultTTL: time.Hour, MaxTTL: time.Hour}))
+	key := generateTestRSAPrivateKey(t)
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{Operation: logical.UpdateOperation, Path: "exchange/dev", Storage: storage, Data: map[string]interface{}{
+		"subject_token": "synthetic", "requested_token_type": ociRequestedTokenTypeRPST, "res_type": "resource_principal", "public_key": encodeTestPublicKeyPEM(t, &key.PublicKey),
+	}})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.False(t, resp.IsError(), "%v", resp)
+	require.Equal(t, time.Minute, resp.Secret.TTL)
+	require.Equal(t, time.Minute, resp.Secret.MaxTTL)
+	require.Equal(t, 1, calls)
+}
+
+func TestIntegrationExchangeCredentialExpiry(t *testing.T) {
+	for _, tc := range []struct {
+		name, expiry   string
+		known, invalid bool
+	}{
+		{name: "short expiry", expiry: `,"expires_in":10`, known: true},
+		{name: "missing expiry"},
+		{name: "null expiry", expiry: `,"expires_in":null`},
+		{name: "zero expiry", expiry: `,"expires_in":0`, invalid: true},
+		{name: "negative expiry", expiry: `,"expires_in":-1`, invalid: true},
+		{name: "overflow expiry", expiry: `,"expires_in":9223372037`, invalid: true},
+		{name: "fractional expiry", expiry: `,"expires_in":1.5`, invalid: true},
+		{name: "string expiry", expiry: `,"expires_in":"10"`, invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, storage := getTestBackend(t)
+			server := newIntegrationServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"synthetic"` + tc.expiry + `}`))
+			}))
+			defer server.Close()
+			require.NoError(t, b.saveConfig(context.Background(), storage, &federatedConfig{DomainUrl: server.URL, ClientID: "test", ClientSecret: "test", DefaultTTL: 3600, MaxTTL: 7200}))
+			key := generateTestRSAPrivateKey(t)
+			before := time.Now()
+			resp, err := b.HandleRequest(context.Background(), &logical.Request{Operation: logical.UpdateOperation, Path: "exchange", Storage: storage, Data: map[string]interface{}{"subject_token": "synthetic", "public_key": encodeTestPublicKeyPEM(t, &key.PublicKey)}})
+			after := time.Now()
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			if tc.invalid {
+				require.True(t, resp.IsError())
+				require.Nil(t, resp.Secret)
+				require.NotContains(t, resp.Data, "access_token")
+				return
+			}
+			require.False(t, resp.IsError(), "%v", resp)
+			require.Equal(t, tc.known, resp.Data["credential_expiry_known"])
+			if !tc.known {
+				require.NotContains(t, resp.Data, "expires_in")
+				require.NotContains(t, resp.Data, "expires_at")
+				require.Equal(t, time.Hour, resp.Secret.TTL)
+				return
+			}
+			deadline, err := time.Parse(time.RFC3339Nano, resp.Data["expires_at"].(string))
+			require.NoError(t, err)
+			require.False(t, deadline.Before(before.Add(10*time.Second)))
+			require.False(t, deadline.After(after.Add(10*time.Second)))
+			require.LessOrEqual(t, resp.Secret.TTL, 10*time.Second)
+			require.Positive(t, resp.Secret.TTL)
+			require.Equal(t, resp.Secret.TTL, resp.Secret.MaxTTL)
+			require.Equal(t, int64(resp.Secret.TTL/time.Second), resp.Data["expires_in"])
+		})
+	}
 }

@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"unicode"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
+
+const maxSubjectTokenAudienceLength = 512
 
 // pathConfig returns the configuration path for the backend
 func (b *backend) pathConfig() []*framework.Path {
@@ -84,6 +87,10 @@ func (b *backend) pathConfig() []*framework.Path {
 						Name: "Strict Role Name Match",
 					},
 				},
+				"subject_token_identity_alias_mount_accessor": {
+					Type:        framework.TypeString,
+					Description: "Explicit auth mount accessor for linked entity alias claims; empty disables alias claims. Does not identify the current login method.",
+				},
 				"subject_token_self_mint_enabled": {
 					Type:        framework.TypeBool,
 					Description: "Enable built-in callback fallback to self-mint subject_token when plugin identity token is unavailable",
@@ -148,6 +155,15 @@ func (b *backend) pathConfig() []*framework.Path {
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name: "Brokered Subject Token Enabled",
 					},
+				},
+				"debug_allow_brokered_http": {
+					Type:        framework.TypeBool,
+					Default:     false,
+					Description: "Debug only: allow HTTP brokered trust retrieval on localhost or loopback IPs",
+				},
+				"brokered_subject_token_allowed_jwks_origins": {
+					Type:        framework.TypeCommaStringSlice,
+					Description: "Additional exact origins allowed for discovered JWKS URLs (scheme://host[:port])",
 				},
 				"brokered_subject_token_trust_type": {
 					Type:        framework.TypeString,
@@ -261,37 +277,44 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 	}
 
 	respData := map[string]interface{}{
+		"subject_token_identity_alias_mount_accessor": config.SubjectTokenIdentityAliasMountAccessor,
 		"domain_url": config.DomainUrl,
 		"client_id":  config.ClientID,
 		// Client Secret is intentionally omitted from read
 
-		"default_ttl":                                config.DefaultTTL,
-		"max_ttl":                                    config.MaxTTL,
-		"subject_token_role_mappings":                config.SubjectTokenRoleMappings,
-		"enable_plugin_issued_subject_token":         configEnablePluginIssuedSubjectToken(config),
-		"strict_role_name_match":                     config.StrictRoleNameMatch,
-		"subject_token_self_mint_enabled":            config.SubjectTokenSelfMintEnabled,
-		"subject_token_self_mint_issuer":             config.SubjectTokenSelfMintIssuer,
-		"subject_token_self_mint_audience":           configSubjectTokenSelfMintAudience(config),
-		"subject_token_allowed_audiences":            configSubjectTokenAllowedAudiences(config),
-		"subject_token_self_mint_ttl_seconds":        configSubjectTokenSelfMintTTLSeconds(config),
-		"debug_return_resolved_subject_token_claims": config.DebugReturnResolvedSubjectTokenClaims,
-		"brokered_subject_token_enabled":             config.BrokeredSubjectTokenEnabled,
-		"brokered_subject_token_trust_type":          config.BrokeredSubjectTokenTrustType,
-		"brokered_subject_token_issuer":              config.BrokeredSubjectTokenIssuer,
-		"brokered_subject_token_allowed_audiences":   configBrokeredSubjectTokenAllowedAudiences(config),
-		"brokered_subject_token_allowed_algs":        configBrokeredSubjectTokenAllowedAlgs(config),
-		"brokered_subject_token_clock_skew_seconds":  configBrokeredSubjectTokenClockSkewSeconds(config),
-		"brokered_subject_token_jwks_url":            config.BrokeredSubjectTokenJWKSURL,
-		"brokered_subject_token_jwks_json":           config.BrokeredSubjectTokenJWKSJSON,
-		"brokered_subject_token_public_keys":         config.BrokeredSubjectTokenPublicKeys,
-		"brokered_subject_token_claim_mappings":      config.BrokeredSubjectTokenClaimMappings,
+		"default_ttl":                                 config.DefaultTTL,
+		"max_ttl":                                     config.MaxTTL,
+		"subject_token_role_mappings":                 config.SubjectTokenRoleMappings,
+		"enable_plugin_issued_subject_token":          configEnablePluginIssuedSubjectToken(config),
+		"strict_role_name_match":                      config.StrictRoleNameMatch,
+		"subject_token_self_mint_enabled":             config.SubjectTokenSelfMintEnabled,
+		"subject_token_self_mint_issuer":              config.SubjectTokenSelfMintIssuer,
+		"subject_token_self_mint_audience":            configSubjectTokenSelfMintAudience(config),
+		"subject_token_allowed_audiences":             configSubjectTokenAllowedAudiences(config),
+		"subject_token_self_mint_ttl_seconds":         configSubjectTokenSelfMintTTLSeconds(config),
+		"debug_return_resolved_subject_token_claims":  config.DebugReturnResolvedSubjectTokenClaims,
+		"debug_allow_brokered_http":                   config.DebugAllowBrokeredHTTP,
+		"brokered_subject_token_allowed_jwks_origins": config.BrokeredSubjectTokenAllowedJWKSOrigins,
+		"brokered_subject_token_enabled":              config.BrokeredSubjectTokenEnabled,
+		"brokered_subject_token_trust_type":           config.BrokeredSubjectTokenTrustType,
+		"brokered_subject_token_issuer":               config.BrokeredSubjectTokenIssuer,
+		"brokered_subject_token_allowed_audiences":    configBrokeredSubjectTokenAllowedAudiences(config),
+		"brokered_subject_token_allowed_algs":         configBrokeredSubjectTokenAllowedAlgs(config),
+		"brokered_subject_token_clock_skew_seconds":   configBrokeredSubjectTokenClockSkewSeconds(config),
+		"brokered_subject_token_jwks_url":             config.BrokeredSubjectTokenJWKSURL,
+		"brokered_subject_token_jwks_json":            config.BrokeredSubjectTokenJWKSJSON,
+		"brokered_subject_token_public_keys":          config.BrokeredSubjectTokenPublicKeys,
+		"brokered_subject_token_claim_mappings":       config.BrokeredSubjectTokenClaimMappings,
 	}
 	return &logical.Response{Data: respData}, nil
 }
 
 // pathConfigWrite creates or updates the configuration
 func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	if err := validateTokenTTLInputs(data, false, "default_ttl", "max_ttl"); err != nil {
+		return logical.ErrorResponse("invalid token TTL policy: %v", err), nil
+	}
+
 	existingConfig, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
 		return nil, err
@@ -335,6 +358,9 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	if _, ok := req.Data["strict_role_name_match"]; ok {
 		config.StrictRoleNameMatch = data.Get("strict_role_name_match").(bool)
 	}
+	if _, ok := req.Data["subject_token_identity_alias_mount_accessor"]; ok {
+		config.SubjectTokenIdentityAliasMountAccessor = strings.TrimSpace(data.Get("subject_token_identity_alias_mount_accessor").(string))
+	}
 	if _, ok := req.Data["subject_token_self_mint_enabled"]; ok {
 		config.SubjectTokenSelfMintEnabled = data.Get("subject_token_self_mint_enabled").(bool)
 	}
@@ -355,6 +381,12 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 	if _, ok := req.Data["debug_return_resolved_subject_token_claims"]; ok {
 		config.DebugReturnResolvedSubjectTokenClaims = data.Get("debug_return_resolved_subject_token_claims").(bool)
+	}
+	if _, ok := req.Data["debug_allow_brokered_http"]; ok {
+		config.DebugAllowBrokeredHTTP = data.Get("debug_allow_brokered_http").(bool)
+	}
+	if _, ok := req.Data["brokered_subject_token_allowed_jwks_origins"]; ok {
+		config.BrokeredSubjectTokenAllowedJWKSOrigins = data.Get("brokered_subject_token_allowed_jwks_origins").([]string)
 	}
 	if _, ok := req.Data["brokered_subject_token_enabled"]; ok {
 		config.BrokeredSubjectTokenEnabled = data.Get("brokered_subject_token_enabled").(bool)
@@ -405,6 +437,11 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 		}
 		config.SubjectTokenRoleMappings = mappings
 	}
+	allowedAudiences, audienceErr := validateSubjectTokenAllowedAudiences(config.SubjectTokenAllowedAudiences)
+	if audienceErr != nil {
+		return logical.ErrorResponse("invalid subject_token_allowed_audiences: %v", audienceErr), nil
+	}
+	config.SubjectTokenAllowedAudiences = allowedAudiences
 
 	if config.DomainUrl == "" {
 		return logical.ErrorResponse("missing 'domain_url'"), nil
@@ -414,6 +451,10 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 	if config.ClientSecret == "" {
 		return logical.ErrorResponse("missing 'client_secret'"), nil
+	}
+
+	if _, _, ttlErr := configuredTokenTTLs(config); ttlErr != nil {
+		return logical.ErrorResponse("invalid token TTL policy: %v", ttlErr), nil
 	}
 
 	if config.StrictRoleNameMatch {
@@ -542,6 +583,43 @@ func configSubjectTokenAllowedAudiences(config *federatedConfig) []string {
 	return out
 }
 
+func validateSubjectTokenAllowedAudiences(audiences []string) ([]string, error) {
+	if len(audiences) == 0 {
+		return nil, nil
+	}
+
+	out := make([]string, 0, len(audiences))
+	seen := make(map[string]struct{}, len(audiences))
+	for _, audience := range audiences {
+		normalized, err := normalizeSubjectTokenAudience(audience)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out, nil
+}
+
+func normalizeSubjectTokenAudience(audience string) (string, error) {
+	audience = strings.TrimSpace(audience)
+	if audience == "" {
+		return "", fmt.Errorf("audience must not be empty")
+	}
+	if len(audience) > maxSubjectTokenAudienceLength {
+		return "", fmt.Errorf("audience must be %d bytes or fewer", maxSubjectTokenAudienceLength)
+	}
+	for _, r := range audience {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("audience must not contain control characters")
+		}
+	}
+	return audience, nil
+}
+
 func configBrokeredSubjectTokenAllowedAudiences(config *federatedConfig) []string {
 	if config == nil || len(config.BrokeredSubjectTokenAllowedAudiences) == 0 {
 		return nil
@@ -609,13 +687,16 @@ Optional:
   - subject_token_role_mappings: JSON array of ordered rules used to derive a Vault role from a caller-supplied subject_token
   - enable_plugin_issued_subject_token: Allow the plugin to resolve or mint subject_token when omitted by the caller (default: true)
   - strict_role_name_match: Require role names to match [A-Za-z0-9._:-]+ (default: false)
+  - subject_token_identity_alias_mount_accessor: Explicit linked alias auth mount accessor; empty disables alias claims (not current login evidence)
   - subject_token_self_mint_enabled: Enable built-in callback self-mint fallback (default: false)
-  - subject_token_self_mint_issuer: Required when self-mint is enabled
+  - subject_token_self_mint_issuer: Required when self-mint or brokered mode is enabled
   - subject_token_self_mint_audience: Audience for self-minted token (default: urn:mace:oci:idcs)
   - subject_token_allowed_audiences: Optional allowlist for per-request fallback audience override
   - subject_token_self_mint_ttl_seconds: TTL for self-minted token (default: 600)
-  - subject_token_self_mint_private_key: Optional PEM RSA private key; auto-generated and stored if omitted when self-mint is enabled
+  - subject_token_self_mint_private_key: Optional PEM RSA private key; auto-generated and stored if omitted when self-mint or brokered mode is enabled
   - debug_return_resolved_subject_token_claims: Development-only flag to include resolved subject token claims in exchange responses
+  - debug_allow_brokered_http: Allow HTTP only on loopback for local trust testing (default: false)
+  - brokered_subject_token_allowed_jwks_origins: Additional exact origins allowed for discovered JWKS URLs
   - brokered_subject_token_enabled: Enable brokered validation and re-issuance for caller-supplied subject_token (default: false)
   - brokered_subject_token_trust_type: Required when brokered mode is enabled; one of oidc_discovery, jwks_url, jwks_json, public_keys
   - brokered_subject_token_issuer: Required when brokered mode is enabled; expected incoming issuer and OIDC discovery issuer
@@ -625,7 +706,7 @@ Optional:
   - brokered_subject_token_jwks_url: Required trust source when trust_type=jwks_url
   - brokered_subject_token_jwks_json: Required trust source when trust_type=jwks_json
   - brokered_subject_token_public_keys: Required trust source when trust_type=public_keys
-  - brokered_subject_token_claim_mappings: Optional JSON object of output claim name to string template
+  - brokered_subject_token_claim_mappings: Optional JSON object of output claim name to string template; complete syntax validated, 16 KiB template / 64 KiB rendered claim limits
 
 Example:
   $ vault write oci/config \

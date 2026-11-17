@@ -7,10 +7,11 @@ sequenceDiagram
     participant O as OCI Token Endpoint
 
     C->>V: `vault write oci/exchange[/<role>]` without `subject_token`
+    V->>V: Validate exchange schema; reject unknown fields before processing
     V->>S: Read backend config and optional plugin role
     S-->>V: Config and role constraints
     V->>V: Check `enable_plugin_issued_subject_token=true`
-    V->>V: Resolve audience from config or allowlisted `subject_token_audience`
+    V->>V: Resolve default audience or normalize and validate `subject_token_audience` against allowlist
     V->>SV: `GenerateIdentityToken(audience)`
     SV-->>V: Vault-issued identity token
     alt Caller supplies `public_key`
@@ -18,6 +19,9 @@ sequenceDiagram
     else `public_key` omitted
         V->>V: Generate exchange RSA keypair
     end
+    Note over V: Roles with removed filter settings require explicit cleanup
+    V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
     V->>O: POST `/oauth2/v1/token` with Basic auth, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
+    V->>V: Report OCI expiry when known; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair

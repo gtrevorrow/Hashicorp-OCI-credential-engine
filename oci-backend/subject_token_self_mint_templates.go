@@ -9,10 +9,7 @@ import (
 )
 
 func validateSelfMintCustomClaimTemplate(template string) error {
-	_, err := renderSelfMintCustomClaimTemplate(template, map[string]interface{}{}, nil)
-	if err == nil || isSelfMintTemplateLookupError(err) {
-		return nil
-	}
+	_, err := parseClaimTemplate(template, validateSelfMintExpression)
 	return err
 }
 
@@ -41,39 +38,13 @@ func renderSelfMintCustomClaimMappings(templateContext map[string]interface{}, m
 }
 
 func renderSelfMintCustomClaimTemplate(template string, templateContext map[string]interface{}, brokeredClaims map[string]interface{}) (string, error) {
-	var builder strings.Builder
-	remaining := template
-
-	for {
-		start := strings.Index(remaining, "{{")
-		endBeforeStart := strings.Index(remaining, "}}")
-		if start == -1 {
-			if endBeforeStart >= 0 {
-				return "", fmt.Errorf("invalid template syntax")
-			}
-			builder.WriteString(remaining)
-			return builder.String(), nil
-		}
-		if endBeforeStart >= 0 && endBeforeStart < start {
-			return "", fmt.Errorf("invalid template syntax")
-		}
-
-		builder.WriteString(remaining[:start])
-		remaining = remaining[start+2:]
-
-		end := strings.Index(remaining, "}}")
-		if end == -1 {
-			return "", fmt.Errorf("invalid template syntax")
-		}
-
-		expression := strings.TrimSpace(remaining[:end])
-		value, err := evaluateSelfMintTemplateExpression(expression, templateContext, brokeredClaims)
-		if err != nil {
-			return "", err
-		}
-		builder.WriteString(value)
-		remaining = remaining[end+2:]
+	parts, err := parseClaimTemplate(template, validateSelfMintExpression)
+	if err != nil {
+		return "", err
 	}
+	return renderClaimTemplate(parts, func(expression string) (string, error) {
+		return evaluateSelfMintTemplateExpression(expression, templateContext, brokeredClaims)
+	})
 }
 
 func evaluateSelfMintTemplateExpression(expression string, templateContext map[string]interface{}, brokeredClaims map[string]interface{}) (string, error) {
@@ -110,21 +81,7 @@ func evaluateSelfMintTemplateExpression(expression string, templateContext map[s
 }
 
 func evaluateSelfMintJoinExpression(expression string, templateContext map[string]interface{}, brokeredClaims map[string]interface{}) (string, error) {
-	if !strings.HasPrefix(expression, "join(") || !strings.HasSuffix(expression, ")") {
-		return "", fmt.Errorf("invalid template syntax")
-	}
-
-	inner := strings.TrimSpace(expression[len("join(") : len(expression)-1])
-	args, err := splitSelfMintJoinArgs(inner)
-	if err != nil {
-		return "", err
-	}
-	if len(args) != 2 {
-		return "", fmt.Errorf("join() requires exactly two arguments")
-	}
-
-	path := strings.TrimSpace(args[0])
-	separator, err := parseQuotedSelfMintTemplateString(strings.TrimSpace(args[1]))
+	path, separator, err := parseSelfMintJoinExpression(expression)
 	if err != nil {
 		return "", err
 	}
@@ -153,15 +110,48 @@ func evaluateSelfMintJoinExpression(expression string, templateContext map[strin
 	if !ok {
 		return "", fmt.Errorf("join() requires a list value")
 	}
-	rendered := make([]string, 0, len(items))
-	for _, item := range items {
+	var rendered strings.Builder
+	for i, item := range items {
 		stringValue, err := stringifySelfMintTemplateValue(item)
 		if err != nil {
 			return "", err
 		}
-		rendered = append(rendered, stringValue)
+		if i > 0 {
+			if err := appendClaimText(&rendered, separator); err != nil {
+				return "", err
+			}
+		}
+		if err := appendClaimText(&rendered, stringValue); err != nil {
+			return "", err
+		}
 	}
-	return strings.Join(rendered, separator), nil
+	return rendered.String(), nil
+}
+
+func parseSelfMintJoinExpression(expression string) (string, string, error) {
+	if !strings.HasPrefix(expression, "join(") || !strings.HasSuffix(expression, ")") {
+		return "", "", fmt.Errorf("invalid template syntax")
+	}
+
+	inner := strings.TrimSpace(expression[len("join(") : len(expression)-1])
+	args, err := splitSelfMintJoinArgs(inner)
+	if err != nil {
+		return "", "", err
+	}
+	if len(args) != 2 {
+		return "", "", fmt.Errorf("join() requires exactly two arguments")
+	}
+
+	path := strings.TrimSpace(args[0])
+	separator, err := parseQuotedSelfMintTemplateString(strings.TrimSpace(args[1]))
+	if err != nil {
+		return "", "", err
+	}
+
+	if err := validateClaimPath(path, "vault.", "brokered.claims."); err != nil {
+		return "", "", err
+	}
+	return path, separator, nil
 }
 
 func splitSelfMintJoinArgs(raw string) ([]string, error) {
@@ -174,6 +164,12 @@ func splitSelfMintJoinArgs(raw string) ([]string, error) {
 	inQuote := byte(0)
 	for i := 0; i < len(raw); i++ {
 		ch := raw[i]
+		if inQuote == '"' && ch == '\\' && i+1 < len(raw) {
+			current.WriteByte(ch)
+			i++
+			current.WriteByte(raw[i])
+			continue
+		}
 		switch ch {
 		case '\'', '"':
 			if inQuote == 0 {
@@ -213,6 +209,9 @@ func parseQuotedSelfMintTemplateString(raw string) (string, error) {
 			return "", fmt.Errorf("invalid quoted separator: %w", err)
 		}
 		return value, nil
+	}
+	if strings.ContainsRune(raw[1:len(raw)-1], '\'') {
+		return "", fmt.Errorf("invalid quoted separator")
 	}
 	return raw[1 : len(raw)-1], nil
 }

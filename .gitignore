@@ -41,6 +41,8 @@ Thumbs.db
 .env.local
 dev-config.json
 .vault-dev-self-mint-key.pem
+.vault-dev/
+__pycache__/
 
 # Temporary files
 *.tmp
@@ -49,3 +51,6 @@ dev-config.json
 
 # Local Go test cache
 .gocache/
+
+# Local project review
+/security_best_practices_report.md

@@ -13,9 +13,10 @@ var Version = "v0.0.0-dev"
 
 func main() {
 	logger := hclog.New(&hclog.LoggerOptions{
-		Name:   "oci-secrets",
-		Level:  hclog.LevelFromString(os.Getenv("VAULT_OCI_LOG_LEVEL")),
-		Output: os.Stderr,
+		Name:       "oci-secrets",
+		Level:      hclog.LevelFromString(os.Getenv("VAULT_OCI_LOG_LEVEL")),
+		Output:     os.Stderr,
+		JSONFormat: true,
 	})
 
 	logger.Info("Starting OCI secrets engine plugin", "version", Version)

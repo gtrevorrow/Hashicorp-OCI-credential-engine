@@ -126,7 +126,8 @@ func (b *backend) readStoredRole(ctx context.Context, storage logical.Storage, n
 }
 
 func obsoleteRoleFilterError(fields []string) error {
-	return fmt.Errorf("role contains removed, never-enforced fields %s; review the role and its Vault/OCI policies, then explicitly delete and recreate the role without these fields", strings.Join(fields, ", "))
+	// fields is assembled only from the two fixed legacy field names above.
+	return failure("role_cleanup_required", fmt.Sprintf("role contains removed, never-enforced fields %s; review the role and its Vault/OCI policies, then explicitly delete and recreate the role without these fields", strings.Join(fields, ", ")))
 }
 
 func (b *backend) getRole(ctx context.Context, storage logical.Storage, name string) (*roleEntry, error) {
@@ -175,7 +176,12 @@ func (b *backend) pathRoleRead(ctx context.Context, req *logical.Request, data *
 	return resp, nil
 }
 
-func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (resp *logical.Response, err error) {
+	defer func() {
+		if err != nil || (resp != nil && resp.IsError()) {
+			b.securityEvent(req, "role_change_failed", true, true, "request_rejected")
+		}
+	}()
 	if err := data.ValidateStrict(); err != nil {
 		return logical.ErrorResponse("invalid role request: %v", err), nil
 	}
@@ -231,9 +237,9 @@ func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, data 
 	}
 
 	if err := b.saveRole(ctx, req.Storage, role); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to save role")
 	}
-
+	b.securityEvent(req, "role_changed", false, false, "", roleSecurityFields(name)...)
 	return nil, nil
 }
 
@@ -241,8 +247,10 @@ func (b *backend) pathRoleDelete(ctx context.Context, req *logical.Request, data
 	name := data.Get("name").(string)
 
 	if err := req.Storage.Delete(ctx, "role/"+name); err != nil {
-		return nil, err
+		b.securityEvent(req, "role_change_failed", true, true, "storage_error")
+		return nil, fmt.Errorf("unable to delete role")
 	}
+	b.securityEvent(req, "role_deleted", false, false, "", roleSecurityFields(name)...)
 	return nil, nil
 }
 

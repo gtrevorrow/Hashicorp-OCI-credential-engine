@@ -25,7 +25,7 @@ This file is the working backlog for the OCI credential engine plugin. It tracks
 
 ### Operational Hardening
 
-- [ ] Redact/bound OCI error details returned to callers; upstream bodies currently appear in some exchange errors
+- [x] Redact/bound OCI errors, add allowlisted structured security events with warning suppression, and time-limit diagnostic claim responses. Canary coverage includes default HMAC audit records in disposable local Vault; deployment audit configuration remains operator-owned.
 - [ ] Add metrics and telemetry for token exchange rate, error rate, and latency
 - [ ] Build full end-to-end tests against an OCI sandbox, disposable test domain, or test tenancy
 - [ ] Add a documented operational runbook for self-mint key rollover and JWKS republishing

@@ -348,7 +348,7 @@ See [methods, request fields, role fields, and response semantics](docs/usage.md
 
 Grant workloads only the exchange paths they need. Keep `oci/config` and role writes operator-only. If a role emits literal identity labels, its path ACL is part of the trust boundary. Enable Vault audit devices and review redaction settings; the plugin does not configure them.
 
-Read [Security and access controls](docs/security.md) for policy examples, [THREAT_MODEL.md](THREAT_MODEL.md) for the trust analysis, and [TEST_PLAN.md](TEST_PLAN.md) for validation coverage and remaining live-test gaps. Detailed implementation diagrams remain in the [diagram index](docs/sequence-diagrams/README.md).
+Read [Security and access controls](docs/security.md) for policy examples, [security logging and diagnostics](docs/security-logging.md) for events and audit guidance, [THREAT_MODEL.md](THREAT_MODEL.md) for the trust analysis, and [TEST_PLAN.md](TEST_PLAN.md) for validation coverage and remaining live-test gaps. Detailed implementation diagrams remain in the [diagram index](docs/sequence-diagrams/README.md).
 
 ## Development
 

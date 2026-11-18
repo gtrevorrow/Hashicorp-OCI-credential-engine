@@ -31,10 +31,12 @@ func (b *backend) defaultSubjectTokenCallback(ctx context.Context, req *logical.
 	}
 
 	// Prefer Vault plugin identity token generation where available.
+	observedSource(ctx, "vault_identity")
 	resp, err := b.System().GenerateIdentityToken(ctx, &pluginutil.IdentityTokenRequest{
 		Audience: audience,
 	})
 	if err == nil && resp != nil && string(resp.Token) != "" {
+		observedSource(ctx, "vault_identity")
 		return string(resp.Token), nil
 	}
 
@@ -46,6 +48,7 @@ func (b *backend) defaultSubjectTokenCallback(ctx context.Context, req *logical.
 		return "", fmt.Errorf("plugin identity token unavailable and self-mint disabled")
 	}
 
+	observedSource(ctx, "self_mint")
 	return b.selfMintSubjectToken(req, config, audience)
 }
 

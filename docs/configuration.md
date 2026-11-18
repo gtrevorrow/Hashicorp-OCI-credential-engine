@@ -87,7 +87,8 @@ All fields below belong to `oci/config`. Defaults are implementation defaults; t
 | Field | Meaning and default |
 |---|---|
 | <a id="config-debug-allow-brokered-http"></a>`debug_allow_brokered_http` | Defaults to `false`. Allows HTTP trust retrieval only from `localhost` or loopback IP literals for local testing; it does not disable HTTPS certificate verification |
-| <a id="config-debug-return-resolved-subject-token-claims"></a>`debug_return_resolved_subject_token_claims` | Development-only flag that includes decoded claims from the resolved subject token in `oci/exchange` responses, including error responses |
+| <a id="config-debug-return-resolved-subject-token-claims"></a>`debug_return_resolved_subject_token_claims` | Defaults to `false`. Explicitly writing `true` permits decoded resolved-token claims in exchange responses, including OCI error responses, for 15 minutes; writing `false` disables them. See [diagnostic behavior](security-logging.md#temporary-claim-diagnostics). |
+| <a id="config-debug-resolved-subject-token-claims-expires-at"></a>`debug_resolved_subject_token_claims_expires_at` | Read-only persisted diagnostic deadline (RFC3339), returned when set. Config reads report the effective diagnostic flag as `false` after expiry; unrelated writes and restarts do not renew the window. |
 
 `oci/config` supports incremental updates. After the initial configuration is created, later `vault write oci/config ...` calls may update only the fields you want to change.
 
@@ -127,7 +128,7 @@ vault write oci/config \
     debug_return_resolved_subject_token_claims=true
 ```
 
-Then `vault write -force -format=json oci/exchange` will include `data.resolved_subject_token_claims` even when OCI rejects the exchange. This flag is intended only for development and troubleshooting.
+Within the 15-minute window, `vault write -force -format=json oci/exchange` includes decoded `resolved_subject_token_claims`, including on OCI rejection. These responses contain sensitive identity data. Explicitly disable the flag when finished. Existing stored `true` values without a deadline are inactive after upgrading until explicitly re-enabled. See [security logging and diagnostics](security-logging.md) for events, error redaction, audit settings, and the response-time expiry check.
 
 ## Multiple OCI Accounts or Identity Domains
 

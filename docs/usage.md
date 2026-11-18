@@ -457,6 +457,10 @@ vault write -format=json oci/exchange/developer - \
 
 Use the response with an appropriately configured OCI client and remove the private directory after use. Do not enable shell tracing or copy the response into logs. If the request supplied `public_key`, retain the corresponding caller-owned private key; the response contains no generated key material.
 
+## Troubleshooting Exchange Failures
+
+Exchange errors return fixed classifications and safe correlation metadata rather than raw OCI response bodies or token claims. Use the [security logging guide](security-logging.md) to correlate failures and configure audit records. If decoded resolved-token claims are needed in a controlled test, explicitly enable the [15-minute diagnostic window](security-logging.md#temporary-claim-diagnostics) and protect the response capture.
+
 ## Exchange a JWT for OCI RPST
 
 Use RPST when you need resource-principal style token exchange behavior supported by OCI Identity Domains.

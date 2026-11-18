@@ -193,7 +193,7 @@ func TestIntegrationExchangeTokenForOCI_Timeout(t *testing.T) {
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unable to exchange JWT for security token")
-	require.Contains(t, err.Error(), "Client.Timeout")
+	require.Contains(t, err.Error(), "oci_timeout")
 }
 
 func TestIntegrationExchangeTokenForOCI_ErrorPayloadWithHTTP200(t *testing.T) {
@@ -222,7 +222,7 @@ func TestIntegrationExchangeTokenForOCI_ErrorPayloadWithHTTP200(t *testing.T) {
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid_request")
-	require.Contains(t, err.Error(), "subject token rejected")
+	require.NotContains(t, err.Error(), "subject token rejected")
 }
 
 func makeMockSecurityJWT(t *testing.T) string {

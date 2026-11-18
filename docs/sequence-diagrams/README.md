@@ -36,4 +36,6 @@ Escape literal semicolons in diagram labels as `#59;`. Mermaid treats unescaped 
 
 The old `assets/diagram-1.svg`, `diagram-2.svg` and `diagram-3.svg` exports were removed because they showed retired body-role and role-claim-enforcement fields. They were not referenced by the current README. Do not use those historical images as API documentation.
 
+All exchange variants share [redacted operational events and temporary claim diagnostics](../security-logging.md). The diagnostic deadline is persisted and checked before returning a response; failure warnings are rate limited, while Vault audit devices remain independent. Client diagrams keep these operator details in the reference guide.
+
 These are logical sequences, not proof of deployed Vault/OCI behavior. Failure details, compatibility constraints and remaining acceptance tests are documented in the README and TEST_PLAN.

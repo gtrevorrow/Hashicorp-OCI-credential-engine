@@ -166,7 +166,7 @@ func trimBrokeredPublicKeys(keys []string) []string {
 
 func (b *backend) validateBrokeredSubjectToken(ctx context.Context, token string, config *federatedConfig) (map[string]interface{}, error) {
 	if len(token) > maxBrokeredDocumentBytes {
-		return nil, fmt.Errorf("brokered JWT exceeds size limit")
+		return nil, failure("brokered_token_too_large", "brokered JWT exceeds size limit")
 	}
 	allowedAlgs := make([]jose.SignatureAlgorithm, 0, len(config.BrokeredSubjectTokenAllowedAlgs))
 	for _, alg := range config.BrokeredSubjectTokenAllowedAlgs {
@@ -175,37 +175,37 @@ func (b *backend) validateBrokeredSubjectToken(ctx context.Context, token string
 
 	jws, err := jose.ParseSigned(token, allowedAlgs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse signed JWT: %w", err)
+		return nil, failure("brokered_token_invalid", "failed to parse signed JWT")
 	}
 	if len(jws.Signatures) != 1 {
-		return nil, fmt.Errorf("expected exactly one JWT signature")
+		return nil, failure("brokered_token_invalid", "expected exactly one JWT signature")
 	}
 
 	headerAlg := jws.Signatures[0].Header.Algorithm
 	if _, ok := brokeredSupportedAlgs[headerAlg]; !ok {
-		return nil, fmt.Errorf("unsupported JWT alg %q", headerAlg)
+		return nil, failure("brokered_algorithm_disallowed", "unsupported JWT algorithm")
 	}
 
 	keys, err := b.cachedBrokeredVerificationKeys(ctx, config, false)
 	if err != nil {
-		return nil, err
+		return nil, failure("brokered_trust_unavailable", "brokered verification keys unavailable")
 	}
 
 	payload, err := verifyBrokeredJWT(jws, keys, headerAlg, config.BrokeredSubjectTokenTrustType == brokeredTrustTypePublicKeys)
 	if err != nil && jws.Signatures[0].Header.KeyID != "" && !brokeredHasKeyID(keys, jws.Signatures[0].Header.KeyID) {
 		keys, refreshErr := b.cachedBrokeredVerificationKeys(ctx, config, true)
 		if refreshErr != nil {
-			return nil, refreshErr
+			return nil, failure("brokered_trust_unavailable", "brokered verification keys unavailable")
 		}
 		payload, err = verifyBrokeredJWT(jws, keys, headerAlg, config.BrokeredSubjectTokenTrustType == brokeredTrustTypePublicKeys)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to verify JWT signature: %w", err)
+		return nil, failure("brokered_signature_invalid", "failed to verify JWT signature")
 	}
 
 	var claims map[string]interface{}
 	if err := json.Unmarshal(payload, &claims); err != nil {
-		return nil, fmt.Errorf("failed to decode JWT claims: %w", err)
+		return nil, failure("brokered_claims_invalid", "failed to decode JWT claims")
 	}
 
 	if err := validateBrokeredTokenClaims(claims, config); err != nil {
@@ -255,10 +255,10 @@ func isBrokeredKeyCompatibleWithAlg(key jose.JSONWebKey, alg string) bool {
 func validateBrokeredTokenClaims(claims map[string]interface{}, config *federatedConfig) error {
 	issuer, ok := claims["iss"].(string)
 	if !ok || strings.TrimSpace(issuer) == "" {
-		return fmt.Errorf("JWT iss claim is missing or invalid")
+		return failure("brokered_issuer_invalid", "JWT iss claim is missing or invalid")
 	}
 	if issuer != config.BrokeredSubjectTokenIssuer {
-		return fmt.Errorf("JWT iss claim %q does not match configured brokered issuer", issuer)
+		return failure("brokered_issuer_mismatch", "JWT iss claim does not match configured brokered issuer")
 	}
 
 	if err := validateBrokeredAudienceClaim(claims["aud"], config.BrokeredSubjectTokenAllowedAudiences); err != nil {
@@ -270,26 +270,26 @@ func validateBrokeredTokenClaims(claims map[string]interface{}, config *federate
 
 	exp, err := brokeredNumericDateClaim(claims, "exp", true)
 	if err != nil {
-		return err
+		return failure("brokered_claims_invalid", "JWT time claim is missing or invalid")
 	}
 	if now.After(exp.Add(skew)) {
-		return fmt.Errorf("JWT exp claim is expired")
+		return failure("brokered_token_expired", "JWT exp claim is expired")
 	}
 
 	nbf, err := brokeredNumericDateClaim(claims, "nbf", false)
 	if err != nil {
-		return err
+		return failure("brokered_claims_invalid", "JWT time claim is missing or invalid")
 	}
 	if !nbf.IsZero() && now.Add(skew).Before(nbf) {
-		return fmt.Errorf("JWT nbf claim is not yet valid")
+		return failure("brokered_token_not_yet_valid", "JWT nbf claim is not yet valid")
 	}
 
 	iat, err := brokeredNumericDateClaim(claims, "iat", false)
 	if err != nil {
-		return err
+		return failure("brokered_claims_invalid", "JWT time claim is missing or invalid")
 	}
 	if !iat.IsZero() && now.Add(skew).Before(iat) {
-		return fmt.Errorf("JWT iat claim is in the future")
+		return failure("brokered_token_not_yet_valid", "JWT iat claim is in the future")
 	}
 
 	return nil
@@ -320,10 +320,10 @@ func validateBrokeredAudienceClaim(raw interface{}, allowedAudiences []string) e
 			}
 		}
 	default:
-		return fmt.Errorf("JWT aud claim is missing or invalid")
+		return failure("brokered_audience_invalid", "JWT aud claim is missing or invalid")
 	}
 
-	return fmt.Errorf("JWT aud claim does not match configured brokered audiences")
+	return failure("brokered_audience_mismatch", "JWT aud claim does not match configured brokered audiences")
 }
 
 func brokeredNumericDateClaim(claims map[string]interface{}, name string, required bool) (time.Time, error) {

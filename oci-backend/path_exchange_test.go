@@ -127,7 +127,7 @@ func TestPathExchange_TokenExchanges(t *testing.T) {
 		resp, err := backend.HandleRequest(context.Background(), req)
 		require.NoError(t, err)
 		require.True(t, resp.IsError())
-		require.Contains(t, resp.Error().Error(), "role 'nonexistent' not found")
+		require.Contains(t, resp.Error().Error(), "requested role not found")
 	})
 }
 
@@ -473,7 +473,7 @@ func TestPathExchange_RejectsUnknownFieldsBeforeTokenResolution(t *testing.T) {
 					require.True(t, resp.IsError())
 					require.Contains(t, resp.Error().Error(), "invalid exchange request")
 					require.Contains(t, resp.Error().Error(), "unknown field")
-					require.Contains(t, resp.Error().Error(), tc.field)
+					require.NotContains(t, resp.Error().Error(), "unexpected")
 				})
 			}
 		}
@@ -1318,7 +1318,7 @@ func TestPathExchange_SubjectTokenAudienceOverrideRejectedWhenNotAllowlisted(t *
 	resp, err := b.HandleRequest(context.Background(), req)
 	require.NoError(t, err)
 	require.True(t, resp.IsError())
-	require.Contains(t, resp.Error().Error(), "subject_token_audience override is not enabled for this backend")
+	require.Contains(t, resp.Error().Error(), "invalid subject_token_audience override")
 }
 
 func TestPathExchange_SubjectTokenAudienceOverrideRejectsInvalidValue(t *testing.T) {

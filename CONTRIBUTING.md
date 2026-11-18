@@ -174,6 +174,17 @@ These use mocked CLI/process boundaries to verify secret handling, target checks
 - CI configures a temporary local `go.work` replacement for `github.com/oracle/oci-go-sdk/v65`.
 - Before configuring that workspace, CI runs `GOWORK=off go test -tags=integration ./...` against the committed dependency versions. Run the same command locally when updating dependencies, in addition to the workspace checks above.
 
+### Local Vault audit acceptance
+
+With Vault and Go installed, run this optional acceptance test:
+
+```bash
+OCI_SECURITY_AUDIT_TEST=1 GOWORK=off go test -tags=integration ./oci-backend \
+    -run '^TestIntegrationVaultAuditProtectsCredentialMaterial$' -count=1 -v
+```
+
+It builds the plugin and starts its own disposable Vault on an ephemeral loopback port with a synthetic TLS OCI endpoint. It checks successful credentials, redacted errors, operational events, and default HMAC audit records using canary values. It ignores inherited Vault/OCI routing settings and never uses `.env.local`, the managed dev helper instance, or an OCI account. Its private temporary state is removed when the test finishes. The test is skipped without the explicit environment flag; normal CI still runs the mock and handler logging tests. This acceptance does not establish live OCI authorization or production audit delivery.
+
 ### Notes
 
 - In restricted local sandbox environments, integration tests may be skipped if local TCP bind is not permitted.

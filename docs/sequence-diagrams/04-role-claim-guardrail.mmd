@@ -25,3 +25,5 @@ sequenceDiagram
     else No rule matches
         V-->>C: Error response before OCI call
     end
+    Note over V: Diagnostic claims require an explicit unexpired 15-minute window at response time
+    Note over V: Success/failure events contain safe metadata only#59; Vault audit devices are configured separately

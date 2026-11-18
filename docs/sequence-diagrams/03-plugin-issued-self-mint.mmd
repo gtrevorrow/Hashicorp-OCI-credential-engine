@@ -31,3 +31,5 @@ sequenceDiagram
     O-->>V: OCI UPST or RPST
     V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
     V-->>C: Vault secret response with OCI token, lease, and generated private key only when the engine generated the exchange keypair
+    Note over V: Diagnostic claims require an explicit unexpired 15-minute window at response time
+    Note over V: Success/failure events contain safe metadata only#59; Vault audit devices are configured separately

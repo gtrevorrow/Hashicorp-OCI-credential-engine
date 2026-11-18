@@ -8,7 +8,7 @@
 - **Token Validation**: In direct pass-through mode, OCI IAM validates the caller-supplied subject token during exchange. In brokered mode, the plugin validates the external JWT locally, self-mints a new plugin-issued JWT, and OCI validates that brokered JWT during exchange.
 - **TTL Semantics**: RPST requests can be bounded by plugin TTL policy. UPST lifetime is determined by OCI; plugin TTL settings mainly control Vault lease metadata for UPST responses.
 - **Lease Management**: Vault lease lifecycle is applied to issued secrets, but this plugin does not call OCI to invalidate exchanged credentials on revocation. Leases are nonrenewable; see the [expiry contract](usage.md#exchange-path).
-- **Audit Logging**: Configure Vault audit devices and review their redaction settings. The plugin does not enable audit logging itself or guarantee that exchanges are recorded.
+- **Audit Logging**: Configure Vault audit devices and review their redaction settings. The plugin does not enable audit logging itself. Its structured operational events supplement the audit trail; see [security logging and diagnostics](security-logging.md) for the event contract, redacted errors, and temporary claim diagnostics.
 - **Self-Mint Key Handling**: When `subject_token_self_mint_enabled=true` and no private key is supplied, the plugin generates an RSA key pair and persists the private key in plugin storage. The key is never returned by `read oci/config`.
 
 ## Access Controls For Self-Mint And Exchange

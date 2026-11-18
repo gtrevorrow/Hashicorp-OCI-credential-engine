@@ -19,22 +19,38 @@ func TestExchangeTTLPolicy(t *testing.T) {
 		vaultMax                   time.Duration
 		named, mapped              bool
 		want, wantMax              time.Duration
+		wantRPST, wantRPSTMax      time.Duration
+		rpstRejected               bool
 	}{
 		{name: "backend default", backendDefault: 120, backendMax: 600, want: 120 * time.Second, wantMax: 600 * time.Second},
 		{name: "role default", backendDefault: 120, backendMax: 600, named: true, roleDefault: 180 * time.Second, roleMax: 300 * time.Second, want: 180 * time.Second, wantMax: 300 * time.Second},
-		{name: "request overrides default", request: "30s", backendDefault: 120, backendMax: 600, named: true, roleDefault: 180 * time.Second, roleMax: 300 * time.Second, want: 30 * time.Second, wantMax: 300 * time.Second},
+		{name: "request overrides default", request: "30s", backendDefault: 120, backendMax: 600, named: true, roleDefault: 180 * time.Second, roleMax: 300 * time.Second, want: 30 * time.Second, wantMax: 300 * time.Second, rpstRejected: true},
 		{name: "zero request uses default", request: 0, backendDefault: 120, backendMax: 600, want: 120 * time.Second, wantMax: 600 * time.Second},
 		{name: "backend caps role default", backendDefault: 30, backendMax: 60, named: true, roleDefault: time.Hour, roleMax: time.Hour, want: time.Minute, wantMax: time.Minute},
 		{name: "backend caps request", request: 3600, backendDefault: 30, backendMax: 60, named: true, roleDefault: time.Hour, roleMax: time.Hour, want: time.Minute, wantMax: time.Minute},
 		{name: "role caps request", request: 3600, backendDefault: 120, backendMax: 600, named: true, roleDefault: time.Minute, roleMax: 2 * time.Minute, want: 2 * time.Minute, wantMax: 2 * time.Minute},
-		{name: "Vault caps request", request: 3600, backendDefault: 120, backendMax: 600, named: true, roleDefault: time.Minute, roleMax: 2 * time.Minute, vaultMax: 30 * time.Second, want: 30 * time.Second, wantMax: 30 * time.Second},
-		{name: "Vault caps bare default", backendDefault: 120, backendMax: 600, vaultMax: 45 * time.Second, want: 45 * time.Second, wantMax: 45 * time.Second},
-		{name: "fractional Vault ceiling rounds down", backendDefault: 120, backendMax: 600, vaultMax: 1500 * time.Millisecond, want: time.Second, wantMax: time.Second},
+		{name: "Vault caps request", request: 3600, backendDefault: 120, backendMax: 600, named: true, roleDefault: time.Minute, roleMax: 2 * time.Minute, vaultMax: 30 * time.Second, want: 30 * time.Second, wantMax: 30 * time.Second, rpstRejected: true},
+		{name: "Vault caps bare default", backendDefault: 120, backendMax: 600, vaultMax: 45 * time.Second, want: 45 * time.Second, wantMax: 45 * time.Second, rpstRejected: true},
+		{name: "fractional Vault ceiling rounds down", backendDefault: 120, backendMax: 600, vaultMax: 1500 * time.Millisecond, want: time.Second, wantMax: time.Second, rpstRejected: true},
 		{name: "zero role inherits backend", backendDefault: 120, backendMax: 600, named: true, want: 120 * time.Second, wantMax: 600 * time.Second},
 		{name: "mapped role respects backend", backendDefault: 30, backendMax: 60, mapped: true, roleDefault: time.Hour, roleMax: time.Hour, want: time.Minute, wantMax: time.Minute},
+		{name: "nonminute request preserves policy bound", request: 119, backendDefault: 120, backendMax: 600, want: 119 * time.Second, wantMax: 600 * time.Second, wantRPST: time.Minute},
+		{name: "nonminute backend ceiling preserves policy bound", request: 3600, backendDefault: 60, backendMax: 119, want: 119 * time.Second, wantMax: 119 * time.Second, wantRPST: time.Minute},
+		{name: "nonminute role ceiling preserves policy bound", request: 3600, backendDefault: 120, backendMax: 600, named: true, roleDefault: time.Minute, roleMax: 119 * time.Second, want: 119 * time.Second, wantMax: 119 * time.Second, wantRPST: time.Minute},
+		{name: "nonminute Vault ceiling preserves policy bound", backendDefault: 120, backendMax: 600, vaultMax: 119 * time.Second, want: 119 * time.Second, wantMax: 119 * time.Second, wantRPST: time.Minute},
+		{name: "OCI maximum bounds RPST lease", backendDefault: 86400, backendMax: 86400, want: 24 * time.Hour, wantMax: 24 * time.Hour, wantRPST: 12 * time.Hour, wantRPSTMax: 12 * time.Hour},
 	} {
 		for _, tokenType := range []string{ociRequestedTokenTypeUPST, ociRequestedTokenTypeRPST} {
 			t.Run(tc.name+"/"+tokenType, func(t *testing.T) {
+				want, wantMax := tc.want, tc.wantMax
+				if tokenType == ociRequestedTokenTypeRPST {
+					if tc.wantRPST != 0 {
+						want = tc.wantRPST
+					}
+					if tc.wantRPSTMax != 0 {
+						wantMax = tc.wantRPSTMax
+					}
+				}
 				b, storage := getTestBackend(t)
 				b.System().(*logical.StaticSystemView).MaxLeaseTTLVal = tc.vaultMax
 				cfg := &federatedConfig{DomainUrl: "https://oci.example", ClientID: "test", ClientSecret: "test", DefaultTTL: tc.backendDefault, MaxTTL: tc.backendMax}
@@ -55,7 +71,7 @@ func TestExchangeTTLPolicy(t *testing.T) {
 				b.setTokenExchanger(func(_ context.Context, _ string, actualType string, _ string, _ string, ttl time.Duration, _ *federatedConfig) (*tokenExchangeResult, error) {
 					calls++
 					require.Equal(t, tokenType, actualType)
-					require.Equal(t, tc.want, ttl)
+					require.Equal(t, want, ttl)
 					return &tokenExchangeResult{AccessToken: "synthetic", RequestedTokenType: tokenType}, nil
 				})
 				payload := map[string]interface{}{"subject_token": makeTestJWT(t, map[string]interface{}{"group": "dev"}), "requested_token_type": tokenType, "res_type": "resource_principal"}
@@ -65,10 +81,17 @@ func TestExchangeTTLPolicy(t *testing.T) {
 				resp, err := b.HandleRequest(context.Background(), &logical.Request{Operation: logical.UpdateOperation, Path: path, Storage: storage, Data: payload})
 				require.NoError(t, err)
 				require.NotNil(t, resp)
+				if tokenType == ociRequestedTokenTypeRPST && tc.rpstRejected {
+					require.True(t, resp.IsError())
+					require.Contains(t, resp.Error().Error(), "at least 60 seconds")
+					require.Zero(t, calls)
+					require.Nil(t, resp.Secret)
+					return
+				}
 				require.False(t, resp.IsError(), "%v", resp)
 				require.Equal(t, 1, calls)
-				require.Equal(t, tc.want, resp.Secret.TTL)
-				require.Equal(t, tc.wantMax, resp.Secret.MaxTTL)
+				require.Equal(t, want, resp.Secret.TTL)
+				require.Equal(t, wantMax, resp.Secret.MaxTTL)
 			})
 		}
 	}

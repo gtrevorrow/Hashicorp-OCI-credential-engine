@@ -89,7 +89,7 @@ func TestIntegrationExchangeTokenForOCI_RPSTWithPublicKey(t *testing.T) {
 		require.Equal(t, ociRequestedTokenTypeRPST, r.PostForm.Get("requested_token_type"))
 		require.Equal(t, "resource_principal", r.PostForm.Get("res_type"))
 		require.NotEmpty(t, r.PostForm.Get("public_key"))
-		require.Equal(t, "3600", r.PostForm.Get("rpst_exp"))
+		require.Equal(t, "60", r.PostForm.Get("rpst_exp"))
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"%s","token_type":"Bearer"}`, mockToken)))
@@ -193,7 +193,7 @@ func TestIntegrationExchangeTokenForOCI_Timeout(t *testing.T) {
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unable to exchange JWT for security token")
-	require.Contains(t, err.Error(), "Client.Timeout")
+	require.Contains(t, err.Error(), "oci_timeout")
 }
 
 func TestIntegrationExchangeTokenForOCI_ErrorPayloadWithHTTP200(t *testing.T) {
@@ -222,7 +222,7 @@ func TestIntegrationExchangeTokenForOCI_ErrorPayloadWithHTTP200(t *testing.T) {
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid_request")
-	require.Contains(t, err.Error(), "subject token rejected")
+	require.NotContains(t, err.Error(), "subject token rejected")
 }
 
 func makeMockSecurityJWT(t *testing.T) string {
@@ -271,7 +271,7 @@ func TestIntegrationExchangeRPSTRespectsBackendTTLCeiling(t *testing.T) {
 	server := newIntegrationServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		require.NoError(t, r.ParseForm())
-		require.Equal(t, "60", r.PostForm.Get("rpst_exp"))
+		require.Equal(t, "1", r.PostForm.Get("rpst_exp"))
 		require.Equal(t, ociRequestedTokenTypeRPST, r.PostForm.Get("requested_token_type"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"synthetic","token_type":"Bearer"}`))

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-jose/go-jose/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,7 +56,10 @@ func TestBrokeredSubjectTokenRejectsUnsafeHeaders(t *testing.T) {
 			claims, err := b.validateBrokeredSubjectToken(context.Background(), token, config)
 			require.Nil(t, claims)
 			require.ErrorContains(t, err, "failed to parse signed JWT")
-			require.ErrorContains(t, err, tc.err)
+			// Verify the parser's resource limit and the backend's non-disclosing public error independently.
+			_, parserErr := jose.ParseSigned(token, []jose.SignatureAlgorithm{jose.RS256})
+			require.ErrorContains(t, parserErr, tc.err)
+			require.Equal(t, "brokered_token_invalid", failureReason(err, ""))
 		})
 	}
 }

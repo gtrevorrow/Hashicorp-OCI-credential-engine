@@ -181,7 +181,7 @@ Strict field validation runs before configuration lookup and token processing. S
 
 ## 6. Lease & TTL Management
 
-Handler tests now assert request/role/backend default selection, each limiting layer, named and mapped roles, and the TTL/MaxTTL returned to Vault for both UPST and RPST. An HTTP integration case asserts a stored role with a one-hour default/maximum sends `rpst_exp=60` under a one-minute backend ceiling. UPST lifetime is OCI-controlled. The handler reports upstream-derived expiry separately from lease policy. Known remaining lifetime caps the lease; missing/null upstream expiry produces `credential_expiry_known=false` with omitted expiry fields and a policy-only lease.
+Handler tests assert request/role/backend default selection, each limiting layer, named and mapped roles, and the TTL/MaxTTL returned to Vault for both UPST and RPST. An HTTP integration case asserts a stored role with a one-hour default/maximum sends `rpst_exp=1` under a one-minute backend ceiling. `TestOCIExchangeRequestsRPSTLifetimeInWholeMinutes` checks minute conversion, downward rounding, sub-minute rejection before HTTP, the 720-minute cap, large durations, and omission of `rpst_exp` for UPST. Handler cases also check rounded RPST leases and rejection when Vault imposes a sub-minute ceiling. UPST lifetime is OCI-controlled. The handler reports upstream-derived expiry separately from lease policy. Known remaining lifetime caps the lease; missing/null upstream expiry produces `credential_expiry_known=false` with omitted expiry fields and a policy-only lease.
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|
@@ -383,7 +383,7 @@ Feature: `feature/harden-dev-helpers`, based on development `768e775` (finding 6
 
 Run `make test-dev-helpers` (also in PR CI). Python tests mock Vault/process interfaces; no real Vault or OCI tenant is exercised. Bash syntax and `git diff --check` are also required for these script changes. Sequence diagrams are unchanged because the plugin exchange/authentication sequence is unchanged; the smoke harness now provisions isolated temporary resources around that sequence.
 
-Local verification for DEV-01–05: all 14 helper security tests passed, along with shell syntax and diff checks. DEV-06 remains unexecuted because Vault is not installed in this environment.
+Local verification for DEV-01–05: all 14 helper security tests passed, along with shell syntax and diff checks. DEV-06 still requires a managed-helper lifecycle with live OCI; LOG-08 below exercises a separate disposable Vault with synthetic OCI responses.
 
 ## Complete Template Validation
 
@@ -395,3 +395,20 @@ Local verification for DEV-01–05: all 14 helper security tests passed, along w
 | TPL-04 | Valid syntax can reference runtime data absent at write time; runtime missing data still fails; escaped separators work | `TestTemplateSyntaxDoesNotRequireRuntimeData` |
 
 Existing malformed stored templates fail during exchange; update them before deployment. Limits are per template/claim, not an aggregate JWT budget.
+
+## Security Logging and Diagnostic Verification
+
+| ID | Contract | Automated evidence |
+|---|---|---|
+| LOG-01 | No credential, identity-claim, or private-key values in operational events at any plugin log level | `TestSecurityEventsExcludeCredentialMaterialAtEveryLogLevel`, `TestSecurityLogAllowlistRejectsUntrustedFields` |
+| LOG-02 | OCI status/body/transport failures return only safe classifications; invalid inputs and brokered issuer mismatch do not echo values | `TestOCIErrorResponsesContainOnlySafeClassification`, `TestRejectedExchangeInputsDoNotEchoValues`, `TestBrokeredIssuerMismatchIsClassifiedWithoutEchoingClaims` |
+| LOG-03 | Direct, brokered, native Vault identity and self-mint source outcomes are observable without tokens/claims/keys | `TestCredentialExchangeEventsDescribeEachTokenSource`, success and rejection for each source |
+| LOG-04 | Diagnostic claims require explicit activation, expire after 15 minutes across restart/partial writes, and can be disabled/renewed | `TestDiagnosticClaimWindowExpiresWithoutRenewingOnRestartOrOtherWrites` |
+| LOG-05 | An in-flight exchange crossing the deadline returns no diagnostic claims, on success or failure | `TestDiagnosticClaimsAreOmittedWhenExchangeCrossesDeadline` |
+| LOG-06 | Warning bursts are bounded with suppression counts; admin changes remain visible | `TestSecurityWarningsAreRateLimitedAndSummarizeSuppression` (concurrent burst) |
+| LOG-07 | Config, role, key, debug and remote-trust events omit configuration values, URLs and underlying errors | `TestAdministrativeSecurityEventsExcludeConfigurationValues`, `TestTrustRefreshEventsExcludeURLsAndErrorDetails` |
+| LOG-08 | Built plugin works in installed Vault; success/failure events preserve levels and default audit HMAC protects credential strings | Opt-in `TestIntegrationVaultAuditProtectsCredentialMaterial`; see [local command](CONTRIBUTING.md#local-vault-audit-acceptance) |
+
+LOG-08 uses an isolated local Vault and synthetic TLS OCI endpoint. It checks neither the existing workstation Vault configuration nor a live OCI tenancy. Production log collection, retention, device failover, performance and deployed audit exceptions require separate operator acceptance. Operational warning suppression does not suppress Vault audit records.
+
+Local validation passed on Vault v2.1.0: LOG-08 acceptance, the full race-enabled Go suite with committed dependencies, workspace unit/integration tests, `go vet`, native build, and all 14 dev-helper tests. All 11 Mermaid sources rendered and all five README Mermaid blocks matched their sources. This records a local validation result, not a supported-version matrix.

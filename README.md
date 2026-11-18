@@ -291,7 +291,7 @@ vault write oci/role/developer \
     max_ttl=3600
 ```
 
-Request TTL takes precedence over defaults, then backend, role, and Vault ceilings cap it. OCI determines the lifetime actually granted. For UPST, plugin TTL settings affect the Vault lease; for RPST, they also bound the requested OCI [`rpst_exp`][oci-rpst-exp]. Known OCI expiry further caps the lease. See [complete TTL rules](docs/configuration.md#roles).
+Request TTL takes precedence over defaults, then backend, role, and Vault ceilings cap it. OCI determines the lifetime actually granted. For UPST, plugin TTL settings affect the Vault lease; for RPST, they also bound the requested OCI [`rpst_exp`][oci-rpst-exp]. Vault TTL inputs use seconds; RPST converts to whole minutes, rounding down and capping at 12 hours, and rejects effective TTLs below 60 seconds. Known OCI expiry further caps the lease. See [complete TTL rules](docs/configuration.md#roles).
 
 **Upgrading:** `allowed_subjects` and `allowed_groups` were never enforced and have been removed. Affected stored roles require [explicit cleanup](docs/configuration.md#removed-role-filter-fields-and-upgrade-cleanup) before exchange. Review [alias selection](docs/usage.md#explicit-linked-alias-selection) and [template validation](docs/usage.md#template-validation-and-limits) when upgrading older configuration.
 
@@ -348,7 +348,7 @@ See [methods, request fields, role fields, and response semantics](docs/usage.md
 
 Grant workloads only the exchange paths they need. Keep `oci/config` and role writes operator-only. If a role emits literal identity labels, its path ACL is part of the trust boundary. Enable Vault audit devices and review redaction settings; the plugin does not configure them.
 
-Read [Security and access controls](docs/security.md) for policy examples, [THREAT_MODEL.md](THREAT_MODEL.md) for the trust analysis, and [TEST_PLAN.md](TEST_PLAN.md) for validation coverage and remaining live-test gaps. Detailed implementation diagrams remain in the [diagram index](docs/sequence-diagrams/README.md).
+Read [Security and access controls](docs/security.md) for policy examples, [security logging and diagnostics](docs/security-logging.md) for events and audit guidance, [THREAT_MODEL.md](THREAT_MODEL.md) for the trust analysis, and [TEST_PLAN.md](TEST_PLAN.md) for validation coverage and remaining live-test gaps. Detailed implementation diagrams remain in the [diagram index](docs/sequence-diagrams/README.md).
 
 ## Development
 

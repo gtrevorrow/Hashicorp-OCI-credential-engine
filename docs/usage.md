@@ -457,6 +457,10 @@ vault write -format=json oci/exchange/developer - \
 
 Use the response with an appropriately configured OCI client and remove the private directory after use. Do not enable shell tracing or copy the response into logs. If the request supplied `public_key`, retain the corresponding caller-owned private key; the response contains no generated key material.
 
+## Troubleshooting Exchange Failures
+
+Exchange errors return fixed classifications and safe correlation metadata rather than raw OCI response bodies or token claims. Use the [security logging guide](security-logging.md) to correlate failures and configure audit records. If decoded resolved-token claims are needed in a controlled test, explicitly enable the [15-minute diagnostic window](security-logging.md#temporary-claim-diagnostics) and protect the response capture.
+
 ## Exchange a JWT for OCI RPST
 
 Use RPST when you need resource-principal style token exchange behavior supported by OCI Identity Domains.
@@ -468,7 +472,7 @@ vault write oci/exchange/developer \
     res_type="resource_principal"
 ```
 
-For RPST requests, `res_type` is required and the response will include `rpst_token`. The plugin also sends `rpst_exp` to OCI based on the effective TTL after applying request, role, backend, and Vault mount/system limits.
+For RPST requests, `res_type` is required and the response will include `rpst_token`. The plugin sends `rpst_exp` in whole minutes after applying request, role, backend, and Vault mount/system limits. The effective duration is capped at 12 hours and rounded down to whole minutes for both the OCI request and Vault lease; durations below 60 seconds are rejected. For example, `ttl=60` sends `rpst_exp=1`, while `ttl=3600` sends `rpst_exp=60`.
 
 ## API Reference
 
@@ -496,7 +500,7 @@ For RPST requests, `res_type` is required and the response will include `rpst_to
 | <a id="request-res-type"></a>`res_type` | OCI resource type for an RPST exchange. Required by this engine when requesting `urn:oci:token-type:oci-rpst`; its value must match the OCI trust configuration. |
 | <a id="request-public-key"></a>`public_key` | Optional PEM-encoded SubjectPublicKeyInfo public key (`BEGIN PUBLIC KEY`) to bind into the session token. Keep its matching private key for signing OCI API requests. If omitted, the engine generates an RSA keypair and returns the private key. See [request signing](#session-tokens-and-request-signing). |
 | <a id="request-subject-token-audience"></a>`subject_token_audience` | Optional audience override, only when `subject_token` is omitted. It must be allowed by `subject_token_allowed_audiences`. Omission or an empty string keeps the configured default; whitespace-only values are rejected. |
-| <a id="request-ttl"></a>`ttl` | Optional positive whole-second duration, as seconds or a supported duration string. Omission or zero selects the role/backend default. Backend, role, and Vault limits cap the result. It bounds the Vault lease and RPST requested lifetime; it does not set UPST expiry. See [TTL policy](configuration.md#roles). |
+| <a id="request-ttl"></a>`ttl` | Optional positive whole-second duration, as seconds or a supported duration string. Omission or zero selects the role/backend default. Backend, role, and Vault limits cap the result. RPST further caps at 12 hours, rounds down to whole minutes, and rejects effective TTLs below 60 seconds. It bounds the Vault lease and RPST requested lifetime; it does not set UPST expiry. See [TTL policy](configuration.md#roles). |
 
 Unknown request fields are rejected. Select a role through `/oci/exchange/:role`; `role` is not a body parameter.
 

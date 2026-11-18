@@ -63,7 +63,7 @@ func (b *backend) buildExchangePath(pattern string, includeRole bool) *framework
 		},
 		"ttl": {
 			Type:        framework.TypeDurationSecond,
-			Description: "Requested TTL for the OCI session token",
+			Description: "Requested TTL in seconds; RPST rounds down to whole minutes (minimum 60 seconds, maximum 12 hours)",
 			Required:    false,
 			DisplayAttrs: &framework.DisplayAttributes{
 				Name: "TTL",
@@ -106,23 +106,28 @@ func (b *backend) buildExchangePath(pattern string, includeRole bool) *framework
 }
 
 // pathExchangeWrite handles the token exchange
-func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (resp *logical.Response, err error) {
+	observed := &exchangeObservation{started: b.securityNow(), request: req, mode: "undetermined", source: "unavailable"}
+	ctx = context.WithValue(ctx, exchangeObservationKey{}, observed)
+	defer func() { b.finishExchange(req, observed, resp, err) }()
+
 	// Reject undeclared input before raw request data can reach token resolution or signing.
 	if err := data.ValidateStrict(); err != nil {
-		return logical.ErrorResponse("invalid exchange request: %v", err), nil
+		return exchangeFailure(observed, "request_invalid", "invalid exchange request: unknown field or invalid field type")
 	}
 
 	if err := validateTokenTTLInputs(data, true, "ttl"); err != nil {
-		return logical.ErrorResponse("invalid token TTL policy: %v", err), nil
+		return exchangeFailure(observed, "ttl_invalid", "invalid token TTL policy: ttl must use whole seconds within the supported range")
 	}
 
 	// Get backend configuration
 	config, err := b.getConfig(ctx, req.Storage)
 	if err != nil {
-		return nil, err
+		observed.reason = "storage_error"
+		return nil, fmt.Errorf("unable to read backend configuration")
 	}
 	if config == nil {
-		return logical.ErrorResponse("backend not configured"), nil
+		return exchangeFailure(observed, "not_configured", "backend not configured")
 	}
 
 	subjectToken := ""
@@ -130,7 +135,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if raw, ok := data.GetOk("subject_token"); ok {
 		subjectToken = raw.(string)
 		if subjectToken == "" {
-			return logical.ErrorResponse("subject_token was provided but is empty"), nil
+			return exchangeFailure(observed, "subject_token_empty", "subject_token was provided but is empty")
 		}
 		subjectTokenProvided = true
 	}
@@ -146,7 +151,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 
 	if !isSupportedRequestedTokenType(requestedTokenType) {
-		return logical.ErrorResponse("unsupported requested_token_type '%s'; supported values are '%s' and '%s'", requestedTokenType, ociRequestedTokenTypeUPST, ociRequestedTokenTypeRPST), nil
+		return exchangeFailure(observed, "token_type_invalid", "unsupported requested_token_type; supported values are urn:oci:token-type:oci-upst and urn:oci:token-type:oci-rpst")
 	}
 
 	resType := ""
@@ -155,7 +160,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 
 	if requestedTokenType == ociRequestedTokenTypeRPST && resType == "" {
-		return logical.ErrorResponse("missing 'res_type' for requested_token_type '%s'", ociRequestedTokenTypeRPST), nil
+		return exchangeFailure(observed, "resource_type_missing", "missing 'res_type' for requested_token_type urn:oci:token-type:oci-rpst")
 	}
 
 	publicKey := ""
@@ -168,9 +173,18 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		roleName = raw.(string)
 	}
 	brokeredMode := subjectTokenProvided && config.BrokeredSubjectTokenEnabled
+	observed.tokenType = requestedTokenType
+	if subjectTokenProvided {
+		observed.mode, observed.source = "direct", "caller"
+	} else {
+		observed.mode = "plugin_issued"
+	}
+	if brokeredMode {
+		observed.mode, observed.source = "brokered", "brokered_reissue"
+	}
 	if subjectTokenProvided && !brokeredMode && len(config.SubjectTokenRoleMappings) > 0 {
 		if roleName != "" {
-			return logical.ErrorResponse("role-specific exchange paths cannot be used when subject_token_role_mappings are configured"), nil
+			return exchangeFailure(observed, "role_path_disallowed", "role-specific exchange paths cannot be used when subject_token_role_mappings are configured")
 		}
 	}
 	if roleName != "" {
@@ -183,51 +197,55 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	// Resolve missing subject token through registered callback flow.
 	if subjectToken == "" {
 		if !configEnablePluginIssuedSubjectToken(config) {
-			return logical.ErrorResponse("missing 'subject_token' and plugin-issued subject token mode is disabled"), nil
+			return exchangeFailure(observed, "subject_token_required", "missing 'subject_token' and plugin-issued subject token mode is disabled")
 		}
 		if _, audienceErr := resolveSubjectTokenAudience(data, config); audienceErr != nil {
-			return logical.ErrorResponse("%v", audienceErr), nil
+			return exchangeFailure(observed, "audience_invalid", "invalid subject_token_audience override; it must be explicitly allowed by backend configuration")
 		}
 		callback := b.getSubjectTokenCallback()
 		if callback == nil {
-			return logical.ErrorResponse("missing 'subject_token' and unable to self-mint identity token"), nil
+			return exchangeFailure(observed, "subject_source_unavailable", "missing 'subject_token' and unable to self-mint identity token")
 		}
+		observed.source = "custom_callback"
 		fallbackToken, callbackErr := callback(ctx, req, config)
 		if callbackErr != nil {
-			return logical.ErrorResponse("failed to mint subject_token via callback: %v", callbackErr), nil
+			return exchangeFailure(observed, failureReason(callbackErr, "subject_resolution_failed"), "failed to mint subject_token via callback: "+publicFailureMessage(callbackErr, "subject token processing failed"))
 		}
 		if fallbackToken == "" {
-			return logical.ErrorResponse("missing 'subject_token' and callback returned empty token"), nil
+			return exchangeFailure(observed, "subject_source_empty", "missing 'subject_token' and callback returned empty token")
 		}
 		subjectToken = fallbackToken
 	} else if requestedSubjectTokenAudience != "" {
-		return logical.ErrorResponse("subject_token_audience is only supported when subject_token is omitted"), nil
+		return exchangeFailure(observed, "audience_disallowed", "subject_token_audience is only supported when subject_token is omitted")
 	}
 
 	if brokeredMode {
 		validatedClaims, validateErr := b.validateBrokeredSubjectToken(ctx, subjectToken, config)
 		if validateErr != nil {
-			return logical.ErrorResponse("failed to validate brokered subject_token: %v", validateErr), nil
+			return exchangeFailure(observed, failureReason(validateErr, "brokered_validation_failed"), "failed to validate brokered subject_token: "+publicFailureMessage(validateErr, "verification or trust resolution failed"))
 		}
 
 		mappedClaims, mappingErr := renderBrokeredClaimMappings(validatedClaims, config.BrokeredSubjectTokenClaimMappings)
 		if mappingErr != nil {
-			return logical.ErrorResponse("failed to map brokered subject_token claims: %v", mappingErr), nil
+			return exchangeFailure(observed, "claim_mapping_failed", "failed to map brokered subject_token claims")
 		}
 
 		brokeredToken, mintErr := b.selfMintBrokeredSubjectToken(ctx, req, config, validatedClaims, mappedClaims)
 		if mintErr != nil {
-			return logical.ErrorResponse("failed to self-mint brokered subject_token: %v", mintErr), nil
+			return exchangeFailure(observed, failureReason(mintErr, "brokered_signing_failed"), "failed to self-mint brokered subject_token: "+publicFailureMessage(mintErr, "subject token signing failed"))
 		}
 		subjectToken = brokeredToken
 	}
 
 	var resolvedSubjectTokenClaims map[string]interface{}
-	if config.DebugReturnResolvedSubjectTokenClaims {
+	if config.DebugReturnResolvedSubjectTokenClaims && !debugClaimsActive(config, b.securityNow()) {
+		b.securityEvent(req, "diagnostic_claims_inactive", true, true, "expired_or_unarmed")
+	}
+	if debugClaimsActive(config, b.securityNow()) {
 		claims, claimsErr := decodeJWTClaimsMap(subjectToken)
 		if claimsErr != nil {
 			resolvedSubjectTokenClaims = map[string]interface{}{
-				"_decode_error": claimsErr.Error(),
+				"_decode_error": "subject token is not a decodable JWT",
 			}
 		} else {
 			resolvedSubjectTokenClaims = claims
@@ -237,31 +255,45 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if subjectTokenProvided && !brokeredMode && len(config.SubjectTokenRoleMappings) > 0 {
 		derivedRoleName, derivedRoleErr := resolveRoleFromSubjectToken(subjectToken, config.SubjectTokenRoleMappings)
 		if derivedRoleErr != nil {
-			return logical.ErrorResponse("unable to derive role from subject_token: %v", derivedRoleErr), nil
+			return exchangeFailure(observed, "role_mapping_failed", "unable to derive role from subject_token: no subject_token_role_mappings matched or claims are invalid")
 		}
 		roleName = derivedRoleName
 	}
 	if roleName != "" && config.StrictRoleNameMatch && !isStrictRoleNameValid(roleName) {
-		return logical.ErrorResponse("invalid role '%s': strict_role_name_match requires pattern [A-Za-z0-9._:-]+", roleName), nil
+		return exchangeFailure(observed, "role_invalid", "invalid mapped role: strict_role_name_match requires pattern [A-Za-z0-9._:-]+")
 	}
 	var role *roleEntry
 	if roleName != "" {
 		role, err = b.getRole(ctx, req.Storage, roleName)
 		if err != nil {
-			return nil, err
+			observed.reason = failureReason(err, "role_unavailable")
+			return nil, fmt.Errorf("unable to load role: %s", publicFailureMessage(err, "role policy unavailable"))
 		}
 		if role == nil {
-			return logical.ErrorResponse("role '%s' not found", roleName), nil
+			return exchangeFailure(observed, "role_missing", "requested role not found")
 		}
 	}
 
+	if role != nil {
+		observed.role = roleName
+	}
 	var vaultMax time.Duration
 	if system := b.System(); system != nil {
 		vaultMax = system.MaxLeaseTTL()
 	}
 	ttl, maxTTL, ttlErr := resolveTokenTTL(data.Get("ttl").(int), config, role, vaultMax)
 	if ttlErr != nil {
-		return logical.ErrorResponse("invalid token TTL policy: %v", ttlErr), nil
+		return exchangeFailure(observed, "ttl_invalid", "invalid token TTL policy: unable to resolve bounded credential TTL")
+	}
+	if requestedTokenType == ociRequestedTokenTypeRPST {
+		minutes, err := rpstTTLMinutes(ttl)
+		if err != nil {
+			return exchangeFailure(observed, "ttl_invalid", "invalid token TTL policy: RPST requires an effective TTL of at least 60 seconds")
+		}
+		ttl = time.Duration(minutes) * time.Minute
+		if maxTTL > maxRPSTTTL {
+			maxTTL = maxRPSTTTL
+		}
 	}
 
 	// Perform the token exchange
@@ -271,18 +303,23 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	}
 	exchangeResult, err := exchanger(ctx, subjectToken, requestedTokenType, resType, publicKey, ttl, config)
 	if err != nil {
-		if resolvedSubjectTokenClaims != nil {
-			return logical.ErrorResponseWithData(map[string]interface{}{
-				"resolved_subject_token_claims": resolvedSubjectTokenClaims,
-			}, "token exchange failed: %v", err), nil
+		safe := safeExchangeError(err)
+		observed.reason, observed.status, observed.upstreamID = safe.reason, safe.status, safe.requestID
+		if resolvedSubjectTokenClaims != nil && debugClaimsActive(config, b.securityNow()) {
+			b.securityEvent(req, "diagnostic_claims_returned", true, true, "enabled")
+			return logical.ErrorResponseWithData(map[string]interface{}{"resolved_subject_token_claims": resolvedSubjectTokenClaims}, "token exchange failed: %s", safe.Error()), nil
 		}
-		return logical.ErrorResponse("token exchange failed: %v", err), nil
+		return logical.ErrorResponse("token exchange failed: %s", safe.Error()), nil
 	}
+	if exchangeResult == nil {
+		return exchangeFailure(observed, "oci_response_invalid", "token exchange failed: OCI response is unavailable")
+	}
+	observed.status, observed.upstreamID = exchangeResult.HTTPStatus, exchangeResult.RequestID
 
 	now := time.Now()
 	leaseTTL, leaseMaxTTL, remaining, expiryErr := reconcileCredentialExpiry(ttl, maxTTL, exchangeResult.CredentialExpiresAt, now)
 	if expiryErr != nil {
-		return logical.ErrorResponse("invalid OCI credential expiry: %v", expiryErr), nil
+		return exchangeFailure(observed, "oci_expiry_invalid", "invalid OCI credential expiry")
 	}
 
 	// Prepare the response with OCI session token
@@ -296,7 +333,8 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 		respData["expires_in"] = int64(remaining / time.Second)
 		respData["expires_at"] = exchangeResult.CredentialExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	if resolvedSubjectTokenClaims != nil {
+	if resolvedSubjectTokenClaims != nil && debugClaimsActive(config, b.securityNow()) {
+		b.securityEvent(req, "diagnostic_claims_returned", true, true, "enabled")
 		respData["resolved_subject_token_claims"] = resolvedSubjectTokenClaims
 	}
 
@@ -310,7 +348,7 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	if publicKey == "" && exchangeResult.PrivateKey != "" {
 		respData["private_key"] = exchangeResult.PrivateKey
 	}
-	resp := b.Secret("oci_token").Response(respData, map[string]interface{}{
+	resp = b.Secret("oci_token").Response(respData, map[string]interface{}{
 		"role": roleName,
 	})
 
@@ -348,7 +386,7 @@ func resolveSubjectTokenAudience(data fieldDataGetter, config *federatedConfig) 
 	if len(allowed) == 0 {
 		return "", fmt.Errorf("subject_token_audience override is not enabled for this backend")
 	}
-	return "", fmt.Errorf("subject_token_audience '%s' is not in subject_token_allowed_audiences", requestedAudience)
+	return "", fmt.Errorf("subject_token_audience is not in subject_token_allowed_audiences")
 }
 
 // ociTokenSecret returns the secret type for OCI tokens

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/hashicorp/vault/sdk/framework"
@@ -142,7 +143,7 @@ func (b *backend) pathConfig() []*framework.Path {
 				},
 				"debug_return_resolved_subject_token_claims": {
 					Type:        framework.TypeBool,
-					Description: "Development-only flag to include resolved subject token claims in exchange responses",
+					Description: "Explicitly enable resolved subject token claims for 15 minutes; re-enabling renews the diagnostic window",
 					Default:     false,
 					DisplayAttrs: &framework.DisplayAttributes{
 						Name: "Debug Resolved Subject Token Claims",
@@ -292,7 +293,7 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 		"subject_token_self_mint_audience":            configSubjectTokenSelfMintAudience(config),
 		"subject_token_allowed_audiences":             configSubjectTokenAllowedAudiences(config),
 		"subject_token_self_mint_ttl_seconds":         configSubjectTokenSelfMintTTLSeconds(config),
-		"debug_return_resolved_subject_token_claims":  config.DebugReturnResolvedSubjectTokenClaims,
+		"debug_return_resolved_subject_token_claims":  debugClaimsActive(config, b.securityNow()),
 		"debug_allow_brokered_http":                   config.DebugAllowBrokeredHTTP,
 		"brokered_subject_token_allowed_jwks_origins": config.BrokeredSubjectTokenAllowedJWKSOrigins,
 		"brokered_subject_token_enabled":              config.BrokeredSubjectTokenEnabled,
@@ -306,11 +307,19 @@ func (b *backend) pathConfigRead(ctx context.Context, req *logical.Request, data
 		"brokered_subject_token_public_keys":          config.BrokeredSubjectTokenPublicKeys,
 		"brokered_subject_token_claim_mappings":       config.BrokeredSubjectTokenClaimMappings,
 	}
+	if !config.DebugResolvedClaimsExpiresAt.IsZero() {
+		respData["debug_resolved_subject_token_claims_expires_at"] = config.DebugResolvedClaimsExpiresAt.UTC().Format(time.RFC3339)
+	}
 	return &logical.Response{Data: respData}, nil
 }
 
 // pathConfigWrite creates or updates the configuration
-func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (resp *logical.Response, err error) {
+	defer func() {
+		if err != nil || (resp != nil && resp.IsError()) {
+			b.securityEvent(req, "configuration_change_failed", true, true, "request_rejected")
+		}
+	}()
 	if err := validateTokenTTLInputs(data, false, "default_ttl", "max_ttl"); err != nil {
 		return logical.ErrorResponse("invalid token TTL policy: %v", err), nil
 	}
@@ -381,6 +390,10 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 	if _, ok := req.Data["debug_return_resolved_subject_token_claims"]; ok {
 		config.DebugReturnResolvedSubjectTokenClaims = data.Get("debug_return_resolved_subject_token_claims").(bool)
+		config.DebugResolvedClaimsExpiresAt = time.Time{}
+		if config.DebugReturnResolvedSubjectTokenClaims {
+			config.DebugResolvedClaimsExpiresAt = b.securityNow().UTC().Add(diagnosticClaimsWindow)
+		}
 	}
 	if _, ok := req.Data["debug_allow_brokered_http"]; ok {
 		config.DebugAllowBrokeredHTTP = data.Get("debug_allow_brokered_http").(bool)
@@ -497,9 +510,14 @@ func (b *backend) pathConfigWrite(ctx context.Context, req *logical.Request, dat
 	}
 
 	if err := b.saveConfig(ctx, req.Storage, config); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to save backend configuration")
 	}
-
+	b.logConfigChange(req, existingConfig, config)
+	if _, explicit := req.Data["debug_return_resolved_subject_token_claims"]; explicit && config.DebugReturnResolvedSubjectTokenClaims {
+		resp = &logical.Response{}
+		resp.AddWarning("Diagnostic subject-token claims may disclose identity attributes until " + config.DebugResolvedClaimsExpiresAt.UTC().Format(time.RFC3339))
+		return resp, nil
+	}
 	return nil, nil
 }
 
@@ -520,8 +538,10 @@ func generateRSAPrivateKeyPEM() (string, error) {
 // pathConfigDelete deletes the configuration
 func (b *backend) pathConfigDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	if err := req.Storage.Delete(ctx, "config"); err != nil {
-		return nil, err
+		b.securityEvent(req, "configuration_change_failed", true, true, "storage_error")
+		return nil, fmt.Errorf("unable to delete backend configuration")
 	}
+	b.securityEvent(req, "configuration_deleted", false, false, "")
 	return nil, nil
 }
 

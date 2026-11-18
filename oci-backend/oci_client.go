@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,6 +34,8 @@ type tokenExchangeResult struct {
 	CredentialExpiresAt time.Time
 	PrivateKey          string
 	PublicKey           string
+	HTTPStatus          int
+	RequestID           string
 }
 
 type ociTokenExchangeResponse struct {
@@ -56,6 +59,14 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 	if requestedTokenType == "" {
 		requestedTokenType = ociRequestedTokenTypeUPST
 	}
+	rpstMinutes := 0
+	if requestedTokenType == ociRequestedTokenTypeRPST {
+		var err error
+		rpstMinutes, err = rpstTTLMinutes(ttl)
+		if err != nil {
+			return nil, &ociExchangeError{reason: "ttl_invalid"}
+		}
+	}
 
 	requestPublicKey, privateKeyPEM, publicKeyPEM, err := resolveExchangePublicKey(publicKey)
 	if err != nil {
@@ -71,8 +82,8 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 	if resType != "" {
 		form.Set("res_type", resType)
 	}
-	if requestedTokenType == ociRequestedTokenTypeRPST && ttl > 0 {
-		form.Set("rpst_exp", strconv.Itoa(int(ttl.Seconds())))
+	if requestedTokenType == ociRequestedTokenTypeRPST {
+		form.Set("rpst_exp", strconv.Itoa(rpstMinutes))
 	}
 
 	tokenURL, err := tokenExchangeEndpoint(config.DomainUrl)
@@ -82,7 +93,7 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to construct token exchange request: %w", err)
+		return nil, &ociExchangeError{reason: "oci_request_invalid"}
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetBasicAuth(config.ClientID, config.ClientSecret)
@@ -98,28 +109,40 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 	requestStarted := time.Now()
 	resp, err := requestClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("unable to exchange JWT for security token: %w", err)
+		reason := "oci_transport_error"
+		if errors.Is(err, context.DeadlineExceeded) {
+			reason = "oci_timeout"
+		}
+		if errors.Is(err, context.Canceled) {
+			reason = "request_canceled"
+		}
+		return nil, &ociExchangeError{reason: reason}
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	requestID := validatedOCIRequestID(resp.Header.Get("opc-request-id"))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 	if err != nil {
-		return nil, fmt.Errorf("unable to read OCI token exchange response: %w", err)
+		return nil, &ociExchangeError{reason: "oci_response_read_failed", status: resp.StatusCode, requestID: requestID}
 	}
 
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("unable to exchange JWT for security token: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	if len(body) > 1<<20 {
+		return nil, &ociExchangeError{reason: "oci_response_too_large", status: resp.StatusCode, requestID: requestID}
 	}
-
 	var tokenResp ociTokenExchangeResponse
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, fmt.Errorf("unable to decode OCI token exchange response: %w", err)
+	decodeErr := json.Unmarshal(body, &tokenResp)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		code := ""
+		if decodeErr == nil {
+			code = allowedOAuthError(tokenResp.Error)
+		}
+		return nil, &ociExchangeError{reason: "oci_rejected", code: code, status: resp.StatusCode, requestID: requestID}
+	}
+	if decodeErr != nil {
+		return nil, &ociExchangeError{reason: "oci_response_invalid", status: resp.StatusCode, requestID: requestID}
 	}
 	if tokenResp.Error != "" {
-		if tokenResp.ErrorDescription != "" {
-			return nil, fmt.Errorf("OCI token exchange returned error '%s': %s", tokenResp.Error, tokenResp.ErrorDescription)
-		}
-		return nil, fmt.Errorf("OCI token exchange returned error '%s'", tokenResp.Error)
+		return nil, &ociExchangeError{reason: "oci_rejected", code: allowedOAuthError(tokenResp.Error), status: resp.StatusCode, requestID: requestID}
 	}
 
 	token := tokenResp.AccessToken
@@ -127,7 +150,7 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 		token = tokenResp.Token
 	}
 	if token == "" {
-		return nil, fmt.Errorf("OCI token exchange response did not include access_token")
+		return nil, &ociExchangeError{reason: "oci_token_missing", status: resp.StatusCode, requestID: requestID}
 	}
 
 	tokenType := tokenResp.TokenType
@@ -139,7 +162,7 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 	if tokenResp.ExpiresIn != nil {
 		seconds := *tokenResp.ExpiresIn
 		if seconds <= 0 || seconds > maxTokenTTLSeconds {
-			return nil, fmt.Errorf("OCI expires_in must be between 1 and %d seconds", maxTokenTTLSeconds)
+			return nil, &ociExchangeError{reason: "oci_expiry_invalid", status: resp.StatusCode, requestID: requestID}
 		}
 		// Start at request dispatch rather than receipt so network/processing
 		// latency never extends the lifetime advertised by OCI.
@@ -148,6 +171,8 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 
 	return &tokenExchangeResult{
 		AccessToken:         token,
+		HTTPStatus:          resp.StatusCode,
+		RequestID:           requestID,
 		SessionToken:        tokenByType(requestedTokenType, ociRequestedTokenTypeUPST, token),
 		RPSTToken:           tokenByType(requestedTokenType, ociRequestedTokenTypeRPST, token),
 		TokenType:           tokenType,

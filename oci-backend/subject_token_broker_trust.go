@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 const (
@@ -247,6 +248,15 @@ func (b *backend) cachedBrokeredVerificationKeys(ctx context.Context, c *federat
 		close(cache.flight)
 		cache.flight = nil
 		cache.mu.Unlock()
+		var req *logical.Request
+		if observed, ok := ctx.Value(exchangeObservationKey{}).(*exchangeObservation); ok {
+			req = observed.request
+		}
+		if err != nil {
+			b.securityEvent(req, "brokered_trust_refresh", true, true, "refresh_failed", "outcome", "failure")
+		} else {
+			b.securityEvent(req, "brokered_trust_refresh", false, false, "", "outcome", "success")
+		}
 		return keys, err
 	}
 }

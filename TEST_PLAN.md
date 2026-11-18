@@ -181,7 +181,7 @@ Strict field validation runs before configuration lookup and token processing. S
 
 ## 6. Lease & TTL Management
 
-Handler tests now assert request/role/backend default selection, each limiting layer, named and mapped roles, and the TTL/MaxTTL returned to Vault for both UPST and RPST. An HTTP integration case asserts a stored role with a one-hour default/maximum sends `rpst_exp=60` under a one-minute backend ceiling. UPST lifetime is OCI-controlled. The handler reports upstream-derived expiry separately from lease policy. Known remaining lifetime caps the lease; missing/null upstream expiry produces `credential_expiry_known=false` with omitted expiry fields and a policy-only lease.
+Handler tests assert request/role/backend default selection, each limiting layer, named and mapped roles, and the TTL/MaxTTL returned to Vault for both UPST and RPST. An HTTP integration case asserts a stored role with a one-hour default/maximum sends `rpst_exp=1` under a one-minute backend ceiling. `TestOCIExchangeRequestsRPSTLifetimeInWholeMinutes` checks minute conversion, downward rounding, sub-minute rejection before HTTP, the 720-minute cap, large durations, and omission of `rpst_exp` for UPST. Handler cases also check rounded RPST leases and rejection when Vault imposes a sub-minute ceiling. UPST lifetime is OCI-controlled. The handler reports upstream-derived expiry separately from lease policy. Known remaining lifetime caps the lease; missing/null upstream expiry produces `credential_expiry_known=false` with omitted expiry fields and a policy-only lease.
 
 | ID | Test Case | Input | Expected Result |
 |---|---|---|---|

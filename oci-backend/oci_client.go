@@ -59,6 +59,14 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 	if requestedTokenType == "" {
 		requestedTokenType = ociRequestedTokenTypeUPST
 	}
+	rpstMinutes := 0
+	if requestedTokenType == ociRequestedTokenTypeRPST {
+		var err error
+		rpstMinutes, err = rpstTTLMinutes(ttl)
+		if err != nil {
+			return nil, &ociExchangeError{reason: "ttl_invalid"}
+		}
+	}
 
 	requestPublicKey, privateKeyPEM, publicKeyPEM, err := resolveExchangePublicKey(publicKey)
 	if err != nil {
@@ -74,8 +82,8 @@ func (b *backend) exchangeTokenForOCI(ctx context.Context, subjectToken, request
 	if resType != "" {
 		form.Set("res_type", resType)
 	}
-	if requestedTokenType == ociRequestedTokenTypeRPST && ttl > 0 {
-		form.Set("rpst_exp", strconv.Itoa(int(ttl.Seconds())))
+	if requestedTokenType == ociRequestedTokenTypeRPST {
+		form.Set("rpst_exp", strconv.Itoa(rpstMinutes))
 	}
 
 	tokenURL, err := tokenExchangeEndpoint(config.DomainUrl)

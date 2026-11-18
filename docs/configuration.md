@@ -38,8 +38,8 @@ All fields below belong to `oci/config`. Defaults are implementation defaults; t
 | <a id="config-domain-url"></a>`domain_url` | OCI Identity Domain URL (for example: `https://idcs-xxxxx.identity.oraclecloud.com`) |
 | <a id="config-client-id"></a>`client_id` | OAuth Confidential Application client ID in the OCI Identity Domain |
 | <a id="config-client-secret"></a>`client_secret` | OAuth Confidential Application client secret in the OCI Identity Domain |
-| <a id="config-default-ttl"></a>`default_ttl` | Default Vault lease TTL for exchanged credentials, and the default `rpst_exp` requested from OCI for RPST exchanges when a request TTL is not supplied (default: 3600) |
-| <a id="config-max-ttl"></a>`max_ttl` | Maximum Vault lease TTL for exchanged credentials, and the maximum `rpst_exp` value allowed for RPST exchanges (default: 86400) |
+| <a id="config-default-ttl"></a>`default_ttl` | Default Vault lease TTL in seconds (default: 3600). Also selects the RPST duration before conversion to whole minutes for OCI's `rpst_exp`. |
+| <a id="config-max-ttl"></a>`max_ttl` | Maximum Vault lease TTL in seconds (default: 86400). Also bounds the RPST duration before conversion to whole minutes; RPST has an additional 12-hour cap. |
 
 ### Mode selection and role routing
 
@@ -147,7 +147,9 @@ Then configure each mount separately with its own `oci/config` and roles.
 
 Create roles to define Vault lease policy and RPST TTL constraints. OCI UPST exchange does not currently let the client request token lifetime through the token-exchange call, so these TTL settings only directly shape the OCI request for RPST via `rpst_exp`. For UPST, they mainly affect Vault-side lease metadata today.
 
-TTL selection uses an explicit positive request `ttl`, otherwise the role default, otherwise the backend default. An omitted or zero request `ttl` selects the default. The result is capped at the lowest positive backend maximum, role maximum, and effective Vault mount/system maximum returned by `SystemView.MaxLeaseTTL()`. A role can tighten the backend ceiling but cannot raise it. This applies to explicit and JWT-mapped roles and to every exchange mode. The capped policy duration is sent as RPST `rpst_exp`. After exchange, Vault lease duration is additionally capped to known remaining OCI credential lifetime; OCI determines the lifetime actually granted.
+TTL selection uses an explicit positive request `ttl`, otherwise the role default, otherwise the backend default. An omitted or zero request `ttl` selects the default. The result is capped at the lowest positive backend maximum, role maximum, and effective Vault mount/system maximum returned by `SystemView.MaxLeaseTTL()`. A role can tighten the backend ceiling but cannot raise it. This applies to explicit and JWT-mapped roles and to every exchange mode. After exchange, Vault lease duration is additionally capped to known remaining OCI credential lifetime; OCI determines the lifetime actually granted.
+
+Vault TTL inputs use seconds (or duration strings). OCI's RPST `rpst_exp` uses **whole minutes**, with a maximum of 720 minutes (12 hours). For RPST, the engine caps the effective TTL at 12 hours and rounds down to whole minutes before requesting OCI credentials and assigning the Vault lease. For example, `ttl=60` sends `rpst_exp=1`; `ttl=90` also sends `1` and selects a 60-second lease. An effective TTL below 60 seconds is rejected before OCI exchange, including when a role, backend, or Vault ceiling imposes that limit. The engine never rounds a lifetime up or sends zero to select an upstream default. UPST lease policy retains whole-second precision. See [Oracle's RPST request parameters](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/token_exchange_grant_type_workload_id-federation.htm).
 
 Backend and role `default_ttl`/`max_ttl` writes require positive whole-second durations with `default_ttl <= max_ttl`. Supported duration strings such as `1h` remain accepted. Zero, negative, fractional-second, and overflowing policy values are rejected. Each value is bounded to 9,223,372,036 seconds before nanosecond conversion. Request `ttl` uses the same range, with zero additionally allowed to select the default. A fractional Vault ceiling is rounded down to whole seconds; a positive ceiling below one second fails closed.
 
@@ -159,6 +161,9 @@ Examples of TTL validation and selection:
 | `default_ttl=3600 max_ttl=600` | Rejected: the policy's default exceeds its own maximum |
 | Configured `default_ttl=0`, `max_ttl=-60`, or `default_ttl="500ms"` | Rejected; the stored configuration is unchanged |
 | Request `ttl=0`, or no `ttl` | Select the role/backend default, then apply all ceilings |
+| RPST effective TTL of 90 seconds | Request `rpst_exp=1` and select a 60-second Vault lease |
+| RPST effective TTL below 60 seconds | Reject; no OCI exchange |
+| RPST effective TTL above 12 hours | Request `rpst_exp=720` and cap the Vault lease at 12 hours |
 | Role default/max of 3600 seconds; backend default/max of 600 seconds | Valid policies; exchange TTL is capped at 600 seconds |
 | The same policies with a Vault maximum of 300 seconds | Exchange TTL is capped at 300 seconds |
 
@@ -179,8 +184,8 @@ vault write oci/role/prod \
 ```
 
 **Role Parameters:**
-- `default_ttl`: Default Vault lease TTL for credentials issued under the role. Also used as the default `rpst_exp` requested from OCI for RPST exchanges when a request TTL is not supplied.
-- `max_ttl`: Maximum Vault lease TTL for credentials issued under the role. Also used as the maximum `rpst_exp` value allowed for RPST exchanges.
+- `default_ttl`: Default Vault lease TTL for credentials issued under the role. For RPST exchanges, the effective duration is converted from seconds to whole minutes for `rpst_exp`.
+- `max_ttl`: Maximum Vault lease TTL for credentials issued under the role. Also bounds the RPST lifetime before conversion to whole minutes; it cannot raise OCI's 12-hour maximum.
 
 ## Removed role filter fields and upgrade cleanup
 

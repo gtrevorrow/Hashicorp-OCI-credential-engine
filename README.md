@@ -291,7 +291,7 @@ vault write oci/role/developer \
     max_ttl=3600
 ```
 
-Request TTL takes precedence over defaults, then backend, role, and Vault ceilings cap it. OCI determines the lifetime actually granted. For UPST, plugin TTL settings affect the Vault lease; for RPST, they also bound the requested OCI [`rpst_exp`][oci-rpst-exp]. Known OCI expiry further caps the lease. See [complete TTL rules](docs/configuration.md#roles).
+Request TTL takes precedence over defaults, then backend, role, and Vault ceilings cap it. OCI determines the lifetime actually granted. For UPST, plugin TTL settings affect the Vault lease; for RPST, they also bound the requested OCI [`rpst_exp`][oci-rpst-exp]. Vault TTL inputs use seconds; RPST converts to whole minutes, rounding down and capping at 12 hours, and rejects effective TTLs below 60 seconds. Known OCI expiry further caps the lease. See [complete TTL rules](docs/configuration.md#roles).
 
 **Upgrading:** `allowed_subjects` and `allowed_groups` were never enforced and have been removed. Affected stored roles require [explicit cleanup](docs/configuration.md#removed-role-filter-fields-and-upgrade-cleanup) before exchange. Review [alias selection](docs/usage.md#explicit-linked-alias-selection) and [template validation](docs/usage.md#template-validation-and-limits) when upgrading older configuration.
 

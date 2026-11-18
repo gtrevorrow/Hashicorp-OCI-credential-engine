@@ -11,6 +11,20 @@ import (
 
 const maxTokenTTLSeconds = int64(math.MaxInt64) / int64(time.Second)
 
+const maxRPSTTTL = 12 * time.Hour
+
+// OCI's rpst_exp uses whole minutes. Round down so the requested lifetime
+// never exceeds Vault policy, and never send zero (which could select a default).
+func rpstTTLMinutes(ttl time.Duration) (int, error) {
+	if ttl < time.Minute {
+		return 0, fmt.Errorf("RPST requires an effective TTL of at least 60 seconds")
+	}
+	if ttl > maxRPSTTTL {
+		ttl = maxRPSTTTL
+	}
+	return int(ttl / time.Minute), nil
+}
+
 // Inspect supplied durations before the SDK truncates them to integer seconds.
 // In particular, a negative fraction must not turn into the zero/default sentinel.
 func validateTokenTTLInputs(data *framework.FieldData, allowZero bool, fields ...string) error {
@@ -104,7 +118,7 @@ func resolveTokenTTL(requestSeconds int, config *federatedConfig, role *roleEntr
 		return 0, 0, fmt.Errorf("invalid Vault maximum lease TTL")
 	}
 	if vaultMax > 0 && vaultMax < maxTTL {
-		// OCI's rpst_exp is expressed in whole seconds; never round a ceiling up.
+		// Vault lease policy uses whole seconds; never round a ceiling up.
 		maxTTL = vaultMax.Truncate(time.Second)
 	}
 	if maxTTL < time.Second {

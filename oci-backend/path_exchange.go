@@ -63,7 +63,7 @@ func (b *backend) buildExchangePath(pattern string, includeRole bool) *framework
 		},
 		"ttl": {
 			Type:        framework.TypeDurationSecond,
-			Description: "Requested TTL for the OCI session token",
+			Description: "Requested TTL in seconds; RPST rounds down to whole minutes (minimum 60 seconds, maximum 12 hours)",
 			Required:    false,
 			DisplayAttrs: &framework.DisplayAttributes{
 				Name: "TTL",
@@ -284,6 +284,16 @@ func (b *backend) pathExchangeWrite(ctx context.Context, req *logical.Request, d
 	ttl, maxTTL, ttlErr := resolveTokenTTL(data.Get("ttl").(int), config, role, vaultMax)
 	if ttlErr != nil {
 		return exchangeFailure(observed, "ttl_invalid", "invalid token TTL policy: unable to resolve bounded credential TTL")
+	}
+	if requestedTokenType == ociRequestedTokenTypeRPST {
+		minutes, err := rpstTTLMinutes(ttl)
+		if err != nil {
+			return exchangeFailure(observed, "ttl_invalid", "invalid token TTL policy: RPST requires an effective TTL of at least 60 seconds")
+		}
+		ttl = time.Duration(minutes) * time.Minute
+		if maxTTL > maxRPSTTTL {
+			maxTTL = maxRPSTTTL
+		}
 	}
 
 	// Perform the token exchange

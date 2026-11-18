@@ -89,7 +89,7 @@ func TestIntegrationExchangeTokenForOCI_RPSTWithPublicKey(t *testing.T) {
 		require.Equal(t, ociRequestedTokenTypeRPST, r.PostForm.Get("requested_token_type"))
 		require.Equal(t, "resource_principal", r.PostForm.Get("res_type"))
 		require.NotEmpty(t, r.PostForm.Get("public_key"))
-		require.Equal(t, "3600", r.PostForm.Get("rpst_exp"))
+		require.Equal(t, "60", r.PostForm.Get("rpst_exp"))
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"%s","token_type":"Bearer"}`, mockToken)))
@@ -271,7 +271,7 @@ func TestIntegrationExchangeRPSTRespectsBackendTTLCeiling(t *testing.T) {
 	server := newIntegrationServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		require.NoError(t, r.ParseForm())
-		require.Equal(t, "60", r.PostForm.Get("rpst_exp"))
+		require.Equal(t, "1", r.PostForm.Get("rpst_exp"))
 		require.Equal(t, ociRequestedTokenTypeRPST, r.PostForm.Get("requested_token_type"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"synthetic","token_type":"Bearer"}`))

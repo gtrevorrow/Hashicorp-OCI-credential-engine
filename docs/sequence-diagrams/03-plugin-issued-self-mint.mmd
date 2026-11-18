@@ -27,6 +27,7 @@ sequenceDiagram
     end
     Note over V: Roles with removed filter settings require explicit cleanup
     V->>V: Resolve TTL and cap at backend, role and Vault mount/system maxima
+    V->>V: For RPST, cap at 12 hours and round down to whole minutes#59; reject below 60 seconds
     V->>O: POST `/oauth2/v1/token` with Basic auth, self-minted `subject_token`, `subject_token_type=jwt`, `requested_token_type`, base64 SPKI `public_key`, optional `res_type`, RPST `rpst_exp`
     O-->>V: OCI UPST or RPST
     V->>V: Report OCI expiry when known#59; cap nonrenewable lease to remaining lifetime
